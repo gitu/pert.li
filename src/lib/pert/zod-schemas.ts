@@ -4,9 +4,14 @@ import type {
 	Dependency,
 	Estimate,
 	PertDoc,
+	ProjectCalendar,
 	Task,
 	ViewState,
 } from "./types";
+
+const isoDate = z
+	.string()
+	.regex(/^\d{4}-\d{2}-\d{2}$/, "expected ISO date (yyyy-mm-dd)");
 
 // Mirror schemas for the PERT domain. Used at boundaries — AI extraction,
 // YAML/Markdown import, server fns that synthesise tasks. NOT used to validate
@@ -37,14 +42,21 @@ export const layout = z.object({
 	collapsed: z.boolean().optional(),
 });
 
+export const taskStatus = z.enum(["not_started", "in_progress", "completed"]);
+
 export const task: z.ZodType<Task> = z.object({
 	id: z.string().min(1),
 	kind: taskKind,
 	title: z.string(),
 	parentId: z.string().nullable(),
+	key: z.string().optional(),
 	estimate: estimate.optional(),
 	notes: z.string().optional(),
 	layout: layout.optional(),
+	status: taskStatus.optional(),
+	progress: z.number().min(0).max(100).optional(),
+	actualStart: isoDate.optional(),
+	actualFinish: isoDate.optional(),
 	metadata: z
 		.object({
 			confidence: z.number().min(0).max(1).optional(),
@@ -113,6 +125,12 @@ export const viewState: z.ZodType<ViewState> = z.object({
 	label: z.string().optional(),
 });
 
+export const projectCalendar: z.ZodType<ProjectCalendar> = z.object({
+	startDate: isoDate,
+	workingDays: z.array(z.number().int().min(1).max(7)).min(1).max(7),
+	holidays: z.array(isoDate).optional(),
+});
+
 export const pertDoc: z.ZodType<PertDoc> = z.object({
 	schemaVersion: z.literal(1),
 	title: z.string(),
@@ -123,4 +141,5 @@ export const pertDoc: z.ZodType<PertDoc> = z.object({
 		z.record(z.string(), containerInterface),
 	),
 	viewsById: z.record(z.string(), viewState),
+	calendar: projectCalendar.optional(),
 });

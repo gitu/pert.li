@@ -6,6 +6,7 @@ import {
 	getCoreRowModel,
 	getFilteredRowModel,
 	getSortedRowModel,
+	type Row,
 	type SortingState,
 	useReactTable,
 	type VisibilityState,
@@ -15,13 +16,16 @@ import {
 	ArrowUpDownIcon,
 	ArrowUpIcon,
 	CheckIcon,
+	ChevronDownIcon,
+	ChevronRightIcon,
 	CircleDotIcon,
 	FolderIcon,
+	LayersIcon,
 	PencilIcon,
 	SettingsIcon,
 	ZapIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PresenceBadge } from "#/components/pert/presence/presence-badge";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
@@ -42,6 +46,11 @@ import {
 } from "#/components/ui/table";
 import { computeSchedule, type ScheduleResult } from "#/lib/pert/schedule";
 import { projectDocStore, selectionStore, selectTask } from "#/lib/pert/store";
+import {
+	countRowsInGroup,
+	groupTasksByKey,
+	type KeyGroupNode,
+} from "#/lib/pert/task-key";
 import type { Estimate, PertDoc, TaskId, TaskKind } from "#/lib/pert/types";
 import { cn } from "#/lib/utils";
 
@@ -54,6 +63,7 @@ export type TaskListRow = {
 	id: TaskId;
 	title: string;
 	kind: TaskKind;
+	key: string | undefined;
 	estimate: Estimate | undefined;
 	duration: number;
 	es: number | null;
@@ -78,6 +88,7 @@ export function buildTaskListRows(
 				id: t.id,
 				title: t.title,
 				kind: t.kind,
+				key: t.key,
 				estimate: t.estimate,
 				duration: s?.duration ?? 0,
 				es: s?.earliestStart ?? null,
@@ -133,6 +144,21 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 	// double-clicking each cell. Disabled when no changeDoc is available
 	// (read-only context like Storybook).
 	const [editAll, setEditAll] = useState(false);
+	// Group rows by their dotted `key`. Collapsed group paths live in a
+	// separate set so flipping the toggle off and back on keeps the user's
+	// open/closed state instead of resetting.
+	const [grouped, setGrouped] = useState(false);
+	const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+		() => new Set(),
+	);
+	const toggleGroup = useCallback((path: string) => {
+		setCollapsedGroups((prev) => {
+			const next = new Set(prev);
+			if (next.has(path)) next.delete(path);
+			else next.add(path);
+			return next;
+		});
+	}, []);
 
 	const columns = useMemo<ColumnDef<TaskListRow>[]>(
 		() => [
@@ -195,6 +221,22 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 						r.id.toLowerCase().includes(needle)
 					);
 				},
+			},
+			{
+				accessorKey: "key",
+				header: "Key",
+				cell: ({ row }) => {
+					const k = row.original.key;
+					if (!k) {
+						return <span className="text-xs text-muted-foreground/60">—</span>;
+					}
+					return (
+						<span className="font-mono text-[10px] text-muted-foreground">
+							{k}
+						</span>
+					);
+				},
+				size: 100,
 			},
 			{
 				accessorKey: "kind",
@@ -359,6 +401,20 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 	});
 
 	const visibleRows = table.getRowModel().rows;
+	// When grouping is on, build a tree once per render from the rows TanStack
+	// already filtered/sorted. The visible TanStack rows map keeps the cell
+	// renderers consistent — we look up by id when we want to flexRender a
+	// task row inside a group.
+	const groupedTree = useMemo(() => {
+		if (!grouped) return null;
+		const tree = groupTasksByKey(visibleRows.map((r) => r.original));
+		return tree;
+	}, [grouped, visibleRows]);
+	const visibleRowById = useMemo(
+		() => new Map(visibleRows.map((r) => [r.original.id, r])),
+		[visibleRows],
+	);
+	const visibleColumnCount = table.getVisibleLeafColumns().length;
 
 	return (
 		<div className="flex h-full flex-col overflow-hidden">
@@ -375,6 +431,22 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 						className="h-7 w-44 text-xs"
 						data-testid="task-list-filter"
 					/>
+					<Button
+						variant={grouped ? "default" : "outline"}
+						size="sm"
+						className="h-7 gap-1.5 text-xs"
+						onClick={() => setGrouped((v) => !v)}
+						aria-pressed={grouped}
+						data-testid="task-list-group"
+						title={
+							grouped
+								? "Flatten the table"
+								: "Group tasks by their dotted key (e.g. M1.A)"
+						}
+					>
+						<LayersIcon className="size-3.5" />
+						{grouped ? "Grouped" : "Group"}
+					</Button>
 					<Button
 						variant={editAll ? "default" : "outline"}
 						size="sm"
@@ -480,42 +552,155 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 							))}
 						</TableHeader>
 						<TableBody>
-							{visibleRows.map((row) => {
-								const r = row.original;
-								const isSelected = r.id === selectedTaskId;
-								return (
-									<TableRow
-										key={row.id}
-										data-testid={`task-list-row-${row.id}`}
-										data-selected={isSelected}
-										onClick={() => selectTask(projectId, r.id)}
-										className={cn(
-											"cursor-pointer",
-											isSelected && "bg-accent/60",
-										)}
-									>
-										{row.getVisibleCells().map((cell) => (
-											<TableCell
-												key={cell.id}
-												className={
-													cell.column.id === "title" ? "font-medium" : undefined
-												}
-											>
-												{flexRender(
-													cell.column.columnDef.cell,
-													cell.getContext(),
-												)}
-											</TableCell>
-										))}
-									</TableRow>
-								);
-							})}
+							{grouped && groupedTree
+								? renderGroupedRows({
+										tree: groupedTree,
+										depth: 0,
+										collapsedGroups,
+										toggleGroup,
+										visibleRowById,
+										selectedTaskId,
+										projectId,
+										columnCount: visibleColumnCount,
+									})
+								: visibleRows.map((row) =>
+										renderFlatTaskRow({
+											row,
+											selectedTaskId,
+											projectId,
+											indent: 0,
+										}),
+									)}
 						</TableBody>
 					</Table>
 				)}
 			</div>
 		</div>
 	);
+}
+
+// Render a single flat task row. Indent is in pixels, applied as a CSS
+// custom padding on the first cell so grouped trees can offset descendant
+// rows without re-flowing the whole row.
+function renderFlatTaskRow({
+	row,
+	selectedTaskId,
+	projectId,
+	indent,
+}: {
+	row: Row<TaskListRow>;
+	selectedTaskId: TaskId | null;
+	projectId: string;
+	indent: number;
+}) {
+	const r = row.original;
+	const isSelected = r.id === selectedTaskId;
+	return (
+		<TableRow
+			key={row.id}
+			data-testid={`task-list-row-${r.id}`}
+			data-selected={isSelected}
+			onClick={() => selectTask(projectId, r.id)}
+			className={cn("cursor-pointer", isSelected && "bg-accent/60")}
+		>
+			{row.getVisibleCells().map((cell, idx) => (
+				<TableCell
+					key={cell.id}
+					className={cell.column.id === "title" ? "font-medium" : undefined}
+					style={idx === 0 && indent > 0 ? { paddingLeft: indent } : undefined}
+				>
+					{flexRender(cell.column.columnDef.cell, cell.getContext())}
+				</TableCell>
+			))}
+		</TableRow>
+	);
+}
+
+// Recursive group-tree renderer. Emits one full-width header row per group
+// (clickable to collapse) and indented task rows beneath it. Collapsed
+// groups still show the header but skip the contents.
+function renderGroupedRows({
+	tree,
+	depth,
+	collapsedGroups,
+	toggleGroup,
+	visibleRowById,
+	selectedTaskId,
+	projectId,
+	columnCount,
+}: {
+	tree: KeyGroupNode<TaskListRow>[];
+	depth: number;
+	collapsedGroups: Set<string>;
+	toggleGroup: (path: string) => void;
+	visibleRowById: Map<TaskId, Row<TaskListRow>>;
+	selectedTaskId: TaskId | null;
+	projectId: string;
+	columnCount: number;
+}): React.ReactNode[] {
+	const nodes: React.ReactNode[] = [];
+	for (const group of tree) {
+		const collapsed = collapsedGroups.has(group.path);
+		const total = countRowsInGroup(group);
+		const indent = depth * 16;
+		nodes.push(
+			<TableRow
+				key={`group-${group.path || "ungrouped"}`}
+				data-testid={`task-list-group-${group.path || "ungrouped"}`}
+				className="bg-muted/30 hover:bg-muted/40"
+			>
+				<TableCell
+					colSpan={columnCount}
+					className="cursor-pointer select-none"
+					style={{ paddingLeft: 12 + indent }}
+					onClick={() => toggleGroup(group.path)}
+				>
+					<div className="flex items-center gap-1.5 text-xs">
+						{collapsed ? (
+							<ChevronRightIcon className="size-3.5 text-muted-foreground" />
+						) : (
+							<ChevronDownIcon className="size-3.5 text-muted-foreground" />
+						)}
+						<span className="font-mono text-[11px] text-foreground">
+							{group.label}
+						</span>
+						<span className="text-muted-foreground">·</span>
+						<span className="text-muted-foreground">
+							{total} task{total === 1 ? "" : "s"}
+						</span>
+					</div>
+				</TableCell>
+			</TableRow>,
+		);
+		if (collapsed) continue;
+		for (const row of group.rows) {
+			const tableRow = visibleRowById.get(row.id);
+			if (!tableRow) continue;
+			nodes.push(
+				renderFlatTaskRow({
+					row: tableRow,
+					selectedTaskId,
+					projectId,
+					indent: 12 + (depth + 1) * 16,
+				}),
+			);
+		}
+		if (group.children.length > 0) {
+			nodes.push(
+				...renderGroupedRows({
+					tree: group.children,
+					depth: depth + 1,
+					collapsedGroups,
+					toggleGroup,
+					visibleRowById,
+					selectedTaskId,
+					projectId,
+					columnCount,
+				}),
+			);
+		}
+	}
+	return nodes;
 }
 
 function SortIndicator({ sort }: { sort: false | "asc" | "desc" }) {

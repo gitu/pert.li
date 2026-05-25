@@ -1,10 +1,18 @@
 import { useStore } from "@tanstack/react-store";
-import { PlusIcon, Trash2Icon } from "lucide-react";
+import {
+	CheckCircle2Icon,
+	CircleDotIcon,
+	CircleIcon,
+	PlusIcon,
+	RotateCcwIcon,
+	Trash2Icon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConflictPill } from "#/components/pert/inspector/conflict-pill";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
+import { Progress } from "#/components/ui/progress";
 import {
 	Select,
 	SelectContent,
@@ -13,6 +21,7 @@ import {
 	SelectValue,
 } from "#/components/ui/select";
 import { Separator } from "#/components/ui/separator";
+import { Slider } from "#/components/ui/slider";
 import { Textarea } from "#/components/ui/textarea";
 import {
 	Tooltip,
@@ -20,7 +29,9 @@ import {
 	TooltipTrigger,
 } from "#/components/ui/tooltip";
 import { removeTaskMutation } from "#/lib/ai/tool-mutators";
+import { todayIsoDate } from "#/lib/pert/calendar";
 import { getDescendants } from "#/lib/pert/hierarchy";
+import type { MonteCarloResult } from "#/lib/pert/montecarlo";
 import { rollupContainer } from "#/lib/pert/projection";
 import { readTaskConflicts } from "#/lib/pert/read-conflicts";
 import { computeSchedule, type TaskSchedule } from "#/lib/pert/schedule";
@@ -34,7 +45,9 @@ import type {
 	Task,
 	TaskId,
 	TaskKind,
+	TaskStatus,
 } from "#/lib/pert/types";
+import { useMonteCarlo } from "#/lib/pert/use-monte-carlo";
 
 // Right-pane editor for the currently selected task. Subscribes to two
 // stores: which task is selected, and which project's doc is active. Reads
@@ -45,6 +58,7 @@ import type {
 export function TaskInspector() {
 	const selection = useStore(selectionStore);
 	const { doc, changeDoc, projectId } = useStore(projectDocStore);
+	const mc = useMonteCarlo(doc, { trials: 1500 });
 
 	if (!doc || !changeDoc || !projectId) {
 		return <EmptyState message="Open a project to edit tasks." />;
@@ -83,6 +97,7 @@ export function TaskInspector() {
 				changeDoc={changeDoc}
 				conflictPill={conflictPill}
 				onDelete={onDelete}
+				mcResult={mc.result}
 			/>
 		);
 	}
@@ -92,6 +107,7 @@ export function TaskInspector() {
 			task={task}
 			scheduleResult={computeSchedule(doc)}
 			conflictPill={conflictPill}
+			mcResult={mc.result}
 			onMutate={(mutate) =>
 				changeDoc((d) => {
 					const draft = d.tasksById[task.id];
@@ -117,18 +133,21 @@ function TaskForm({
 	task,
 	scheduleResult,
 	conflictPill,
+	mcResult,
 	onMutate,
 	onDelete,
 }: {
 	task: Task;
 	scheduleResult: ScheduleResult;
 	conflictPill?: React.ReactNode;
+	mcResult: MonteCarloResult | null;
 	onMutate: (mutate: (draft: Task) => void) => void;
 	onDelete: () => void;
 }) {
 	const sched = scheduleResult.ok
 		? scheduleResult.schedule.tasks[task.id]
 		: null;
+	const mcTask = mcResult?.tasks[task.id] ?? null;
 
 	const setTitle = useCallback(
 		(value: string) =>
@@ -141,6 +160,15 @@ function TaskForm({
 		(value: string) =>
 			onMutate((d) => {
 				d.notes = value;
+			}),
+		[onMutate],
+	);
+	const setKey = useCallback(
+		(value: string) =>
+			onMutate((d) => {
+				const trimmed = value.trim();
+				if (trimmed.length === 0) delete d.key;
+				else d.key = trimmed;
 			}),
 		[onMutate],
 	);
@@ -186,21 +214,80 @@ function TaskForm({
 			}),
 		[onMutate],
 	);
+	const setStatus = useCallback(
+		(status: TaskStatus) =>
+			onMutate((d) => {
+				const today = todayIsoDate();
+				d.status = status;
+				if (status === "not_started") {
+					delete d.progress;
+					delete d.actualStart;
+					delete d.actualFinish;
+				} else if (status === "in_progress") {
+					if (typeof d.progress !== "number") d.progress = 0;
+					if (!d.actualStart) d.actualStart = today;
+					delete d.actualFinish;
+				} else if (status === "completed") {
+					d.progress = 100;
+					if (!d.actualStart) d.actualStart = today;
+					d.actualFinish = today;
+				}
+			}),
+		[onMutate],
+	);
+	const setProgress = useCallback(
+		(value: number) =>
+			onMutate((d) => {
+				const clamped = Math.max(0, Math.min(100, Math.round(value)));
+				d.progress = clamped;
+				if (d.status !== "in_progress" && d.status !== "completed") {
+					d.status = "in_progress";
+					if (!d.actualStart) d.actualStart = todayIsoDate();
+				}
+				if (clamped >= 100) {
+					d.status = "completed";
+					d.actualFinish = todayIsoDate();
+				} else if (d.status === "completed") {
+					d.status = "in_progress";
+					delete d.actualFinish;
+				}
+			}),
+		[onMutate],
+	);
+
+	const status: TaskStatus = task.status ?? "not_started";
+	const progressValue =
+		status === "completed"
+			? 100
+			: status === "in_progress"
+				? (task.progress ?? 0)
+				: 0;
 
 	return (
 		<div className="flex h-full flex-col overflow-hidden">
 			<header className="shrink-0 border-b px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 				Task
 			</header>
-			<div className="flex-1 overflow-auto p-4">
+			<div className="@container flex-1 overflow-auto p-4">
 				{conflictPill && <div className="mb-4">{conflictPill}</div>}
-				<TaskSummary task={task} sched={sched} />
+				<TaskSummary task={task} sched={sched} mcTask={mcTask} />
+
+				{task.kind === "task" && (
+					<StatusRow
+						status={status}
+						progress={progressValue}
+						onStatusChange={setStatus}
+						onProgressChange={setProgress}
+						actualStart={task.actualStart}
+						actualFinish={task.actualFinish}
+					/>
+				)}
 
 				{/* Two-column layout above lg (1024px); single column below so the
 				    inspector stays usable inside the narrow bottom panel on small
 				    screens. The right column is purely informational, so it can
 				    safely sit lower in the source order on mobile. */}
-				<div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
+				<div className="mt-4 grid grid-cols-1 gap-4 @4xl:grid-cols-2 @4xl:gap-6">
 					<div className="space-y-4">
 						<div className="space-y-1.5">
 							<Label htmlFor="ti-title">Title</Label>
@@ -209,6 +296,23 @@ function TaskForm({
 								data-testid="inspector-title"
 								value={task.title}
 								onChange={(e) => setTitle(e.target.value)}
+							/>
+						</div>
+
+						<div className="space-y-1.5">
+							<Label htmlFor="ti-key">
+								Key{" "}
+								<span className="text-muted-foreground/70">
+									— dotted group, e.g. M1.A
+								</span>
+							</Label>
+							<Input
+								id="ti-key"
+								data-testid="inspector-key"
+								value={task.key ?? ""}
+								onChange={(e) => setKey(e.target.value)}
+								placeholder="ungrouped"
+								className="font-mono text-xs"
 							/>
 						</div>
 
@@ -310,21 +414,25 @@ function TaskForm({
 										label="Earliest start"
 										tooltip="The earliest day this task can begin, given everything that has to finish first. (CPM: ES)"
 										value={fmt(sched.earliestStart)}
+										subValue={sched.earliestStartDate}
 									/>
 									<ScheduleStat
 										label="Earliest finish"
 										tooltip="Earliest start + duration. The earliest possible day this task could be done. (CPM: EF)"
 										value={fmt(sched.earliestFinish)}
+										subValue={sched.earliestFinishDate}
 									/>
 									<ScheduleStat
 										label="Latest start"
 										tooltip="The latest day this task can begin without delaying the project finish. (CPM: LS)"
 										value={fmt(sched.latestStart)}
+										subValue={sched.latestStartDate}
 									/>
 									<ScheduleStat
 										label="Latest finish"
 										tooltip="The latest day this task can end without delaying the project finish. (CPM: LF)"
 										value={fmt(sched.latestFinish)}
+										subValue={sched.latestFinishDate}
 									/>
 								</dl>
 							) : (
@@ -333,6 +441,7 @@ function TaskForm({
 								</p>
 							)}
 						</div>
+						{mcTask && task.kind === "task" && <MonteCarloCard mc={mcTask} />}
 					</div>
 				</div>
 
@@ -349,9 +458,11 @@ function TaskForm({
 function TaskSummary({
 	task,
 	sched,
+	mcTask,
 }: {
 	task: Task;
 	sched: TaskSchedule | null;
+	mcTask: MonteCarloResult["tasks"][string] | null;
 }) {
 	if (!sched) {
 		return (
@@ -363,6 +474,7 @@ function TaskSummary({
 		);
 	}
 	const onCritical = sched.critical;
+	const status = sched.status;
 	const span =
 		task.kind === "milestone"
 			? `day ${fmt(sched.earliestStart)}`
@@ -381,17 +493,219 @@ function TaskSummary({
 			>
 				{onCritical ? "On critical path" : `${fmt(sched.slack)}d slack`}
 			</span>
+			<StatusPill status={status} />
 			{task.kind !== "milestone" && (
 				<span className="text-muted-foreground">
 					<span className="tabular-nums text-foreground">
 						{fmt(sched.duration)}d
 					</span>{" "}
-					expected
+					{status === "in_progress" ? "remaining" : "expected"}
 				</span>
 			)}
 			<span className="text-muted-foreground">
 				<span className="tabular-nums text-foreground">{span}</span>
 			</span>
+			{mcTask && task.kind === "task" && (
+				<span
+					className="text-muted-foreground"
+					title="Monte Carlo P50 finish (days from project start)"
+				>
+					P50{" "}
+					<span className="tabular-nums text-foreground">
+						{fmt(mcTask.p50)}d
+					</span>
+				</span>
+			)}
+		</div>
+	);
+}
+
+const STATUS_LABEL: Record<TaskStatus, string> = {
+	not_started: "Not started",
+	in_progress: "In progress",
+	completed: "Completed",
+};
+
+function StatusPill({ status }: { status: TaskStatus }) {
+	const cls =
+		status === "completed"
+			? "inline-flex items-center gap-1 rounded-full bg-sky-500/15 px-2 py-0.5 font-medium text-sky-700 dark:text-sky-300"
+			: status === "in_progress"
+				? "inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 font-medium text-amber-700 dark:text-amber-300"
+				: "inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 font-medium text-muted-foreground";
+	return <span className={cls}>{STATUS_LABEL[status]}</span>;
+}
+
+// Status + progress controls. Three buttons map onto not_started/in_progress/
+// completed; the slider lets the user mark partial completion in 5% steps.
+// Auto-flips: dragging the slider above 0 promotes a not_started task to
+// in_progress; pinning at 100 marks it completed. Actual dates are recorded
+// when the transitions happen.
+function StatusRow({
+	status,
+	progress,
+	onStatusChange,
+	onProgressChange,
+	actualStart,
+	actualFinish,
+}: {
+	status: TaskStatus;
+	progress: number;
+	onStatusChange: (s: TaskStatus) => void;
+	onProgressChange: (v: number) => void;
+	actualStart?: string;
+	actualFinish?: string;
+}) {
+	const isDone = status === "completed";
+	const isStarted = status !== "not_started";
+	return (
+		<div
+			data-testid="inspector-status"
+			className="mt-3 rounded-md border bg-muted/20 p-3"
+		>
+			<div className="flex items-center justify-between gap-2">
+				<div className="inline-flex rounded-md border bg-background p-0.5">
+					<StatusButton
+						active={!isStarted}
+						onClick={() => onStatusChange("not_started")}
+						icon={<CircleIcon className="size-3.5" />}
+						label="Not started"
+						testid="status-not-started"
+					/>
+					<StatusButton
+						active={status === "in_progress"}
+						onClick={() => onStatusChange("in_progress")}
+						icon={<CircleDotIcon className="size-3.5" />}
+						label="In progress"
+						testid="status-in-progress"
+					/>
+					<StatusButton
+						active={isDone}
+						onClick={() => onStatusChange("completed")}
+						icon={<CheckCircle2Icon className="size-3.5" />}
+						label="Completed"
+						testid="status-completed"
+					/>
+				</div>
+				{isStarted && (
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						className="h-7 gap-1 text-xs"
+						onClick={() => onStatusChange("not_started")}
+						data-testid="status-reopen"
+					>
+						<RotateCcwIcon className="size-3" /> Reset
+					</Button>
+				)}
+			</div>
+			{(status === "in_progress" || status === "completed") && (
+				<div className="mt-3 space-y-2">
+					<div className="flex items-center justify-between text-xs">
+						<Label className="text-xs text-muted-foreground">Progress</Label>
+						<span className="tabular-nums">{progress}%</span>
+					</div>
+					<Slider
+						data-testid="progress-slider"
+						value={[progress]}
+						min={0}
+						max={100}
+						step={5}
+						disabled={isDone}
+						onValueChange={(values) => {
+							const v = values[0];
+							if (typeof v === "number") onProgressChange(v);
+						}}
+					/>
+					<Progress value={progress} className="h-1" />
+				</div>
+			)}
+			{(actualStart || actualFinish) && (
+				<div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+					{actualStart && (
+						<span>
+							Started{" "}
+							<span className="tabular-nums text-foreground">
+								{actualStart}
+							</span>
+						</span>
+					)}
+					{actualFinish && (
+						<span>
+							Finished{" "}
+							<span className="tabular-nums text-foreground">
+								{actualFinish}
+							</span>
+						</span>
+					)}
+				</div>
+			)}
+		</div>
+	);
+}
+
+function StatusButton({
+	active,
+	onClick,
+	icon,
+	label,
+	testid,
+}: {
+	active: boolean;
+	onClick: () => void;
+	icon: React.ReactNode;
+	label: string;
+	testid: string;
+}) {
+	return (
+		<button
+			type="button"
+			data-testid={testid}
+			onClick={onClick}
+			aria-pressed={active}
+			className={
+				active
+					? "inline-flex items-center gap-1.5 rounded bg-foreground px-2 py-1 text-xs font-medium text-background"
+					: "inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted"
+			}
+		>
+			{icon}
+			{label}
+		</button>
+	);
+}
+
+function MonteCarloCard({ mc }: { mc: MonteCarloResult["tasks"][string] }) {
+	const crit = Math.round(mc.criticality * 100);
+	return (
+		<div data-testid="inspector-monte-carlo">
+			<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+				Monte Carlo finish
+				<span className="ml-1 normal-case text-muted-foreground/70">
+					(Beta-PERT, 1.5k trials)
+				</span>
+			</h3>
+			<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+				<ScheduleStat
+					label="P50"
+					tooltip="The 'realistic' finish day: across 1,500 simulated runs, half finished by this day and half later. It's the coin-flip date — only 50/50 you'll actually hit it."
+					value={`${fmt(mc.p50)} d`}
+					subValue={mc.p50Date}
+				/>
+				<ScheduleStat
+					label="P90"
+					tooltip="The 'safe' finish day: 90% of simulated runs finished by this date. Use this when you commit to a stakeholder — only a 1-in-10 chance you slip past it."
+					value={`${fmt(mc.p90)} d`}
+					subValue={mc.p90Date}
+				/>
+				<ScheduleStat
+					label="Criticality"
+					tooltip="Percentage of simulated runs where this task ended up on the critical path. High values (≥80%) mean it drives the project finish in almost every plausible scenario — protect its estimate."
+					value={`${crit}%`}
+					highlight={crit >= 80 ? "critical" : undefined}
+				/>
+			</dl>
 		</div>
 	);
 }
@@ -477,11 +791,13 @@ function ScheduleStat({
 	label,
 	tooltip,
 	value,
+	subValue,
 	highlight,
 }: {
 	label: string;
 	tooltip: string;
 	value: string;
+	subValue?: string;
 	highlight?: "critical";
 }) {
 	return (
@@ -513,6 +829,11 @@ function ScheduleStat({
 				}
 			>
 				{value}
+				{subValue && (
+					<span className="ml-1 text-xs text-muted-foreground">
+						({subValue})
+					</span>
+				)}
 			</dd>
 		</>
 	);
@@ -530,12 +851,14 @@ function ContainerForm({
 	changeDoc,
 	conflictPill,
 	onDelete,
+	mcResult,
 }: {
 	task: Task;
 	doc: PertDoc;
 	changeDoc: (mutate: (d: PertDoc) => void) => void;
 	conflictPill?: React.ReactNode;
 	onDelete: () => void;
+	mcResult: MonteCarloResult | null;
 }) {
 	const scheduleResult = useMemo(() => computeSchedule(doc), [doc]);
 	const schedule = scheduleResult.ok ? scheduleResult.schedule : null;
@@ -547,6 +870,22 @@ function ContainerForm({
 		() => getDescendants(doc, task.id),
 		[doc, task.id],
 	);
+	const mcRollup = useMemo(() => {
+		if (!mcResult) return null;
+		const set = new Set(descendantIds);
+		let p50 = 0;
+		let p90 = 0;
+		let maxCrit = 0;
+		let count = 0;
+		for (const [id, entry] of Object.entries(mcResult.tasks)) {
+			if (!set.has(id)) continue;
+			count += 1;
+			if (entry.p50 > p50) p50 = entry.p50;
+			if (entry.p90 > p90) p90 = entry.p90;
+			if (entry.criticality > maxCrit) maxCrit = entry.criticality;
+		}
+		return count > 0 ? { p50, p90, maxCriticality: maxCrit } : null;
+	}, [mcResult, descendantIds]);
 	const leafDescendants = useMemo(
 		() =>
 			descendantIds
@@ -605,11 +944,11 @@ function ContainerForm({
 			<header className="shrink-0 border-b px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 				Container
 			</header>
-			<div className="flex-1 overflow-auto p-4">
+			<div className="@container flex-1 overflow-auto p-4">
 				{conflictPill && <div className="mb-4">{conflictPill}</div>}
 				<ContainerSummary rollup={rollup} />
 
-				<div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
+				<div className="mt-4 grid grid-cols-1 gap-4 @4xl:grid-cols-2 @4xl:gap-6">
 					<div className="space-y-4">
 						<div className="space-y-1.5">
 							<Label htmlFor="ci-title">Title</Label>
@@ -623,6 +962,29 @@ function ContainerForm({
 										d.title = next;
 									});
 								}}
+							/>
+						</div>
+						<div className="space-y-1.5">
+							<Label htmlFor="ci-key">
+								Key{" "}
+								<span className="text-muted-foreground/70">
+									— dotted group, e.g. M1.A
+								</span>
+							</Label>
+							<Input
+								id="ci-key"
+								data-testid="inspector-key"
+								value={task.key ?? ""}
+								onChange={(e) => {
+									const next = e.target.value;
+									mutateTask((d) => {
+										const trimmed = next.trim();
+										if (trimmed.length === 0) delete d.key;
+										else d.key = trimmed;
+									});
+								}}
+								placeholder="ungrouped"
+								className="font-mono text-xs"
 							/>
 						</div>
 						<div className="space-y-1.5">
@@ -715,6 +1077,30 @@ function ContainerForm({
 								</dd>
 							</dl>
 						</div>
+						{mcRollup && (
+							<div data-testid="container-monte-carlo">
+								<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+									Monte Carlo (worst descendant)
+								</h3>
+								<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+									<ScheduleStat
+										label="P50 finish"
+										tooltip="The realistic finish day of the latest descendant: across 1,500 simulated runs, half of them had everything in this container done by this date."
+										value={`${fmt(mcRollup.p50)} d`}
+									/>
+									<ScheduleStat
+										label="P90 finish"
+										tooltip="The safe finish day for the whole container: 90% of simulated runs finished every descendant by this date. Use it for stakeholder commitments."
+										value={`${fmt(mcRollup.p90)} d`}
+									/>
+									<ScheduleStat
+										label="Max criticality"
+										tooltip="The highest criticality score across all descendants. Tells you how often at least one task inside this container ended up on the project's critical path."
+										value={`${Math.round(mcRollup.maxCriticality * 100)}%`}
+									/>
+								</dl>
+							</div>
+						)}
 					</div>
 				</div>
 
