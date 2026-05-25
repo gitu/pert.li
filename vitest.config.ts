@@ -7,6 +7,12 @@ export default defineConfig({
 	resolve: { tsconfigPaths: true },
 	test: {
 		environment: "node",
-		include: ["src/**/*.test.{ts,tsx}"],
+		include: [
+			"src/**/*.test.{ts,tsx}",
+			// Loose ops scripts (CI helpers) live under scripts/ and ship as
+			// plain ESM so they can run via `node` from CI yaml. Their tests
+			// live next to them — pick them up too.
+			"scripts/**/*.test.mjs",
+		],
 	},
 });

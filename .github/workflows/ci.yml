@@ -80,15 +80,38 @@ jobs:
       - name: Build
         run: pnpm build
 
+  db-back-compat:
+    # PR-only: confirm the Drizzle schema in this branch doesn't drop any
+    # tables / columns that exist on the merge target. Because Cloud Build
+    # runs `db:push` before swapping the image, an older revision can still
+    # be live when the new schema lands — dropped columns would surface as
+    # "column does not exist" errors against the in-flight requests.
+    name: db schema backward compatibility
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # `git show <base>:src/db/schema.ts` needs the merge base in the
+          # local repo; the default shallow fetch only carries HEAD.
+          fetch-depth: 0
+
+      - name: Compare schema against ${{ github.base_ref }}
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: node scripts/check-db-back-compat.mjs
+
   e2e:
     name: playwright e2e
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       CI: "true"
-      # The Playwright config seeds the dev server with a stub DATABASE_URL
-      # and E2E_AUTH_MEMORY=1, so no real Postgres is needed. We still set
-      # BETTER_AUTH_SECRET to keep auth happy at module load.
+      # The Playwright config seeds the dev server with E2E_PGLITE=1, so an
+      # in-process Postgres handles all DB traffic — no real Postgres needed.
+      # We still set BETTER_AUTH_SECRET to keep auth happy at module load.
       BETTER_AUTH_SECRET: ci-only-not-secret
       ANTHROPIC_API_KEY: ci-placeholder
     steps:
