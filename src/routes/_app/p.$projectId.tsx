@@ -22,9 +22,13 @@ import { useEffect, useRef } from "react";
 import { CanvasLoading } from "#/components/canvas/canvas-loading";
 import { PertCanvas } from "#/components/pert/canvas/canvas";
 import { FullscreenInspectorPopup } from "#/components/pert/inspector/fullscreen-inspector-popup";
+import { MobileInspectorSheet } from "#/components/pert/inspector/mobile-inspector-sheet";
+import { TaskCardList } from "#/components/pert/list/task-card-list";
 import { TaskListView } from "#/components/pert/list/task-list-view";
+import { MatrixMobile } from "#/components/pert/matrix/matrix-mobile";
 import { MatrixView } from "#/components/pert/matrix/matrix-view";
 import { ProjectCalendarSheet } from "#/components/pert/project-calendar-sheet";
+import { TimelineMobile } from "#/components/pert/timeline/timeline-mobile";
 import { TimelineView } from "#/components/pert/timeline/timeline-view";
 import { Button } from "#/components/ui/button";
 import { authClient } from "#/lib/auth-client";
@@ -42,7 +46,9 @@ import {
 	setActiveProjectDoc,
 } from "#/lib/pert/store";
 import { useFullscreen } from "#/lib/use-fullscreen";
+import { useIsMobile } from "#/lib/use-media-query";
 import { cn } from "#/lib/utils";
+import { useViewMode } from "#/lib/view-mode";
 
 export type ProjectView = "network" | "timeline" | "table" | "matrix";
 
@@ -73,6 +79,7 @@ function ProjectCanvas() {
 	const search = useSearch({ from: "/_app/p/$projectId" });
 	const view: ProjectView = search.view ?? "network";
 	const repo = useOptionalRepo();
+	const isMobile = useIsMobile();
 
 	// Fullscreen at project level — wraps header tabs + active view + the
 	// floating inspector popup. The user can switch between Network /
@@ -90,12 +97,14 @@ function ProjectCanvas() {
 			data-fullscreen={fullscreenActive || undefined}
 			className="relative flex h-full flex-col overflow-hidden bg-background"
 		>
-			<ProjectViewHeader
-				projectId={projectId}
-				view={view}
-				fullscreen={fullscreenActive}
-				onToggleFullscreen={toggleFullscreen}
-			/>
+			{!isMobile && (
+				<ProjectViewHeader
+					projectId={projectId}
+					view={view}
+					fullscreen={fullscreenActive}
+					onToggleFullscreen={toggleFullscreen}
+				/>
+			)}
 			<div className="relative flex-1 overflow-hidden">
 				{repo ? (
 					<RepoReadyCanvas projectId={projectId} view={view} />
@@ -103,8 +112,15 @@ function ProjectCanvas() {
 					<CanvasLoading message="Initializing local sync repo…" />
 				)}
 			</div>
-			{fullscreenActive && selectedTaskId && (
-				<FullscreenInspectorPopup onClose={() => selectTask(projectId, null)} />
+			{isMobile ? (
+				<MobileInspectorSheet projectId={projectId} />
+			) : (
+				fullscreenActive &&
+				selectedTaskId && (
+					<FullscreenInspectorPopup
+						onClose={() => selectTask(projectId, null)}
+					/>
+				)
 			)}
 		</div>
 	);
@@ -262,6 +278,12 @@ function PertProjectPanel({
 		suspense: false,
 	});
 	const handle = useDocHandle<PertProjectDoc>(documentId, { suspense: false });
+	const { mode } = useViewMode();
+	// Mobile-readonly suppresses every inline edit affordance by withholding
+	// `changeDoc` from the shared store. Existing consumers (TaskInspector,
+	// TaskListView, MatrixView, CalendarSheet, …) already gate on
+	// `!changeDoc`, so this single null gate flips the entire surface.
+	const effectiveChangeDoc = mode === "mobile-readonly" ? null : changeDoc;
 
 	// Phase 1/2 docs were minted with `{ title, count }` only; back-fill the
 	// Phase 3 maps on first load so the CPM engine sees a well-typed PertDoc.
@@ -288,28 +310,62 @@ function PertProjectPanel({
 	// parent shell) can read and edit without a context provider snake.
 	useEffect(() => {
 		if (!doc || needsMigration) return;
-		setActiveProjectDoc(projectId, doc, changeDoc, handle ?? null);
-	}, [doc, changeDoc, handle, projectId, needsMigration]);
+		setActiveProjectDoc(projectId, doc, effectiveChangeDoc, handle ?? null);
+	}, [doc, effectiveChangeDoc, handle, projectId, needsMigration]);
 	useEffect(() => () => clearActiveProjectDoc(projectId), [projectId]);
 
 	if (!doc || needsMigration) {
 		return <CanvasLoading message="Loading document…" />;
 	}
 
+	// Canvas requires `changeDoc` to be a function (its drag/connect/auto-
+	// layout effects all call into it). In mobile-readonly we substitute a
+	// no-op so mutations silently drop — the toolbar add/delete actions are
+	// already disabled via `projectDocStore.changeDoc === null` (every
+	// caller reads through `getActiveDoc()` and bails).
+	const canvasChangeDoc = mode === "mobile-readonly" ? () => {} : changeDoc;
+
 	return (
 		<div className="h-full">
 			{handle && <PresenceBroadcaster projectId={projectId} handle={handle} />}
-			{view === "table" ? (
-				<TaskListView projectId={projectId} doc={doc} />
-			) : view === "timeline" ? (
-				<TimelineView projectId={projectId} doc={doc} />
-			) : view === "matrix" ? (
-				<MatrixView projectId={projectId} doc={doc} />
-			) : (
-				<PertCanvas projectId={projectId} doc={doc} changeDoc={changeDoc} />
-			)}
+			<MobileOrDesktopViews
+				projectId={projectId}
+				doc={doc}
+				changeDoc={canvasChangeDoc}
+				view={view}
+			/>
 		</div>
 	);
+}
+
+function MobileOrDesktopViews({
+	projectId,
+	doc,
+	changeDoc,
+	view,
+}: {
+	projectId: string;
+	doc: PertProjectDoc;
+	// biome-ignore lint/suspicious/noExplicitAny: changeDoc is Automerge's ChangeFn — the route type matches the rest of this file.
+	changeDoc: any;
+	view: ProjectView;
+}) {
+	const isMobile = useIsMobile();
+	if (isMobile) {
+		if (view === "table")
+			return <TaskCardList projectId={projectId} doc={doc} />;
+		if (view === "timeline")
+			return <TimelineMobile projectId={projectId} doc={doc} />;
+		if (view === "matrix")
+			return <MatrixMobile projectId={projectId} doc={doc} />;
+		// Network: same canvas as desktop, touch tweaks applied inside.
+		return <PertCanvas projectId={projectId} doc={doc} changeDoc={changeDoc} />;
+	}
+	if (view === "table") return <TaskListView projectId={projectId} doc={doc} />;
+	if (view === "timeline")
+		return <TimelineView projectId={projectId} doc={doc} />;
+	if (view === "matrix") return <MatrixView projectId={projectId} doc={doc} />;
+	return <PertCanvas projectId={projectId} doc={doc} changeDoc={changeDoc} />;
 }
 
 function PresenceBroadcaster({

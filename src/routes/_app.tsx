@@ -62,11 +62,13 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "#/components/ui/sheet";
+import { Toaster } from "#/components/ui/sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs";
 import { TooltipProvider } from "#/components/ui/tooltip";
 import { CreateProjectDialog } from "#/components/workspace/create-project-dialog";
 import { ProjectList } from "#/components/workspace/project-list";
 import { authClient } from "#/lib/auth-client";
+import { RepoProvider } from "#/lib/automerge/provider";
 import { chatDock, useChatDockMode } from "#/lib/chat-dock";
 import { setThemeMode, type ThemeMode, useThemeMode } from "#/lib/theme";
 import { useIsMobile } from "#/lib/use-media-query";
@@ -140,79 +142,85 @@ function AppShell() {
 
 	return (
 		<ViewModeProvider>
-			<TooltipProvider delayDuration={150}>
-				{isMobile ? (
-					<MobileShell
-						user={session.user}
-						inProject={inProject}
-						onNewProject={() => setCreateOpen(true)}
-						onEditProfile={() => setProfileOpen(true)}
-						onOpenProjects={() => setMobileProjectsOpen(true)}
-						onOpenHistory={() => setMobileHistoryOpen(true)}
-					/>
-				) : (
-					<DesktopShell
-						user={session.user}
-						inProject={inProject}
-						pinnedChat={pinnedChat}
-						setPinnedSlot={setPinnedSlot}
-						onNewProject={() => setCreateOpen(true)}
-						onEditProfile={() => setProfileOpen(true)}
-					/>
-				)}
-				{/* Hidden fallback host keeps ChatPanel mounted even when the chat is
+			<RepoProvider>
+				<TooltipProvider delayDuration={150}>
+					{isMobile ? (
+						<MobileShell
+							user={session.user}
+							inProject={inProject}
+							onNewProject={() => setCreateOpen(true)}
+							onEditProfile={() => setProfileOpen(true)}
+							onOpenProjects={() => setMobileProjectsOpen(true)}
+							onOpenHistory={() => setMobileHistoryOpen(true)}
+						/>
+					) : (
+						<DesktopShell
+							user={session.user}
+							inProject={inProject}
+							pinnedChat={pinnedChat}
+							setPinnedSlot={setPinnedSlot}
+							onNewProject={() => setCreateOpen(true)}
+							onEditProfile={() => setProfileOpen(true)}
+						/>
+					)}
+					{/* Hidden fallback host keeps ChatPanel mounted even when the chat is
 				    "closed" — toggling pin / sheet / closed doesn't unmount the chat,
 				    so the conversation survives every mode flip. Also keeps state
 				    across desktop ↔ mobile viewport flips. */}
-				<div ref={setFallbackSlot} aria-hidden className="hidden" />
-				{/* Sheet stays mounted; we just control its `open` from the dock state.
+					<div ref={setFallbackSlot} aria-hidden className="hidden" />
+					{/* Sheet stays mounted; we just control its `open` from the dock state.
 				    The slot div is the portal target when mode === "sheet". */}
-				<Sheet
-					open={dockMode === "sheet"}
-					onOpenChange={(open) => {
-						if (open) chatDock.openSheet();
-						else if (dockMode === "sheet") chatDock.close();
-					}}
-				>
-					<SheetContent
-						side="right"
-						className="flex w-full flex-col gap-0 p-0 sm:max-w-md"
+					<Sheet
+						open={dockMode === "sheet"}
+						onOpenChange={(open) => {
+							if (open) chatDock.openSheet();
+							else if (dockMode === "sheet") chatDock.close();
+						}}
 					>
-						<SheetHeader className="sr-only">
-							<SheetTitle>Project chat</SheetTitle>
-							<SheetDescription>
-								Conversation with the AI planning assistant.
-							</SheetDescription>
-						</SheetHeader>
-						<div ref={setSheetSlot} className="flex min-h-0 flex-1 flex-col" />
-					</SheetContent>
-				</Sheet>
-				<ChatHost target={chatTarget} />
-				{/* Mobile-only chrome — projects sidebar replacement and history
+						<SheetContent
+							side="right"
+							className="flex w-full flex-col gap-0 p-0 sm:max-w-md"
+						>
+							<SheetHeader className="sr-only">
+								<SheetTitle>Project chat</SheetTitle>
+								<SheetDescription>
+									Conversation with the AI planning assistant.
+								</SheetDescription>
+							</SheetHeader>
+							<div
+								ref={setSheetSlot}
+								className="flex min-h-0 flex-1 flex-col"
+							/>
+						</SheetContent>
+					</Sheet>
+					<ChatHost target={chatTarget} />
+					{/* Mobile-only chrome — projects sidebar replacement and history
 				    drawer. Kept here so the state lives alongside the other dialogs;
 				    rendering is gated by `isMobile` to avoid them ever opening on
 				    desktop. */}
-				{isMobile && (
-					<>
-						<MobileProjectsSheet
-							open={mobileProjectsOpen}
-							onOpenChange={setMobileProjectsOpen}
-							onNewProject={() => setCreateOpen(true)}
-						/>
-						<MobileHistorySheet
-							open={mobileHistoryOpen && inProject}
-							onOpenChange={setMobileHistoryOpen}
-						/>
-					</>
-				)}
-				<CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
-				<ProfileDialog
-					open={profileOpen}
-					onOpenChange={setProfileOpen}
-					user={session.user}
-					required={!sessionName}
-				/>
-			</TooltipProvider>
+					{isMobile && (
+						<>
+							<MobileProjectsSheet
+								open={mobileProjectsOpen}
+								onOpenChange={setMobileProjectsOpen}
+								onNewProject={() => setCreateOpen(true)}
+							/>
+							<MobileHistorySheet
+								open={mobileHistoryOpen && inProject}
+								onOpenChange={setMobileHistoryOpen}
+							/>
+						</>
+					)}
+					<CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
+					<ProfileDialog
+						open={profileOpen}
+						onOpenChange={setProfileOpen}
+						user={session.user}
+						required={!sessionName}
+					/>
+					<Toaster />
+				</TooltipProvider>
+			</RepoProvider>
 		</ViewModeProvider>
 	);
 }

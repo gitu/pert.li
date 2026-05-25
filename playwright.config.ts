@@ -88,8 +88,13 @@ export default defineConfig({
 				process.env.BETTER_AUTH_SECRET ??
 				"e2e-only-not-a-real-secret-0000000000000000",
 			VITE_NEON_DISABLE: "1",
+			// Marks the client bundle as running under Playwright. Used to hide
+			// dev-only floating UI (TanStack Devtools) that intercepts pointer
+			// events during touch interactions.
+			VITE_E2E: "1",
 			// Skip the Automerge sync WebSocket. Per-tab BroadcastChannel is
-			// still on; UI tests don't need cross-context replication.
+			// still on; UI tests that need real doc materialization will land
+			// once Phase 5's cross-worker DB-sharing story is in place.
 			VITE_E2E_DISABLE_SYNC: "1",
 			// Use in-process Postgres (PGLite) so workspace / project /
 			// audit-log queries work without provisioning Neon. See src/db/index.ts.

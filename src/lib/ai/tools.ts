@@ -17,6 +17,7 @@ import { z } from "zod";
 //    the execute site.
 
 const taskKindSchema = z.enum(["task", "milestone", "container"]);
+const taskStatusSchema = z.enum(["not_started", "in_progress", "completed"]);
 const estimateUnitSchema = z.enum(["hour", "day", "week"]);
 const dependencyTypeSchema = z.enum([
 	"finish_to_start",
@@ -32,10 +33,14 @@ const estimateSchema = z.object({
 	unit: estimateUnitSchema,
 });
 
+const isoDateSchema = z
+	.string()
+	.regex(/^\d{4}-\d{2}-\d{2}$/, "expected ISO yyyy-mm-dd date");
+
 export const readProjectTool = toolDefinition({
 	name: "read_project",
 	description:
-		"Read the active project: title, all tasks (id, title, kind, parentId, three-point estimate), and dependencies. Call this BEFORE proposing changes so you reference existing task ids instead of inventing new ones.",
+		"Read the active project: title, all tasks (id, title, kind, parentId, key, three-point estimate, status, progress, notes, actualStart/Finish), and dependencies (with type and optional lagDays). Call this BEFORE proposing changes so you reference existing task ids instead of inventing new ones.",
 	inputSchema: z.object({}),
 	outputSchema: z.object({
 		title: z.string(),
@@ -45,7 +50,13 @@ export const readProjectTool = toolDefinition({
 				title: z.string(),
 				kind: taskKindSchema,
 				parentId: z.string().nullable(),
+				key: z.string().optional(),
 				estimate: estimateSchema.optional(),
+				status: taskStatusSchema.optional(),
+				progress: z.number().optional(),
+				notes: z.string().optional(),
+				actualStart: z.string().optional(),
+				actualFinish: z.string().optional(),
 			}),
 		),
 		dependencies: z.array(
@@ -54,6 +65,7 @@ export const readProjectTool = toolDefinition({
 				fromTaskId: z.string().nullable(),
 				toTaskId: z.string().nullable(),
 				type: dependencyTypeSchema,
+				lagDays: z.number().optional(),
 			}),
 		),
 	}),
@@ -135,6 +147,98 @@ export const removeTaskTool = toolDefinition({
 	]),
 });
 
+const okOrErrorSchema = z.union([
+	z.object({ ok: z.literal(true) }),
+	z.object({ ok: z.literal(false), error: z.string() }),
+]);
+
+export const setKindTool = toolDefinition({
+	name: "set_kind",
+	description:
+		"Change a task's kind (task | milestone | container). Milestones drop their estimate; tasks gain a default 1/2/4 day estimate if they don't have one.",
+	inputSchema: z.object({ taskId: z.string(), kind: taskKindSchema }),
+	outputSchema: okOrErrorSchema,
+});
+
+export const setKeyTool = toolDefinition({
+	name: "set_key",
+	description:
+		"Set or clear a task's semantic grouping key (dotted, e.g. 'M1.A'). Pass an empty string or null to clear. Purely a grouping label — not a dependency or hierarchy.",
+	inputSchema: z.object({
+		taskId: z.string(),
+		key: z.string().nullable(),
+	}),
+	outputSchema: okOrErrorSchema,
+});
+
+export const setNotesTool = toolDefinition({
+	name: "set_notes",
+	description:
+		"Set or clear a task's free-form notes. Pass an empty string or null to clear.",
+	inputSchema: z.object({
+		taskId: z.string(),
+		notes: z.string().nullable(),
+	}),
+	outputSchema: okOrErrorSchema,
+});
+
+export const moveTaskTool = toolDefinition({
+	name: "move_task",
+	description:
+		"Reparent a task: move it into a container, or pass parentId=null to promote it to the top level. Fails on cycles or non-container targets.",
+	inputSchema: z.object({
+		taskId: z.string(),
+		parentId: z.string().nullable(),
+	}),
+	outputSchema: okOrErrorSchema,
+});
+
+export const setStatusTool = toolDefinition({
+	name: "set_status",
+	description:
+		"Update a task's status (not_started | in_progress | completed). Side-effects match the inspector: in_progress stamps actualStart (today) and ensures progress; completed sets progress=100 and stamps actualFinish (today); not_started clears progress and both actual dates.",
+	inputSchema: z.object({
+		taskId: z.string(),
+		status: taskStatusSchema,
+	}),
+	outputSchema: okOrErrorSchema,
+});
+
+export const setProgressTool = toolDefinition({
+	name: "set_progress",
+	description:
+		"Set a task's completion percentage (0–100, clamped). Flips status to in_progress when leaving 0, and to completed when reaching 100. Stamps actualStart/Finish (today) where appropriate.",
+	inputSchema: z.object({
+		taskId: z.string(),
+		progress: z.number(),
+	}),
+	outputSchema: okOrErrorSchema,
+});
+
+export const setActualDatesTool = toolDefinition({
+	name: "set_actual_dates",
+	description:
+		"Set or clear a task's recorded Started / Finished dates (ISO yyyy-mm-dd). Omit a field to leave it unchanged; pass null to clear it. Use this to backfill historical data without changing status.",
+	inputSchema: z.object({
+		taskId: z.string(),
+		actualStart: isoDateSchema.nullable().optional(),
+		actualFinish: isoDateSchema.nullable().optional(),
+	}),
+	outputSchema: okOrErrorSchema,
+});
+
+export const setDependencyTool = toolDefinition({
+	name: "set_dependency",
+	description:
+		"Edit an existing dependency: change its type (FS/SS/FF/SF) and/or lag (days; negative = lead). Omit a field to leave it unchanged; pass null for lagDays to clear it.",
+	inputSchema: z.object({
+		dependencyId: z.string(),
+		type: dependencyTypeSchema.optional(),
+		lagDays: z.number().nullable().optional(),
+	}),
+	outputSchema: okOrErrorSchema,
+});
+
 // Presents a multiple-choice question to the user. The tool itself just
 // acknowledges immediately; the UI surfaces the question + clickable chips
 // above the chat input. Clicking a chip sends `value` (falling back to
@@ -178,9 +282,17 @@ export const askChoiceTool = toolDefinition({
 export const CHAT_TOOL_DEFINITIONS = [
 	readProjectTool,
 	addTaskTool,
-	setEstimateTool,
 	setTitleTool,
+	setKindTool,
+	setKeyTool,
+	setNotesTool,
+	setEstimateTool,
+	setStatusTool,
+	setProgressTool,
+	setActualDatesTool,
+	moveTaskTool,
 	addDependencyTool,
+	setDependencyTool,
 	removeDependencyTool,
 	removeTaskTool,
 	askChoiceTool,

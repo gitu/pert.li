@@ -11,10 +11,11 @@ export function getBrowserRepo(): Repo {
 		throw new Error("getBrowserRepo() called outside the browser");
 	}
 	// In e2e mode we skip the WebSocket adapter entirely. The sync upgrade
-	// path needs a real DB to validate the session; with a stubbed
-	// DATABASE_URL the failed upgrade crashes the Nitro dev server's proxy.
-	// Public-surface tests (welcome / signin / privacy) don't need sync, so
-	// running with only the BroadcastChannel adapter is enough.
+	// path needs a real cross-worker DB; in PGLite e2e each Nitro worker has
+	// its own in-memory PGLite, so the WS handler's session lookup misses the
+	// signup row that the API handler wrote. UI tests that need to see the
+	// doc materialize aren't shipping in this iteration — Phase 5's sync
+	// spec will land once cross-worker DB sharing exists.
 	const disableSync = import.meta.env.VITE_E2E_DISABLE_SYNC === "1";
 	const wsUrl = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/sync`;
 	_repo = new Repo({

@@ -40,6 +40,7 @@ import { selectionStore, selectTask } from "#/lib/pert/store";
 import type { PertDoc, Task, TaskId } from "#/lib/pert/types";
 import { useMonteCarlo } from "#/lib/pert/use-monte-carlo";
 import { useResolvedTheme } from "#/lib/theme";
+import { useIsMobile } from "#/lib/use-media-query";
 import {
 	ContainerCollapsedNode,
 	ContainerExpandedNode,
@@ -385,6 +386,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	}, [projectId]);
 
 	const resolvedTheme = useResolvedTheme();
+	const isMobile = useIsMobile();
 
 	return (
 		<div className="relative h-full w-full bg-background">
@@ -399,14 +401,24 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				onPaneContextMenu={(e) => e.preventDefault()}
 				onDoubleClick={onPaneDoubleClick}
 				fitView
+				// React Flow's auto-fit slightly over-zooms on phone-sized
+				// viewports — small projects render at near 1×, hiding nearby
+				// nodes off-screen. A lower minimum lets two-finger pinch zoom
+				// out far enough to see the whole graph at once.
+				minZoom={isMobile ? 0.2 : 0.5}
 				deleteKeyCode={["Backspace", "Delete"]}
 				className="bg-background"
 				colorMode={resolvedTheme}
 				proOptions={{ hideAttribution: true }}
 			>
 				<Background gap={20} size={1} />
-				<Controls showInteractive={false} />
-				<MiniMap pannable zoomable className="!border !bg-card" />
+				{/* The default Controls strip overlaps the mobile bottom nav and
+				    isn't needed on touch where pinch + drag work natively. The
+				    MiniMap likewise eats 25% of a phone viewport. */}
+				{!isMobile && <Controls showInteractive={false} />}
+				{!isMobile && (
+					<MiniMap pannable zoomable className="!border !bg-card" />
+				)}
 			</ReactFlow>
 			<div className="pointer-events-none absolute top-3 left-1/2 z-10 -translate-x-1/2">
 				<div className="pointer-events-auto">

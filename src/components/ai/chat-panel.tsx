@@ -20,9 +20,17 @@ import { Textarea } from "#/components/ui/textarea";
 import {
 	addDependencyMutation,
 	addTaskMutation,
+	moveTaskMutation,
 	removeDependencyMutation,
 	removeTaskMutation,
+	setActualDatesMutation,
+	setDependencyMutation,
 	setEstimateMutation,
+	setKeyMutation,
+	setKindMutation,
+	setNotesMutation,
+	setProgressMutation,
+	setStatusMutation,
 	setTitleMutation,
 	summarizeProject,
 } from "#/lib/ai/tool-mutators";
@@ -30,10 +38,18 @@ import {
 	addDependencyTool,
 	addTaskTool,
 	askChoiceTool,
+	moveTaskTool,
 	readProjectTool,
 	removeDependencyTool,
 	removeTaskTool,
+	setActualDatesTool,
+	setDependencyTool,
 	setEstimateTool,
+	setKeyTool,
+	setKindTool,
+	setNotesTool,
+	setProgressTool,
+	setStatusTool,
 	setTitleTool,
 } from "#/lib/ai/tools";
 import {
@@ -49,6 +65,7 @@ import {
 import type { ChangeFn } from "#/lib/pert/store";
 import { projectDocStore } from "#/lib/pert/store";
 import type { PertDoc } from "#/lib/pert/types";
+import { useIsMobile } from "#/lib/use-media-query";
 import { cn } from "#/lib/utils";
 
 // Chat surface backed by the /api/chat SSE endpoint. The hook owns the
@@ -160,6 +177,78 @@ export function ChatPanel({
 					let result: ReturnType<typeof removeTaskMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = removeTaskMutation(d, args);
+					});
+					return result;
+				}),
+				setKindTool.client((args) => {
+					const active = getActiveDoc();
+					if (!active) return noActiveProject;
+					let result: ReturnType<typeof setKindMutation> = { ok: true };
+					active.changeDoc((d) => {
+						result = setKindMutation(d, args);
+					});
+					return result;
+				}),
+				setKeyTool.client((args) => {
+					const active = getActiveDoc();
+					if (!active) return noActiveProject;
+					let result: ReturnType<typeof setKeyMutation> = { ok: true };
+					active.changeDoc((d) => {
+						result = setKeyMutation(d, args);
+					});
+					return result;
+				}),
+				setNotesTool.client((args) => {
+					const active = getActiveDoc();
+					if (!active) return noActiveProject;
+					let result: ReturnType<typeof setNotesMutation> = { ok: true };
+					active.changeDoc((d) => {
+						result = setNotesMutation(d, args);
+					});
+					return result;
+				}),
+				moveTaskTool.client((args) => {
+					const active = getActiveDoc();
+					if (!active) return noActiveProject;
+					let result: ReturnType<typeof moveTaskMutation> = { ok: true };
+					active.changeDoc((d) => {
+						result = moveTaskMutation(d, args);
+					});
+					return result;
+				}),
+				setStatusTool.client((args) => {
+					const active = getActiveDoc();
+					if (!active) return noActiveProject;
+					let result: ReturnType<typeof setStatusMutation> = { ok: true };
+					active.changeDoc((d) => {
+						result = setStatusMutation(d, args);
+					});
+					return result;
+				}),
+				setProgressTool.client((args) => {
+					const active = getActiveDoc();
+					if (!active) return noActiveProject;
+					let result: ReturnType<typeof setProgressMutation> = { ok: true };
+					active.changeDoc((d) => {
+						result = setProgressMutation(d, args);
+					});
+					return result;
+				}),
+				setActualDatesTool.client((args) => {
+					const active = getActiveDoc();
+					if (!active) return noActiveProject;
+					let result: ReturnType<typeof setActualDatesMutation> = { ok: true };
+					active.changeDoc((d) => {
+						result = setActualDatesMutation(d, args);
+					});
+					return result;
+				}),
+				setDependencyTool.client((args) => {
+					const active = getActiveDoc();
+					if (!active) return noActiveProject;
+					let result: ReturnType<typeof setDependencyMutation> = { ok: true };
+					active.changeDoc((d) => {
+						result = setDependencyMutation(d, args);
 					});
 					return result;
 				}),
@@ -505,24 +594,30 @@ export function ChoicePrompt({
 function ChatDockControls() {
 	const mode = useChatDockMode();
 	const pinned = mode === "pinned";
+	// Pinning has no target on the mobile shell — there is no resizable column
+	// to dock into. Hide the pin control entirely so the user is not offered a
+	// non-functional affordance.
+	const isMobile = useIsMobile();
 	return (
 		<>
-			<Button
-				type="button"
-				size="icon"
-				variant="ghost"
-				className="size-7"
-				onClick={() => chatDock.togglePin()}
-				aria-label={pinned ? "Unpin chat" : "Pin chat to side"}
-				aria-pressed={pinned}
-				data-testid="chat-pin-toggle"
-			>
-				{pinned ? (
-					<PinOffIcon className="size-3.5" />
-				) : (
-					<PinIcon className="size-3.5" />
-				)}
-			</Button>
+			{!isMobile && (
+				<Button
+					type="button"
+					size="icon"
+					variant="ghost"
+					className="size-7"
+					onClick={() => chatDock.togglePin()}
+					aria-label={pinned ? "Unpin chat" : "Pin chat to side"}
+					aria-pressed={pinned}
+					data-testid="chat-pin-toggle"
+				>
+					{pinned ? (
+						<PinOffIcon className="size-3.5" />
+					) : (
+						<PinIcon className="size-3.5" />
+					)}
+				</Button>
+			)}
 			<Button
 				type="button"
 				size="icon"

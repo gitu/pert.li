@@ -8,7 +8,6 @@ import {
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
 import { CookieHint } from "../components/legal/cookie-hint";
 import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
-import { RepoProvider } from "../lib/automerge/provider";
 import { THEME_PRELOAD_SCRIPT, ThemeProvider } from "../lib/theme";
 import appCss from "../styles.css?url";
 
@@ -68,21 +67,30 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 			</head>
 			<body>
 				<ThemeProvider>
-					<RepoProvider>{children}</RepoProvider>
+					{/* RepoProvider is mounted by `_app.tsx` so unauthenticated routes
+					    (welcome, signin, privacy) never open the Automerge WebSocket
+					    to /sync — that endpoint rejects without a session and crashed
+					    the Nitro proxy when reached from a public page. */}
+					{children}
 					<CookieHint />
 				</ThemeProvider>
-				<TanStackDevtools
-					config={{
-						position: "bottom-right",
-					}}
-					plugins={[
-						{
-							name: "Tanstack Router",
-							render: <TanStackRouterDevtoolsPanel />,
-						},
-						TanStackQueryDevtools,
-					]}
-				/>
+				{/* The devtools floating launcher overlaps the mobile bottom
+				    nav and intercepts pointer events during e2e on phone
+				    viewports. Hide it whenever the harness signals e2e mode. */}
+				{import.meta.env.VITE_E2E !== "1" && (
+					<TanStackDevtools
+						config={{
+							position: "bottom-right",
+						}}
+						plugins={[
+							{
+								name: "Tanstack Router",
+								render: <TanStackRouterDevtoolsPanel />,
+							},
+							TanStackQueryDevtools,
+						]}
+					/>
+				)}
 				<Scripts />
 			</body>
 		</html>

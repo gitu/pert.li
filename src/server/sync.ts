@@ -50,18 +50,13 @@ function extractRequestHeaders(peer: unknown): Headers | null {
 }
 
 export default defineWebSocketHandler({
-	async upgrade(req) {
-		// Some crossws adapters consult an `upgrade` hook to allow/deny the
-		// handshake before any peer exists. Best-effort: if Better Auth says no
-		// session, return a 401 here. Adapters that don't surface this hook will
-		// rely on the `open` check below instead.
-		const auth_ = await auth.api
-			.getSession({ headers: req.headers })
-			.catch(() => null);
-		if (!auth_?.user?.id) {
-			return new Response("unauthorized", { status: 401 });
-		}
-	},
+	// No `upgrade` hook on purpose: Vite's dev HTTP proxy (httpxy) crashes the
+	// Node process with an unhandled rejection when an upstream WS upgrade is
+	// answered with a non-101 status, so returning 401 here would take down
+	// the dev server on the first unauthenticated /sync attempt. The `open`
+	// hook below already validates the session and closes the socket on
+	// failure, which is sufficient — an unauthenticated client just sees the
+	// connection close immediately.
 
 	async open(peer) {
 		const id = getPeerId(peer);

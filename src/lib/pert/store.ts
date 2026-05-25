@@ -57,10 +57,14 @@ export const projectDocStore = new Store<ProjectDocState>({
 	handle: null,
 });
 
+// `changeDoc` is nullable so callers can shove the doc into the store in
+// read-only mode (mobile-readonly view mode). Every downstream consumer
+// already gates inline edit affordances on `!changeDoc`, so passing null
+// gives them the read-only UI for free without per-component changes.
 export function setActiveProjectDoc(
 	projectId: string,
 	doc: PertDoc,
-	changeDoc: ChangeFn,
+	changeDoc: ChangeFn | null,
 	handle: DocHandle<PertDoc> | null,
 ) {
 	projectDocStore.setState((s) => {

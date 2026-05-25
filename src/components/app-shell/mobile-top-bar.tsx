@@ -1,12 +1,16 @@
 import { Link, useParams } from "@tanstack/react-router";
 import {
 	BotIcon,
+	EyeIcon,
 	HistoryIcon,
 	LayersIcon,
 	LogOutIcon,
 	MenuIcon,
+	PencilIcon,
 	UserCogIcon,
 } from "lucide-react";
+import { useRef } from "react";
+import { toast } from "sonner";
 import { UserAvatar } from "#/components/account/user-avatar";
 import { Button } from "#/components/ui/button";
 import {
@@ -19,6 +23,7 @@ import {
 } from "#/components/ui/dropdown-menu";
 import { authClient } from "#/lib/auth-client";
 import { chatDock, useChatDockMode } from "#/lib/chat-dock";
+import { useViewMode } from "#/lib/view-mode";
 
 // Mobile top bar — the phone-shell equivalent of the desktop TopBar. Kept
 // intentionally light: hamburger left, brand center, chat icon right, plus
@@ -61,6 +66,7 @@ export function MobileTopBar({
 				<span className="text-sm font-semibold tracking-tight">pert.li</span>
 			</Link>
 			<div className="flex-1" />
+			{inProject && <EditModeToggle />}
 			{inProject && (
 				<Button
 					type="button"
@@ -109,6 +115,39 @@ export function MobileTopBar({
 				</DropdownMenuContent>
 			</DropdownMenu>
 		</header>
+	);
+}
+
+function EditModeToggle() {
+	const { mode, setEditing } = useViewMode();
+	const editing = mode === "mobile-editing";
+	// Show the "editing enabled" hint once per session so the user knows the
+	// pencil flipped them into the same surface a desktop editor sees.
+	const toastedRef = useRef(false);
+	return (
+		<Button
+			type="button"
+			size="icon"
+			variant={editing ? "secondary" : "ghost"}
+			className="size-9"
+			onClick={() => {
+				const next = !editing;
+				setEditing(next);
+				if (next && !toastedRef.current) {
+					toastedRef.current = true;
+					toast("Editing enabled — changes sync immediately.");
+				}
+			}}
+			aria-label={editing ? "Stop editing" : "Enable editing"}
+			aria-pressed={editing}
+			data-testid="mobile-topbar-edit"
+		>
+			{editing ? (
+				<EyeIcon className="size-5" />
+			) : (
+				<PencilIcon className="size-5" />
+			)}
+		</Button>
 	);
 }
 

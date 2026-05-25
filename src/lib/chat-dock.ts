@@ -27,10 +27,25 @@ type ChatDockState = {
 
 export const CHAT_DOCK_KEY = "pertli.chatDock";
 
+// Phone-sized viewport check used to clamp the pinned mode out of existence
+// on mobile. The mobile shell has no pinned column to render into; allowing
+// the dock to be "pinned" there would surface a Chat icon that thinks the
+// chat is open while no panel is visible. We don't override storage — when
+// the user later returns on desktop, their pinned preference still applies.
+function isMobileViewport(): boolean {
+	if (typeof window === "undefined") return false;
+	return window.innerWidth < 768;
+}
+
 function readStoredMode(): ChatDockMode {
 	if (typeof window === "undefined") return "closed";
 	const raw = window.localStorage.getItem(CHAT_DOCK_KEY);
-	if (raw === "closed" || raw === "sheet" || raw === "pinned") return raw;
+	if (raw === "closed" || raw === "sheet" || raw === "pinned") {
+		// Pinned doesn't apply on mobile — start closed so the chat icon and
+		// sheet behaviour match what the user sees on screen.
+		if (raw === "pinned" && isMobileViewport()) return "closed";
+		return raw;
+	}
 	return "closed";
 }
 
@@ -65,6 +80,12 @@ export const chatDock = {
 		setMode("closed");
 	},
 	togglePin() {
+		// Pinning has no effect on a phone — the mobile shell only renders the
+		// sheet target. Flip to sheet so the chat actually opens for the user.
+		if (isMobileViewport()) {
+			setMode("sheet");
+			return;
+		}
 		const current = chatDockStore.state.mode;
 		setMode(current === "pinned" ? "sheet" : "pinned");
 	},
