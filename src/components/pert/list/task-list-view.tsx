@@ -175,6 +175,11 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 		{ id: "es", desc: false },
 	]);
 	const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
+	// "Edit all" mode flips every editable cell into its input variant at
+	// once, so the user can tab through and modify the whole table without
+	// double-clicking each cell. Declared early because column visibility
+	// below picks the active profile (view vs edit) based on it.
+	const [editAll, setEditAll] = useState(false);
 	// Column visibility has two independent profiles — one for the read-only
 	// view (focused, hides CPM internals) and one for the all-cells-editable
 	// view (shows everything by default since the user explicitly opened
@@ -238,11 +243,6 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 		null,
 	);
 	const [editingKeyId, setEditingKeyId] = useState<TaskId | null>(null);
-	// "Edit all" mode flips every editable cell into its input variant at
-	// once, so the user can tab through and modify the whole table without
-	// double-clicking each cell. Disabled when no changeDoc is available
-	// (read-only context like Storybook).
-	const [editAll, setEditAll] = useState(false);
 	// Group rows by their dotted `key`. Collapsed group paths live in a
 	// separate set so flipping the toggle off and back on keeps the user's
 	// open/closed state instead of resetting.
