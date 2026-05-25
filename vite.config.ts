@@ -15,8 +15,15 @@ import pglitePreWarm from "./pglite-vite-plugin.ts";
 // Load both `.env` and `.env.local` (local wins) so handlers see the keys.
 // Also stash the resolved project root so the nitro dev worker (separate
 // process, different cwd) can find the same files at module init.
+//
+// Exception: in e2e mode the Playwright harness sets a complete, opinionated
+// env via `webServer.env`. We must not let a developer's `.env.local` (with
+// e.g. a Neon URL, a low-entropy BETTER_AUTH_SECRET, or real LLM API keys)
+// override those values — both for correctness (the harness is supposed to
+// run against PGLite) and to keep tests deterministic across machines.
+const isE2E = process.env.E2E_PGLITE === "1" || process.env.VITE_E2E === "1";
 dotenv.config({ path: ".env", quiet: true });
-dotenv.config({ path: ".env.local", override: true, quiet: true });
+dotenv.config({ path: ".env.local", override: !isE2E, quiet: true });
 process.env.PROJECT_ROOT = process.cwd();
 
 // Default first-run experience uses an in-process Postgres (PGLite) on disk,

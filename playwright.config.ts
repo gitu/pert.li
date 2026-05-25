@@ -84,9 +84,13 @@ export default defineConfig({
 			DATABASE_URL:
 				process.env.DATABASE_URL ??
 				"postgresql://noop:noop@127.0.0.1:1/noop?sslmode=disable",
+			// 32-byte base64 secret — better-auth's "low-entropy" warning fires
+			// on repeated-character padding (the previous trailing-zero filler
+			// tripped it). This value is openssl-random; it is NOT a real
+			// production secret and only ever runs against PGLite in CI/local.
 			BETTER_AUTH_SECRET:
 				process.env.BETTER_AUTH_SECRET ??
-				"e2e-only-not-a-real-secret-0000000000000000",
+				"Yh3w2K0PpQrSt7Z9aBcDeF1GhJ4mN6vXyZ8qLwVtRbE=",
 			VITE_NEON_DISABLE: "1",
 			// Marks the client bundle as running under Playwright. Used to hide
 			// dev-only floating UI (TanStack Devtools) that intercepts pointer
