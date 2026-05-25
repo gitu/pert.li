@@ -14,6 +14,11 @@ import {
 } from "#/components/ui/select";
 import { Separator } from "#/components/ui/separator";
 import { Textarea } from "#/components/ui/textarea";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "#/components/ui/tooltip";
 import { getDescendants } from "#/lib/pert/hierarchy";
 import { rollupContainer } from "#/lib/pert/projection";
 import { readTaskConflicts } from "#/lib/pert/read-conflicts";
@@ -261,22 +266,43 @@ function TaskForm({
 				<div>
 					<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 						Computed schedule
+						<span className="ml-1 normal-case text-muted-foreground/70">
+							(days from project start)
+						</span>
 					</h3>
 					{sched ? (
 						<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
 							<ScheduleStat
 								label="Duration"
+								tooltip="How long this task takes once it starts. Computed from your PERT estimate as (optimistic + 4·most likely + pessimistic) / 6."
 								value={`${fmt(sched.duration)} d`}
 							/>
 							<ScheduleStat
 								label="Slack"
+								tooltip="Spare time before this task starts delaying the whole project. 0 days means it's on the critical path — any slip moves the finish date."
 								value={`${fmt(sched.slack)} d`}
 								highlight={sched.critical ? "critical" : undefined}
 							/>
-							<ScheduleStat label="ES" value={fmt(sched.earliestStart)} />
-							<ScheduleStat label="EF" value={fmt(sched.earliestFinish)} />
-							<ScheduleStat label="LS" value={fmt(sched.latestStart)} />
-							<ScheduleStat label="LF" value={fmt(sched.latestFinish)} />
+							<ScheduleStat
+								label="Earliest start"
+								tooltip="The earliest day this task can begin, given everything that has to finish first. (CPM: ES)"
+								value={fmt(sched.earliestStart)}
+							/>
+							<ScheduleStat
+								label="Earliest finish"
+								tooltip="Earliest start + duration. The earliest possible day this task could be done. (CPM: EF)"
+								value={fmt(sched.earliestFinish)}
+							/>
+							<ScheduleStat
+								label="Latest start"
+								tooltip="The latest day this task can begin without delaying the project finish. (CPM: LS)"
+								value={fmt(sched.latestStart)}
+							/>
+							<ScheduleStat
+								label="Latest finish"
+								tooltip="The latest day this task can end without delaying the project finish. (CPM: LF)"
+								value={fmt(sched.latestFinish)}
+							/>
 						</dl>
 					) : (
 						<p className="text-xs text-destructive">
@@ -323,16 +349,36 @@ function EstimateField({
 
 function ScheduleStat({
 	label,
+	tooltip,
 	value,
 	highlight,
 }: {
 	label: string;
+	tooltip: string;
 	value: string;
 	highlight?: "critical";
 }) {
 	return (
 		<>
-			<dt className="text-xs text-muted-foreground">{label}</dt>
+			<dt className="text-xs text-muted-foreground">
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<button
+							type="button"
+							aria-label={`What is ${label}?`}
+							className="cursor-help bg-transparent decoration-dotted underline-offset-4 hover:underline"
+						>
+							{label}
+						</button>
+					</TooltipTrigger>
+					<TooltipContent
+						side="left"
+						className="max-w-[260px] text-xs leading-snug"
+					>
+						{tooltip}
+					</TooltipContent>
+				</Tooltip>
+			</dt>
 			<dd
 				className={
 					highlight === "critical"
