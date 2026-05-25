@@ -10,10 +10,18 @@ import {
 	useSearch,
 } from "@tanstack/react-router";
 import { useStore } from "@tanstack/react-store";
-import { GridIcon, ListIcon, NetworkIcon, TimerIcon } from "lucide-react";
-import { useEffect } from "react";
+import {
+	GridIcon,
+	ListIcon,
+	MaximizeIcon,
+	MinimizeIcon,
+	NetworkIcon,
+	TimerIcon,
+} from "lucide-react";
+import { useEffect, useRef } from "react";
 import { CanvasLoading } from "#/components/canvas/canvas-loading";
 import { PertCanvas } from "#/components/pert/canvas/canvas";
+import { FullscreenInspectorPopup } from "#/components/pert/inspector/fullscreen-inspector-popup";
 import { TaskListView } from "#/components/pert/list/task-list-view";
 import { MatrixView } from "#/components/pert/matrix/matrix-view";
 import { TimelineView } from "#/components/pert/timeline/timeline-view";
@@ -28,8 +36,10 @@ import {
 import {
 	clearActiveProjectDoc,
 	selectionStore,
+	selectTask,
 	setActiveProjectDoc,
 } from "#/lib/pert/store";
+import { useFullscreen } from "#/lib/use-fullscreen";
 import { cn } from "#/lib/utils";
 
 export type ProjectView = "network" | "timeline" | "table" | "matrix";
@@ -62,9 +72,28 @@ function ProjectCanvas() {
 	const view: ProjectView = search.view ?? "network";
 	const repo = useOptionalRepo();
 
+	// Fullscreen at project level — wraps header tabs + active view + the
+	// floating inspector popup. The user can switch between Network /
+	// Timeline / Table / Matrix while staying in fullscreen.
+	const fullscreenRef = useRef<HTMLDivElement>(null);
+	const { active: fullscreenActive, toggle: toggleFullscreen } =
+		useFullscreen(fullscreenRef);
+	const selectedTaskId = useStore(selectionStore, (s) =>
+		s.projectId === projectId ? s.taskId : null,
+	);
+
 	return (
-		<div className="relative flex h-full flex-col overflow-hidden">
-			<ProjectViewHeader projectId={projectId} view={view} />
+		<div
+			ref={fullscreenRef}
+			data-fullscreen={fullscreenActive || undefined}
+			className="relative flex h-full flex-col overflow-hidden bg-background"
+		>
+			<ProjectViewHeader
+				projectId={projectId}
+				view={view}
+				fullscreen={fullscreenActive}
+				onToggleFullscreen={toggleFullscreen}
+			/>
 			<div className="relative flex-1 overflow-hidden">
 				{repo ? (
 					<RepoReadyCanvas projectId={projectId} view={view} />
@@ -72,6 +101,9 @@ function ProjectCanvas() {
 					<CanvasLoading message="Initializing local sync repo…" />
 				)}
 			</div>
+			{fullscreenActive && selectedTaskId && (
+				<FullscreenInspectorPopup onClose={() => selectTask(projectId, null)} />
+			)}
 		</div>
 	);
 }
@@ -90,9 +122,13 @@ const VIEW_TABS: Array<{
 function ProjectViewHeader({
 	projectId,
 	view,
+	fullscreen,
+	onToggleFullscreen,
 }: {
 	projectId: string;
 	view: ProjectView;
+	fullscreen: boolean;
+	onToggleFullscreen: () => void;
 }) {
 	const navigate = useNavigate();
 	const setView = (next: ProjectView) =>
@@ -126,6 +162,23 @@ function ProjectViewHeader({
 					/>
 				))}
 			</div>
+			<Button
+				type="button"
+				size="sm"
+				variant="ghost"
+				className="h-8 gap-1.5 text-xs"
+				onClick={onToggleFullscreen}
+				aria-pressed={fullscreen}
+				data-testid="project-fullscreen"
+				title={fullscreen ? "Exit fullscreen (Esc)" : "Enter fullscreen"}
+			>
+				{fullscreen ? (
+					<MinimizeIcon className="size-3.5" />
+				) : (
+					<MaximizeIcon className="size-3.5" />
+				)}
+				{fullscreen ? "Exit" : "Fullscreen"}
+			</Button>
 		</header>
 	);
 }

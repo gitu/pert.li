@@ -81,6 +81,12 @@ function AppShell() {
 	const [createOpen, setCreateOpen] = useState(false);
 	const dockMode = useChatDockMode();
 	const pinnedChat = dockMode === "pinned";
+	// The Details / History panel below the main view is project-scoped — it
+	// reads from the active project doc. On the workspace overview (and any
+	// other non-project route) it just shows an "open a project" empty state,
+	// so we hide it entirely there to keep the home page focused.
+	const leafParams = useParams({ strict: false }) as { projectId?: string };
+	const inProject = Boolean(leafParams.projectId);
 
 	// Refs into the collapsible panels so the topbar buttons can drive them
 	// imperatively (react-resizable-panels handles the size animation + min
@@ -126,6 +132,9 @@ function AppShell() {
 					onNewProject={() => setCreateOpen(true)}
 					leftCollapsed={leftCollapsed}
 					bottomCollapsed={bottomCollapsed}
+					// Hide the bottom-panel toggle on routes without a bottom
+					// panel — nothing to collapse.
+					showBottomToggle={inProject}
 					onToggleLeft={toggleLeft}
 					onToggleBottom={toggleBottom}
 				/>
@@ -153,33 +162,43 @@ function AppShell() {
 						<ResizableHandle withHandle />
 
 						<ResizablePanel
+							// Remount when the bottom panel toggles in/out so the new
+							// inner layout (vertical split vs single pane) doesn't fight
+							// react-resizable-panels' size accounting.
+							key={inProject ? "main-with-bottom" : "main-only"}
 							defaultSize={pinnedChat ? "54%" : "82%"}
 							minSize="30%"
 						>
-							<ResizablePanelGroup
-								orientation="vertical"
-								className="h-full w-full"
-							>
-								<ResizablePanel defaultSize="62%" minSize="30%">
-									<main className="h-full overflow-hidden">
-										<Outlet />
-									</main>
-								</ResizablePanel>
-								<ResizableHandle withHandle />
-								<ResizablePanel
-									panelRef={bottomRef}
-									defaultSize="38%"
-									minSize="14%"
-									collapsible
-									collapsedSize={0}
-									onResize={(size) =>
-										setBottomCollapsed(size.asPercentage === 0)
-									}
-									className="bg-card"
+							{inProject ? (
+								<ResizablePanelGroup
+									orientation="vertical"
+									className="h-full w-full"
 								>
-									<RightTabs />
-								</ResizablePanel>
-							</ResizablePanelGroup>
+									<ResizablePanel defaultSize="62%" minSize="30%">
+										<main className="h-full overflow-hidden">
+											<Outlet />
+										</main>
+									</ResizablePanel>
+									<ResizableHandle withHandle />
+									<ResizablePanel
+										panelRef={bottomRef}
+										defaultSize="38%"
+										minSize="14%"
+										collapsible
+										collapsedSize={0}
+										onResize={(size) =>
+											setBottomCollapsed(size.asPercentage === 0)
+										}
+										className="bg-card"
+									>
+										<RightTabs />
+									</ResizablePanel>
+								</ResizablePanelGroup>
+							) : (
+								<main className="h-full overflow-hidden">
+									<Outlet />
+								</main>
+							)}
 						</ResizablePanel>
 
 						{pinnedChat && (
@@ -208,6 +227,7 @@ function TopBar({
 	onNewProject,
 	leftCollapsed,
 	bottomCollapsed,
+	showBottomToggle,
 	onToggleLeft,
 	onToggleBottom,
 }: {
@@ -215,6 +235,7 @@ function TopBar({
 	onNewProject: () => void;
 	leftCollapsed: boolean;
 	bottomCollapsed: boolean;
+	showBottomToggle: boolean;
 	onToggleLeft: () => void;
 	onToggleBottom: () => void;
 }) {
@@ -269,24 +290,26 @@ function TopBar({
 				New project
 			</Button>
 			<ChatTrigger />
-			<Button
-				type="button"
-				size="icon"
-				variant="ghost"
-				className="size-8"
-				onClick={onToggleBottom}
-				aria-label={
-					bottomCollapsed ? "Show details panel" : "Hide details panel"
-				}
-				aria-pressed={!bottomCollapsed}
-				data-testid="topbar-toggle-bottom"
-			>
-				{bottomCollapsed ? (
-					<PanelBottomIcon className="size-4" />
-				) : (
-					<PanelBottomCloseIcon className="size-4" />
-				)}
-			</Button>
+			{showBottomToggle && (
+				<Button
+					type="button"
+					size="icon"
+					variant="ghost"
+					className="size-8"
+					onClick={onToggleBottom}
+					aria-label={
+						bottomCollapsed ? "Show details panel" : "Hide details panel"
+					}
+					aria-pressed={!bottomCollapsed}
+					data-testid="topbar-toggle-bottom"
+				>
+					{bottomCollapsed ? (
+						<PanelBottomIcon className="size-4" />
+					) : (
+						<PanelBottomCloseIcon className="size-4" />
+					)}
+				</Button>
+			)}
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<Button

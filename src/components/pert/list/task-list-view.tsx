@@ -120,6 +120,12 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
 	const [globalFilter, setGlobalFilter] = useState("");
 	const [editingId, setEditingId] = useState<TaskId | null>(null);
+	// Estimate editing is keyed separately so it can be live alongside (or
+	// instead of) title editing on a different row without one cancelling
+	// the other on focus changes.
+	const [editingEstimateId, setEditingEstimateId] = useState<TaskId | null>(
+		null,
+	);
 
 	const columns = useMemo<ColumnDef<TaskListRow>[]>(
 		() => [
@@ -193,16 +199,58 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 				header: () => <div className="text-right">Estimate</div>,
 				enableSorting: false,
 				cell: ({ row }) => {
-					const e = row.original.estimate;
+					const r = row.original;
+					const editing = editingEstimateId === r.id;
+					if (editing && changeDoc && r.kind !== "milestone") {
+						return (
+							<EstimateEdit
+								initial={
+									r.estimate ?? {
+										optimistic: 1,
+										mostLikely: 2,
+										pessimistic: 4,
+										unit: "day",
+									}
+								}
+								onCommit={(next) => {
+									changeDoc((d) => {
+										const t = d.tasksById[r.id];
+										if (!t) return;
+										t.estimate = next;
+									});
+									setEditingEstimateId(null);
+								}}
+								onCancel={() => setEditingEstimateId(null)}
+							/>
+						);
+					}
+					const e = r.estimate;
 					return (
-						<div className="text-right text-xs text-muted-foreground tabular-nums">
+						<button
+							type="button"
+							className="w-full text-right text-xs text-muted-foreground tabular-nums hover:text-foreground disabled:cursor-default"
+							disabled={!changeDoc || r.kind === "milestone"}
+							onDoubleClick={(ev) => {
+								ev.stopPropagation();
+								if (changeDoc && r.kind !== "milestone") {
+									setEditingEstimateId(r.id);
+								}
+							}}
+							title={
+								r.kind === "milestone"
+									? "Milestones don't have estimates"
+									: changeDoc
+										? "Double-click to edit"
+										: undefined
+							}
+						>
 							{e
 								? `${e.optimistic} / ${e.mostLikely} / ${e.pessimistic} ${e.unit[0]}`
 								: "—"}
-						</div>
+						</button>
 					);
 				},
-				size: 140,
+				size: 180,
 			},
 			{
 				accessorKey: "duration",
@@ -260,7 +308,7 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 				size: 90,
 			},
 		],
-		[editingId, changeDoc],
+		[editingId, editingEstimateId, changeDoc],
 	);
 
 	const table = useReactTable({
@@ -483,6 +531,99 @@ function TitleEdit({
 			className="h-7 text-xs"
 			data-testid="task-list-title-input"
 		/>
+	);
+}
+
+// Three small number inputs in a row for inline editing of the three-point
+// estimate. Enter / blur commits all three; Escape cancels. The unit picker
+// is kept out of this row — it changes rarely; users hop to the inspector
+// for that.
+function EstimateEdit({
+	initial,
+	onCommit,
+	onCancel,
+}: {
+	initial: Estimate;
+	onCommit: (next: Estimate) => void;
+	onCancel: () => void;
+}) {
+	const [optimistic, setOptimistic] = useState(String(initial.optimistic));
+	const [mostLikely, setMostLikely] = useState(String(initial.mostLikely));
+	const [pessimistic, setPessimistic] = useState(String(initial.pessimistic));
+
+	const commit = () => {
+		const parse = (s: string, fallback: number) => {
+			const n = Number.parseFloat(s);
+			return Number.isFinite(n) && n >= 0 ? n : fallback;
+		};
+		onCommit({
+			optimistic: parse(optimistic, initial.optimistic),
+			mostLikely: parse(mostLikely, initial.mostLikely),
+			pessimistic: parse(pessimistic, initial.pessimistic),
+			unit: initial.unit,
+		});
+	};
+
+	const inputClass =
+		"h-7 w-12 rounded border bg-background px-1 text-right text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring";
+
+	return (
+		// Form lets Enter submit naturally and avoids the a11y warning about
+		// onKeyDown on a static <div>. We still need to swallow the click so
+		// it doesn't bubble up and re-select the row.
+		<form
+			className="flex items-center justify-end gap-1"
+			onSubmit={(e) => {
+				e.preventDefault();
+				commit();
+			}}
+			onClick={(e) => e.stopPropagation()}
+			onKeyDown={(e) => {
+				if (e.key === "Escape") {
+					e.preventDefault();
+					onCancel();
+				}
+			}}
+		>
+			<input
+				type="number"
+				min={0}
+				step="0.5"
+				value={optimistic}
+				onChange={(e) => setOptimistic(e.target.value)}
+				onBlur={commit}
+				className={inputClass}
+				aria-label="Optimistic estimate"
+				data-testid="task-list-estimate-o"
+			/>
+			<span className="text-muted-foreground">/</span>
+			<input
+				type="number"
+				min={0}
+				step="0.5"
+				value={mostLikely}
+				onChange={(e) => setMostLikely(e.target.value)}
+				onBlur={commit}
+				className={inputClass}
+				aria-label="Most likely estimate"
+				data-testid="task-list-estimate-m"
+			/>
+			<span className="text-muted-foreground">/</span>
+			<input
+				type="number"
+				min={0}
+				step="0.5"
+				value={pessimistic}
+				onChange={(e) => setPessimistic(e.target.value)}
+				onBlur={commit}
+				className={inputClass}
+				aria-label="Pessimistic estimate"
+				data-testid="task-list-estimate-p"
+			/>
+			<span className="ml-0.5 text-[10px] text-muted-foreground">
+				{initial.unit[0]}
+			</span>
+		</form>
 	);
 }
 

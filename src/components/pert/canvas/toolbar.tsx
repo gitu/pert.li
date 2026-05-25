@@ -2,8 +2,6 @@ import {
 	CircleDotIcon,
 	FolderPlusIcon,
 	LayoutGridIcon,
-	MaximizeIcon,
-	MinimizeIcon,
 	PlusIcon,
 	Settings2Icon,
 	Trash2Icon,
@@ -38,8 +36,6 @@ export type CanvasToolbarProps = {
 	onSetEdgeStyle: (style: EdgeStyle) => void;
 	onSetSpacing: (spacing: LayoutSpacing) => void;
 	onRelayout: () => void;
-	fullscreen: boolean;
-	onToggleFullscreen: () => void;
 };
 
 export function CanvasToolbar({
@@ -51,8 +47,6 @@ export function CanvasToolbar({
 	onSetEdgeStyle,
 	onSetSpacing,
 	onRelayout,
-	fullscreen,
-	onToggleFullscreen,
 }: CanvasToolbarProps) {
 	return (
 		<div
@@ -182,22 +176,6 @@ export function CanvasToolbar({
 					</DropdownMenuItem>
 				</DropdownMenuContent>
 			</DropdownMenu>
-			<Separator orientation="vertical" className="mx-1 h-5" />
-			<Button
-				size="sm"
-				variant="ghost"
-				className="h-8 gap-1.5 text-xs"
-				onClick={onToggleFullscreen}
-				data-testid="toolbar-fullscreen"
-				title={fullscreen ? "Exit fullscreen (Esc)" : "Enter fullscreen"}
-			>
-				{fullscreen ? (
-					<MinimizeIcon className="size-3.5" />
-				) : (
-					<MaximizeIcon className="size-3.5" />
-				)}
-				{fullscreen ? "Exit" : "Fullscreen"}
-			</Button>
 		</div>
 	);
 }

@@ -27,6 +27,7 @@ import {
 import { toggleCollapse, useCollapsedSet } from "#/lib/pert/collapse";
 import { cycleEdgeSet, cycleTaskSet } from "#/lib/pert/cycle";
 import { computeLayout, fallbackGridLayout } from "#/lib/pert/layout";
+import type { MonteCarloResult } from "#/lib/pert/montecarlo";
 import { type ProjectedNode, projectGraph } from "#/lib/pert/projection";
 import {
 	canReparent,
@@ -37,6 +38,7 @@ import {
 import { computeSchedule } from "#/lib/pert/schedule";
 import { selectionStore, selectTask } from "#/lib/pert/store";
 import type { PertDoc, Task, TaskId } from "#/lib/pert/types";
+import { useMonteCarlo } from "#/lib/pert/use-monte-carlo";
 import { useResolvedTheme } from "#/lib/theme";
 import {
 	ContainerCollapsedNode,
@@ -80,10 +82,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const prefs = useCanvasPrefs(projectId);
 	const collapsedSet = useCollapsedSet(projectId);
 	useAutoLayout(doc, changeDoc, prefs.spacing, collapsedSet);
-	const fullscreenContainerRef = useRef<HTMLDivElement | null>(null);
-	const { active: fullscreenActive, toggle: toggleFullscreen } = useFullscreen(
-		fullscreenContainerRef,
-	);
 
 	const handleRelayout = useCallback(async () => {
 		const positions = await computeLayout(doc, {
@@ -150,6 +148,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		[changeDoc, collapsedSet, doc, projectId],
 	);
 
+	const mc = useMonteCarlo(doc, { trials: 1500 });
 	const derivedNodes = useMemo(
 		() =>
 			buildNodes(
@@ -158,8 +157,16 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				scheduleResult,
 				onContainerToggle,
 				cycleTaskIds,
+				mc.result,
 			),
-		[doc, projection, scheduleResult, onContainerToggle, cycleTaskIds],
+		[
+			doc,
+			projection,
+			scheduleResult,
+			onContainerToggle,
+			cycleTaskIds,
+			mc.result,
+		],
 	);
 	const derivedEdges = useMemo(
 		() => buildEdges(projection, cycleEdgeIds, prefs.edgeStyle),
@@ -195,18 +202,13 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				if (change.type !== "position" || !change.position) {
 					if (change.type === "remove") {
 						removeTaskFromDoc(changeDoc, change.id);
-					} else if (change.type === "select") {
-						if (change.selected) {
-							selectTask(projectId, change.id);
-						} else {
-							const current = selectionStore.state;
-							if (
-								current.projectId === projectId &&
-								current.taskId === change.id
-							) {
-								selectTask(projectId, null);
-							}
-						}
+					} else if (change.type === "select" && change.selected) {
+						// Only mirror "selected: true" into our store. React Flow can
+						// fire `selected: false` for reasons unrelated to user intent
+						// (resize during fullscreen toggle, node-list re-syncs), and
+						// silently clearing the selection there hides the fullscreen
+						// inspector popup. Explicit deselection lives in onPaneClick.
+						selectTask(projectId, change.id);
 					}
 					continue;
 				}
@@ -385,11 +387,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const resolvedTheme = useResolvedTheme();
 
 	return (
-		<div
-			ref={fullscreenContainerRef}
-			data-fullscreen={fullscreenActive || undefined}
-			className="relative h-full w-full bg-background"
-		>
+		<div className="relative h-full w-full bg-background">
 			<ReactFlow
 				nodes={nodes}
 				edges={edges}
@@ -421,8 +419,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 						onSetEdgeStyle={handleSetEdgeStyle}
 						onSetSpacing={handleSetSpacing}
 						onRelayout={handleRelayout}
-						fullscreen={fullscreenActive}
-						onToggleFullscreen={toggleFullscreen}
 					/>
 				</div>
 			</div>
@@ -481,6 +477,7 @@ function buildNodes(
 	scheduleResult: ReturnType<typeof computeSchedule>,
 	onToggleContainer: (taskId: TaskId) => void,
 	cycleTaskIds: ReadonlySet<TaskId>,
+	mcResult: MonteCarloResult | null,
 ): Node[] {
 	const fallback = fallbackGridLayout(doc);
 	const schedule = scheduleResult.ok ? scheduleResult.schedule : null;
@@ -541,7 +538,15 @@ function buildNodes(
 				zIndex: 1,
 			});
 		} else {
-			pushLeafNode(nodes, projected, doc, fallback, schedule, cycleTaskIds);
+			pushLeafNode(
+				nodes,
+				projected,
+				doc,
+				fallback,
+				schedule,
+				cycleTaskIds,
+				mcResult,
+			);
 		}
 	}
 
@@ -560,10 +565,12 @@ function pushLeafNode(
 		? S | null
 		: never,
 	cycleTaskIds: ReadonlySet<TaskId>,
+	mcResult: MonteCarloResult | null,
 ) {
 	const task = projected.task;
 	const pos = task.layout?.position ?? fallback[task.id] ?? { x: 0, y: 0 };
 	const sched = schedule?.tasks[task.id];
+	const mcTask = mcResult?.tasks[task.id];
 	const data: TaskNodeData = {
 		title: task.title,
 		kind: task.kind === "milestone" ? "milestone" : "task",
@@ -572,6 +579,9 @@ function pushLeafNode(
 		critical: sched?.critical ?? false,
 		hasEstimate: Boolean(task.estimate),
 		cycle: cycleTaskIds.has(task.id),
+		status: sched?.status ?? task.status ?? "not_started",
+		progress: sched?.progress ?? task.progress ?? 0,
+		criticality: mcTask?.criticality,
 	};
 	nodes.push({
 		id: task.id,
@@ -725,48 +735,6 @@ function useAutoLayout(
 			cancelled = true;
 		};
 	}, [doc, changeDoc, spacing, collapsed]);
-}
-
-// Fullscreen toggle via the browser Fullscreen API, with a class-based
-// fallback for environments (Storybook in some iframes, Safari quirks)
-// where requestFullscreen is unavailable or rejected.
-function useFullscreen(ref: React.RefObject<HTMLElement | null>): {
-	active: boolean;
-	toggle: () => void;
-} {
-	const [active, setActive] = useState(false);
-
-	useEffect(() => {
-		const onChange = () => {
-			setActive(Boolean(document.fullscreenElement));
-		};
-		document.addEventListener("fullscreenchange", onChange);
-		return () => document.removeEventListener("fullscreenchange", onChange);
-	}, []);
-
-	const toggle = useCallback(() => {
-		const node = ref.current;
-		if (!node) return;
-		const fsEl = document.fullscreenElement;
-		if (fsEl) {
-			void document.exitFullscreen();
-			return;
-		}
-		const request = node.requestFullscreen?.bind(node);
-		if (request) {
-			request().catch(() => {
-				// Fallback: just toggle a class so the panel covers the viewport
-				// — better than no fullscreen at all on weird browsers.
-				node.classList.toggle("pertli-fullscreen-fallback");
-				setActive(node.classList.contains("pertli-fullscreen-fallback"));
-			});
-		} else {
-			node.classList.toggle("pertli-fullscreen-fallback");
-			setActive(node.classList.contains("pertli-fullscreen-fallback"));
-		}
-	}, [ref]);
-
-	return { active, toggle };
 }
 
 function createTask(
