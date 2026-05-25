@@ -1,9 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowRightIcon, FolderPlusIcon, UsersIcon } from "lucide-react";
+import {
+	ArrowRightIcon,
+	FolderPlusIcon,
+	UploadIcon,
+	UsersIcon,
+} from "lucide-react";
 import { useState } from "react";
 import { Button } from "#/components/ui/button";
 import { CreateProjectDialog } from "#/components/workspace/create-project-dialog";
+import { ImportProjectDialog } from "#/components/workspace/import-project-dialog";
 import { InviteMemberDialog } from "#/components/workspace/invite-member-dialog";
 import { TutorialCard } from "#/components/workspace/tutorial-card";
 import { listProjects } from "#/server/workspace.ts";
@@ -19,6 +25,7 @@ export const Route = createFileRoute("/_app/")({
 
 function WorkspaceHome() {
 	const [createOpen, setCreateOpen] = useState(false);
+	const [importOpen, setImportOpen] = useState(false);
 	const [inviteOpen, setInviteOpen] = useState(false);
 	const projectsQuery = useQuery({
 		queryKey: ["projects"],
@@ -46,6 +53,14 @@ function WorkspaceHome() {
 					<Button onClick={() => setCreateOpen(true)}>
 						<FolderPlusIcon className="size-4" />
 						New project
+					</Button>
+					<Button
+						variant="secondary"
+						onClick={() => setImportOpen(true)}
+						data-testid="workspace-import-project"
+					>
+						<UploadIcon className="size-4" />
+						Import project
 					</Button>
 					<Button
 						variant="secondary"
@@ -106,6 +121,7 @@ function WorkspaceHome() {
 			</section>
 
 			<CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
+			<ImportProjectDialog open={importOpen} onOpenChange={setImportOpen} />
 			<InviteMemberDialog
 				workspaceId={workspaceId}
 				open={inviteOpen}

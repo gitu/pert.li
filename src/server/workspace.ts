@@ -1,7 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
+import { fromExchange } from "#/lib/pert/exchange";
 import {
 	createProjectInput,
 	getProjectInput,
+	importProjectInput,
 	inviteMemberInput,
 } from "#/types/workspace-schemas";
 
@@ -62,6 +64,36 @@ export const createProject = createServerFn({ method: "POST" })
 			workspaceId,
 			title: data.title,
 			createdBy: session.userId,
+		});
+	});
+
+// Same auth + workspace logic as `createProject`, but seeds the new doc from
+// a validated PertExchange payload instead of starting empty. The exchange
+// schema runs in `importProjectInput`, so by the time we reach the handler
+// the payload is guaranteed well-formed.
+export const importProject = createServerFn({ method: "POST" })
+	.inputValidator(importProjectInput)
+	.handler(async ({ data }) => {
+		const {
+			requireSession,
+			ensurePersonalWorkspace,
+			getWorkspaceRole,
+			createProjectRow,
+		} = await helpers();
+		const session = await requireSession();
+		const workspaceId =
+			data.workspaceId ??
+			(await ensurePersonalWorkspace(session.userId, session.name));
+		const role = await getWorkspaceRole(session.userId, workspaceId);
+		if (!role) throw new Error("Not a member of this workspace");
+		const title = (data.title ?? data.exchange.title).trim();
+		if (!title) throw new Error("Project title is required");
+		const initialDoc = fromExchange(data.exchange, { title });
+		return createProjectRow({
+			workspaceId,
+			title,
+			createdBy: session.userId,
+			initialDoc,
 		});
 	});
 

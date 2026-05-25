@@ -9,7 +9,7 @@ import {
 	workspace,
 	workspaceMember,
 } from "#/db/schema";
-import { createEmptyPertDoc } from "#/lib/pert/types";
+import { createEmptyPertDoc, type PertDoc } from "#/lib/pert/types";
 import type { ProjectSummary, WorkspaceRole } from "#/types/workspace";
 import { getServerRepo } from "./automerge-server.server.ts";
 
@@ -91,9 +91,17 @@ export async function createProjectRow(opts: {
 	workspaceId: string;
 	title: string;
 	createdBy: string;
+	// Optional seed doc — used by the import flow to start a new project from
+	// an uploaded .pert.json instead of an empty one. The title field on the
+	// passed doc is overridden with `opts.title` so the DB row and the doc
+	// title stay consistent.
+	initialDoc?: PertDoc;
 }): Promise<ProjectSummary> {
 	const repo = getServerRepo();
-	const handle = repo.create(createEmptyPertDoc(opts.title));
+	const seed = opts.initialDoc
+		? { ...opts.initialDoc, title: opts.title }
+		: createEmptyPertDoc(opts.title);
+	const handle = repo.create(seed);
 	const id = randomUUID();
 	await db.insert(project).values({
 		id,
