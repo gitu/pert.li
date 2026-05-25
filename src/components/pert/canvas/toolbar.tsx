@@ -51,7 +51,12 @@ export function CanvasToolbar({
 	return (
 		<div
 			data-testid="canvas-toolbar"
-			className="flex items-center gap-1 rounded-lg border bg-background/95 px-1.5 py-1 shadow-sm backdrop-blur"
+			// `flex-wrap` lets the toolbar spill onto a second row on narrow
+			// viewports instead of overflowing horizontally and clipping the
+			// last few buttons. `justify-center` keeps the wrapped row aligned
+			// under the first one. Separators are intentionally NOT hidden when
+			// wrapped — they still mark the grouping even when stacked.
+			className="flex flex-wrap items-center justify-center gap-1 rounded-lg border bg-background/95 px-1.5 py-1 shadow-sm backdrop-blur"
 		>
 			<Button
 				size="sm"

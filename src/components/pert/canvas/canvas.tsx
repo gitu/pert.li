@@ -26,6 +26,10 @@ import {
 } from "#/lib/pert/canvas-prefs";
 import { toggleCollapse, useCollapsedSet } from "#/lib/pert/collapse";
 import { cycleEdgeSet, cycleTaskSet } from "#/lib/pert/cycle";
+import {
+	ensureContainerInterfaces,
+	removeContainerInterfaces,
+} from "#/lib/pert/interfaces";
 import { computeLayout, fallbackGridLayout } from "#/lib/pert/layout";
 import type { MonteCarloResult } from "#/lib/pert/montecarlo";
 import { type ProjectedNode, projectGraph } from "#/lib/pert/projection";
@@ -446,7 +450,13 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 					<MiniMap pannable zoomable className="!border !bg-card" />
 				)}
 			</ReactFlow>
-			<div className="pointer-events-none absolute top-3 left-1/2 z-10 -translate-x-1/2">
+			<div
+				// Cap the toolbar's width to the canvas viewport minus a small
+				// margin so its inner row can actually wrap on narrow screens.
+				// Without this the toolbar's intrinsic width stays wider than
+				// the viewport and overflows / clips on mobile.
+				className="pointer-events-none absolute top-3 left-1/2 z-10 max-w-[calc(100%-1.5rem)] -translate-x-1/2"
+			>
 				<div className="pointer-events-auto">
 					<CanvasToolbar
 						onAddTask={() => handleAddTask("task")}
@@ -809,6 +819,7 @@ function createTask(
 			};
 		}
 		d.tasksById[id] = base;
+		if (kind === "container") ensureContainerInterfaces(d, id);
 	});
 	onCreated?.(id);
 }
@@ -818,6 +829,7 @@ function removeTaskFromDoc(
 	taskId: TaskId,
 ) {
 	changeDoc((d) => {
+		const wasContainer = d.tasksById[taskId]?.kind === "container";
 		delete d.tasksById[taskId];
 		for (const [depId, dep] of Object.entries(d.dependenciesById)) {
 			if (dep.from.taskId === taskId || dep.to.taskId === taskId) {
@@ -830,6 +842,7 @@ function removeTaskFromDoc(
 		for (const t of Object.values(d.tasksById)) {
 			if (t.parentId === taskId) t.parentId = null;
 		}
+		if (wasContainer) removeContainerInterfaces(d, taskId);
 	});
 }
 

@@ -21,6 +21,7 @@ import {
 import { useEffect, useRef } from "react";
 import { CanvasLoading } from "#/components/canvas/canvas-loading";
 import { PertCanvas } from "#/components/pert/canvas/canvas";
+import { ExportProjectButton } from "#/components/pert/exchange/export-button";
 import { FullscreenInspectorPopup } from "#/components/pert/inspector/fullscreen-inspector-popup";
 import { MobileInspectorSheet } from "#/components/pert/inspector/mobile-inspector-sheet";
 import { TaskCardList } from "#/components/pert/list/task-card-list";
@@ -38,6 +39,7 @@ import {
 	type PertProjectDoc,
 	useProjectDoc,
 } from "#/lib/automerge/use-project-doc";
+import { ensureContainerInterfaces } from "#/lib/pert/interfaces";
 import {
 	clearActiveProjectDoc,
 	projectDocStore,
@@ -157,7 +159,12 @@ function ProjectViewHeader({
 			replace: true,
 		});
 	return (
-		<header className="flex h-10 shrink-0 items-center gap-2 border-b bg-card/40 px-3">
+		<header
+			// `min-h-10` instead of `h-10` so the row can grow taller when the
+			// view tabs + project chrome don't fit on a single line on narrow
+			// mobile viewports. `flex-wrap` lets them spill onto a second row.
+			className="flex min-h-10 shrink-0 flex-wrap items-center gap-2 border-b bg-card/40 px-3 py-1"
+		>
 			<div className="flex items-center gap-1.5 text-xs">
 				<NetworkIcon className="size-3.5" />
 				<span className="font-medium">project</span>
@@ -181,6 +188,7 @@ function ProjectViewHeader({
 				))}
 			</div>
 			<HeaderCalendarSheet projectId={projectId} />
+			<HeaderExportButton projectId={projectId} />
 			<Button
 				type="button"
 				size="sm"
@@ -206,6 +214,12 @@ function HeaderCalendarSheet({ projectId }: { projectId: string }) {
 	const { doc, changeDoc, projectId: activeId } = useStore(projectDocStore);
 	if (!doc || !changeDoc || activeId !== projectId) return null;
 	return <ProjectCalendarSheet doc={doc} changeDoc={changeDoc} />;
+}
+
+function HeaderExportButton({ projectId }: { projectId: string }) {
+	const { doc, projectId: activeId } = useStore(projectDocStore);
+	if (!doc || activeId !== projectId) return null;
+	return <ExportProjectButton doc={doc} />;
 }
 
 function ViewTab({
@@ -304,6 +318,35 @@ function PertProjectPanel({
 			if ("count" in legacy) delete legacy.count;
 		});
 	}, [needsMigration, changeDoc]);
+
+	// Pre-rework containers were created without default Entry/Exit interfaces.
+	// Backfill them once on first load so cross-boundary edges have a port to
+	// route through when the container collapses. Idempotent — re-runs only
+	// touch containers that are still missing a default.
+	const containersMissingInterfaces =
+		doc && doc.tasksById && doc.interfacesByContainerId
+			? Object.values(doc.tasksById).filter((t) => {
+					if (t.kind !== "container") return false;
+					const bucket = doc.interfacesByContainerId[t.id];
+					if (!bucket) return true;
+					const kinds = new Set<string>();
+					for (const i of Object.values(bucket)) kinds.add(i.kind);
+					return !kinds.has("entry") || !kinds.has("exit");
+				})
+			: [];
+	const containerBackfillKey = containersMissingInterfaces
+		.map((t) => t.id)
+		.join(",");
+	useEffect(() => {
+		if (needsMigration || containerBackfillKey === "") return;
+		changeDoc((d) => {
+			for (const id of containerBackfillKey.split(",")) {
+				if (d.tasksById[id]?.kind === "container") {
+					ensureContainerInterfaces(d, id);
+				}
+			}
+		});
+	}, [needsMigration, containerBackfillKey, changeDoc]);
 
 	// Lift the active doc + handle into the cross-pane store so the right
 	// inspector, history drawer, and presence overlays (which live in the
