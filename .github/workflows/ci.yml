@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel older runs for the same branch / PR — saves Actions minutes when
+# new pushes land while a run is still going.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: check + test + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # Build/test rely on these being present (even if dummy) — the
+      # Automerge sync server reads DATABASE_URL at import time, and the
+      # AI provider abstraction sniffs at least one key.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      BETTER_AUTH_SECRET: ci-only-not-secret
+      ANTHROPIC_API_KEY: ci-placeholder
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.3.0
+          # The pre-approved build scripts (esbuild, swc, etc.) need to run
+          # for native modules; pnpm refuses by default in CI without this.
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Approve build scripts
+        # pnpm 11 requires explicit approval for postinstall scripts even when
+        # listed in pnpm.onlyBuiltDependencies. --all is fine here because
+        # the allowlist is already declared in package.json.
+        run: pnpm approve-builds --all
+        continue-on-error: true
+
+      - name: Biome (lint + format + organizeImports)
+        run: pnpm check
+
+      - name: Vitest
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build

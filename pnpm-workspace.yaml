@@ -2,6 +2,7 @@ allowBuilds:
   '@google/genai': true
   '@swc/core': true
   cbor-extract: true
-  esbuild: set this to true or false
+  esbuild: true
+  lightningcss: true
   protobufjs: true
-  unrs-resolver: set this to true or false
+  unrs-resolver: true

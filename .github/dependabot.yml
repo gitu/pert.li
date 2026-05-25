@@ -1,0 +1,55 @@
+version: 2
+
+updates:
+  # npm dependencies — weekly, all non-major changes bundled into one PR.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+    versioning-strategy: increase
+    groups:
+      # One MR per week for everything that doesn't change a major version.
+      # Major bumps open as separate PRs so a problematic one doesn't block
+      # the routine refresh.
+      non-major:
+        applies-to: version-updates
+        update-types:
+          - patch
+          - minor
+      # Same idea for security fixes — bundle the easy ones; high-risk
+      # majors come in alone.
+      security-non-major:
+        applies-to: security-updates
+        update-types:
+          - patch
+          - minor
+    # Nitro is intentionally pulled from the nightly channel — exclude it
+    # from automatic bumps, we'd rather review nightly drift by hand.
+    ignore:
+      - dependency-name: nitro
+
+  # GitHub Actions versions in .github/workflows/*. Same weekly + group
+  # strategy. Major action updates land separately.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - github-actions
+    groups:
+      non-major:
+        applies-to: version-updates
+        update-types:
+          - patch
+          - minor
