@@ -12,11 +12,11 @@ updates:
     open-pull-requests-limit: 10
     labels:
       - dependencies
-    # Wait 2 days after a release publishes before opening a PR. Filters
+    # Wait 3 days after a release publishes before opening a PR. Filters
     # out 0-day breakage and malicious-package incidents that get yanked
     # within hours — the npm ecosystem's most common own-goal.
     cooldown:
-      default-days: 2
+      default-days: 3
     versioning-strategy: increase
     groups:
       # One MR per week for everything that doesn't change a major version.
@@ -54,7 +54,7 @@ updates:
       - dependencies
       - docker
     cooldown:
-      default-days: 2
+      default-days: 3
     groups:
       non-major:
         applies-to: version-updates
@@ -76,7 +76,7 @@ updates:
       - dependencies
       - github-actions
     cooldown:
-      default-days: 2
+      default-days: 3
     groups:
       non-major:
         applies-to: version-updates
