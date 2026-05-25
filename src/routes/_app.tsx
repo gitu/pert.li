@@ -16,10 +16,10 @@ import {
 	LayersIcon,
 	LogOutIcon,
 	MoonIcon,
+	PanelBottomCloseIcon,
+	PanelBottomIcon,
 	PanelLeftCloseIcon,
 	PanelLeftIcon,
-	PanelRightCloseIcon,
-	PanelRightIcon,
 	PlusIcon,
 	SettingsIcon,
 	SunIcon,
@@ -82,21 +82,21 @@ function AppShell() {
 	const dockMode = useChatDockMode();
 	const pinnedChat = dockMode === "pinned";
 
-	// Refs into the side panels so the topbar collapse buttons can drive them
+	// Refs into the collapsible panels so the topbar buttons can drive them
 	// imperatively (react-resizable-panels handles the size animation + min
 	// clamping). Mirror collapse state into React so the button icons can flip.
 	const leftRef = useRef<PanelImperativeHandle>(null);
-	const rightRef = useRef<PanelImperativeHandle>(null);
+	const bottomRef = useRef<PanelImperativeHandle>(null);
 	const [leftCollapsed, setLeftCollapsed] = useState(false);
-	const [rightCollapsed, setRightCollapsed] = useState(false);
+	const [bottomCollapsed, setBottomCollapsed] = useState(false);
 
 	const toggleLeft = useCallback(() => {
 		const p = leftRef.current;
 		if (!p) return;
 		p.isCollapsed() ? p.expand() : p.collapse();
 	}, []);
-	const toggleRight = useCallback(() => {
-		const p = rightRef.current;
+	const toggleBottom = useCallback(() => {
+		const p = bottomRef.current;
 		if (!p) return;
 		p.isCollapsed() ? p.expand() : p.collapse();
 	}, []);
@@ -125,9 +125,9 @@ function AppShell() {
 					user={session.user}
 					onNewProject={() => setCreateOpen(true)}
 					leftCollapsed={leftCollapsed}
-					rightCollapsed={rightCollapsed}
+					bottomCollapsed={bottomCollapsed}
 					onToggleLeft={toggleLeft}
-					onToggleRight={toggleRight}
+					onToggleBottom={toggleBottom}
 				/>
 				<div className="min-h-0 flex-1">
 					<ResizablePanelGroup
@@ -153,27 +153,33 @@ function AppShell() {
 						<ResizableHandle withHandle />
 
 						<ResizablePanel
-							defaultSize={pinnedChat ? "36%" : "56%"}
-							minSize="24%"
+							defaultSize={pinnedChat ? "54%" : "82%"}
+							minSize="30%"
 						>
-							<main className="h-full overflow-hidden">
-								<Outlet />
-							</main>
-						</ResizablePanel>
-
-						<ResizableHandle withHandle />
-
-						<ResizablePanel
-							panelRef={rightRef}
-							defaultSize={pinnedChat ? "18%" : "26%"}
-							minSize="14%"
-							maxSize="42%"
-							collapsible
-							collapsedSize={0}
-							onResize={(size) => setRightCollapsed(size.asPercentage === 0)}
-							className="bg-card"
-						>
-							<RightTabs />
+							<ResizablePanelGroup
+								orientation="vertical"
+								className="h-full w-full"
+							>
+								<ResizablePanel defaultSize="62%" minSize="30%">
+									<main className="h-full overflow-hidden">
+										<Outlet />
+									</main>
+								</ResizablePanel>
+								<ResizableHandle withHandle />
+								<ResizablePanel
+									panelRef={bottomRef}
+									defaultSize="38%"
+									minSize="14%"
+									collapsible
+									collapsedSize={0}
+									onResize={(size) =>
+										setBottomCollapsed(size.asPercentage === 0)
+									}
+									className="bg-card"
+								>
+									<RightTabs />
+								</ResizablePanel>
+							</ResizablePanelGroup>
 						</ResizablePanel>
 
 						{pinnedChat && (
@@ -201,16 +207,16 @@ function TopBar({
 	user,
 	onNewProject,
 	leftCollapsed,
-	rightCollapsed,
+	bottomCollapsed,
 	onToggleLeft,
-	onToggleRight,
+	onToggleBottom,
 }: {
 	user: { name?: string | null; email: string };
 	onNewProject: () => void;
 	leftCollapsed: boolean;
-	rightCollapsed: boolean;
+	bottomCollapsed: boolean;
 	onToggleLeft: () => void;
-	onToggleRight: () => void;
+	onToggleBottom: () => void;
 }) {
 	const initials = (user.name ?? user.email)
 		.split(/\s+/)
@@ -243,8 +249,15 @@ function TopBar({
 				</div>
 				<span className="font-semibold tracking-tight">pert.li</span>
 			</Link>
-			<Separator orientation="vertical" className="h-5" />
-			<WorkspaceSwitcher />
+			{/* The workspace selector lives with the sidebar conceptually — hide
+			    it whenever the sidebar is collapsed so the user gets a clean,
+			    chrome-light top bar when they're focused on the canvas. */}
+			{!leftCollapsed && (
+				<>
+					<Separator orientation="vertical" className="h-5" />
+					<WorkspaceSwitcher />
+				</>
+			)}
 			<div className="flex-1" />
 			<Button
 				size="sm"
@@ -261,15 +274,17 @@ function TopBar({
 				size="icon"
 				variant="ghost"
 				className="size-8"
-				onClick={onToggleRight}
-				aria-label={rightCollapsed ? "Show inspector" : "Hide inspector"}
-				aria-pressed={!rightCollapsed}
-				data-testid="topbar-toggle-right"
+				onClick={onToggleBottom}
+				aria-label={
+					bottomCollapsed ? "Show details panel" : "Hide details panel"
+				}
+				aria-pressed={!bottomCollapsed}
+				data-testid="topbar-toggle-bottom"
 			>
-				{rightCollapsed ? (
-					<PanelRightIcon className="size-4" />
+				{bottomCollapsed ? (
+					<PanelBottomIcon className="size-4" />
 				) : (
-					<PanelRightCloseIcon className="size-4" />
+					<PanelBottomCloseIcon className="size-4" />
 				)}
 			</Button>
 			<DropdownMenu>

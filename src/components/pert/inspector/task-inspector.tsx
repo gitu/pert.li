@@ -1,6 +1,6 @@
 import { useStore } from "@tanstack/react-store";
 import { PlusIcon, Trash2Icon } from "lucide-react";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConflictPill } from "#/components/pert/inspector/conflict-pill";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
@@ -19,10 +19,11 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "#/components/ui/tooltip";
+import { removeTaskMutation } from "#/lib/ai/tool-mutators";
 import { getDescendants } from "#/lib/pert/hierarchy";
 import { rollupContainer } from "#/lib/pert/projection";
 import { readTaskConflicts } from "#/lib/pert/read-conflicts";
-import { computeSchedule } from "#/lib/pert/schedule";
+import { computeSchedule, type TaskSchedule } from "#/lib/pert/schedule";
 import { projectDocStore, selectionStore } from "#/lib/pert/store";
 import type {
 	ContainerInterface,
@@ -65,6 +66,14 @@ export function TaskInspector() {
 			onResolve={changeDoc}
 		/>
 	) : null;
+	const onDelete = () => {
+		changeDoc((d) => {
+			removeTaskMutation(d, { taskId: task.id });
+		});
+		// Clear selection so the inspector falls back to its empty state instead
+		// of showing "the selected task has been removed."
+		selectionStore.setState((s) => ({ ...s, taskId: null }));
+	};
 	if (task.kind === "container") {
 		return (
 			<ContainerForm
@@ -73,6 +82,7 @@ export function TaskInspector() {
 				doc={doc}
 				changeDoc={changeDoc}
 				conflictPill={conflictPill}
+				onDelete={onDelete}
 			/>
 		);
 	}
@@ -88,6 +98,7 @@ export function TaskInspector() {
 					if (draft) mutate(draft);
 				})
 			}
+			onDelete={onDelete}
 		/>
 	);
 }
@@ -107,11 +118,13 @@ function TaskForm({
 	scheduleResult,
 	conflictPill,
 	onMutate,
+	onDelete,
 }: {
 	task: Task;
 	scheduleResult: ScheduleResult;
 	conflictPill?: React.ReactNode;
 	onMutate: (mutate: (draft: Task) => void) => void;
+	onDelete: () => void;
 }) {
 	const sched = scheduleResult.ok
 		? scheduleResult.schedule.tasks[task.id]
@@ -179,138 +192,251 @@ function TaskForm({
 			<header className="shrink-0 border-b px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 				Task
 			</header>
-			<div className="flex-1 space-y-4 overflow-auto p-4">
-				{conflictPill}
-				<div className="space-y-1.5">
-					<Label htmlFor="ti-title">Title</Label>
-					<Input
-						id="ti-title"
-						data-testid="inspector-title"
-						value={task.title}
-						onChange={(e) => setTitle(e.target.value)}
-					/>
-				</div>
+			<div className="flex-1 overflow-auto p-4">
+				{conflictPill && <div className="mb-4">{conflictPill}</div>}
+				<TaskSummary task={task} sched={sched} />
 
-				<div className="space-y-1.5">
-					<Label htmlFor="ti-kind">Kind</Label>
-					<Select
-						value={task.kind}
-						onValueChange={(v) => setKind(v as TaskKind)}
-					>
-						<SelectTrigger id="ti-kind">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="task">Task</SelectItem>
-							<SelectItem value="milestone">Milestone</SelectItem>
-						</SelectContent>
-					</Select>
-				</div>
-
-				{task.kind !== "milestone" && (
-					<div className="space-y-2">
-						<Label className="block text-xs">PERT estimate</Label>
-						<div className="grid grid-cols-3 gap-2">
-							<EstimateField
-								label="Optimistic"
-								id="ti-o"
-								value={task.estimate?.optimistic ?? 0}
-								onChange={(v) => setEstimateField("optimistic", v)}
-							/>
-							<EstimateField
-								label="Most likely"
-								id="ti-m"
-								value={task.estimate?.mostLikely ?? 0}
-								onChange={(v) => setEstimateField("mostLikely", v)}
-							/>
-							<EstimateField
-								label="Pessimistic"
-								id="ti-p"
-								value={task.estimate?.pessimistic ?? 0}
-								onChange={(v) => setEstimateField("pessimistic", v)}
+				{/* Two-column layout above lg (1024px); single column below so the
+				    inspector stays usable inside the narrow bottom panel on small
+				    screens. The right column is purely informational, so it can
+				    safely sit lower in the source order on mobile. */}
+				<div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
+					<div className="space-y-4">
+						<div className="space-y-1.5">
+							<Label htmlFor="ti-title">Title</Label>
+							<Input
+								id="ti-title"
+								data-testid="inspector-title"
+								value={task.title}
+								onChange={(e) => setTitle(e.target.value)}
 							/>
 						</div>
+
 						<div className="space-y-1.5">
-							<Label htmlFor="ti-unit" className="text-xs">
-								Unit
-							</Label>
+							<Label htmlFor="ti-kind">Kind</Label>
 							<Select
-								value={task.estimate?.unit ?? "day"}
-								onValueChange={(v) => setEstimateUnit(v as Estimate["unit"])}
+								value={task.kind}
+								onValueChange={(v) => setKind(v as TaskKind)}
 							>
-								<SelectTrigger id="ti-unit">
+								<SelectTrigger id="ti-kind">
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent>
-									<SelectItem value="hour">Hours</SelectItem>
-									<SelectItem value="day">Days</SelectItem>
-									<SelectItem value="week">Weeks</SelectItem>
+									<SelectItem value="task">Task</SelectItem>
+									<SelectItem value="milestone">Milestone</SelectItem>
 								</SelectContent>
 							</Select>
 						</div>
+
+						{task.kind !== "milestone" && (
+							<div className="space-y-2">
+								<Label className="block text-xs">PERT estimate</Label>
+								<div className="grid grid-cols-3 gap-2">
+									<EstimateField
+										label="Optimistic"
+										id="ti-o"
+										value={task.estimate?.optimistic ?? 0}
+										onChange={(v) => setEstimateField("optimistic", v)}
+									/>
+									<EstimateField
+										label="Most likely"
+										id="ti-m"
+										value={task.estimate?.mostLikely ?? 0}
+										onChange={(v) => setEstimateField("mostLikely", v)}
+									/>
+									<EstimateField
+										label="Pessimistic"
+										id="ti-p"
+										value={task.estimate?.pessimistic ?? 0}
+										onChange={(v) => setEstimateField("pessimistic", v)}
+									/>
+								</div>
+								<div className="space-y-1.5">
+									<Label htmlFor="ti-unit" className="text-xs">
+										Unit
+									</Label>
+									<Select
+										value={task.estimate?.unit ?? "day"}
+										onValueChange={(v) =>
+											setEstimateUnit(v as Estimate["unit"])
+										}
+									>
+										<SelectTrigger id="ti-unit">
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectItem value="hour">Hours</SelectItem>
+											<SelectItem value="day">Days</SelectItem>
+											<SelectItem value="week">Weeks</SelectItem>
+										</SelectContent>
+									</Select>
+								</div>
+							</div>
+						)}
+
+						<div className="space-y-1.5">
+							<Label htmlFor="ti-notes">Notes</Label>
+							<Textarea
+								id="ti-notes"
+								value={task.notes ?? ""}
+								onChange={(e) => setNotes(e.target.value)}
+								rows={4}
+							/>
+						</div>
 					</div>
-				)}
 
-				<div className="space-y-1.5">
-					<Label htmlFor="ti-notes">Notes</Label>
-					<Textarea
-						id="ti-notes"
-						value={task.notes ?? ""}
-						onChange={(e) => setNotes(e.target.value)}
-						rows={4}
-					/>
+					<div className="space-y-4">
+						<div>
+							<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+								Computed schedule
+								<span className="ml-1 normal-case text-muted-foreground/70">
+									(days from project start)
+								</span>
+							</h3>
+							{sched ? (
+								<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+									<ScheduleStat
+										label="Duration"
+										tooltip="How long this task takes once it starts. Computed from your PERT estimate as (optimistic + 4·most likely + pessimistic) / 6."
+										value={`${fmt(sched.duration)} d`}
+									/>
+									<ScheduleStat
+										label="Slack"
+										tooltip="Spare time before this task starts delaying the whole project. 0 days means it's on the critical path — any slip moves the finish date."
+										value={`${fmt(sched.slack)} d`}
+										highlight={sched.critical ? "critical" : undefined}
+									/>
+									<ScheduleStat
+										label="Earliest start"
+										tooltip="The earliest day this task can begin, given everything that has to finish first. (CPM: ES)"
+										value={fmt(sched.earliestStart)}
+									/>
+									<ScheduleStat
+										label="Earliest finish"
+										tooltip="Earliest start + duration. The earliest possible day this task could be done. (CPM: EF)"
+										value={fmt(sched.earliestFinish)}
+									/>
+									<ScheduleStat
+										label="Latest start"
+										tooltip="The latest day this task can begin without delaying the project finish. (CPM: LS)"
+										value={fmt(sched.latestStart)}
+									/>
+									<ScheduleStat
+										label="Latest finish"
+										tooltip="The latest day this task can end without delaying the project finish. (CPM: LF)"
+										value={fmt(sched.latestFinish)}
+									/>
+								</dl>
+							) : (
+								<p className="text-xs text-destructive">
+									Cycle in the graph blocks scheduling.
+								</p>
+							)}
+						</div>
+					</div>
 				</div>
 
-				<Separator />
-
-				<div>
-					<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-						Computed schedule
-						<span className="ml-1 normal-case text-muted-foreground/70">
-							(days from project start)
-						</span>
-					</h3>
-					{sched ? (
-						<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
-							<ScheduleStat
-								label="Duration"
-								tooltip="How long this task takes once it starts. Computed from your PERT estimate as (optimistic + 4·most likely + pessimistic) / 6."
-								value={`${fmt(sched.duration)} d`}
-							/>
-							<ScheduleStat
-								label="Slack"
-								tooltip="Spare time before this task starts delaying the whole project. 0 days means it's on the critical path — any slip moves the finish date."
-								value={`${fmt(sched.slack)} d`}
-								highlight={sched.critical ? "critical" : undefined}
-							/>
-							<ScheduleStat
-								label="Earliest start"
-								tooltip="The earliest day this task can begin, given everything that has to finish first. (CPM: ES)"
-								value={fmt(sched.earliestStart)}
-							/>
-							<ScheduleStat
-								label="Earliest finish"
-								tooltip="Earliest start + duration. The earliest possible day this task could be done. (CPM: EF)"
-								value={fmt(sched.earliestFinish)}
-							/>
-							<ScheduleStat
-								label="Latest start"
-								tooltip="The latest day this task can begin without delaying the project finish. (CPM: LS)"
-								value={fmt(sched.latestStart)}
-							/>
-							<ScheduleStat
-								label="Latest finish"
-								tooltip="The latest day this task can end without delaying the project finish. (CPM: LF)"
-								value={fmt(sched.latestFinish)}
-							/>
-						</dl>
-					) : (
-						<p className="text-xs text-destructive">
-							Cycle in the graph blocks scheduling.
-						</p>
-					)}
-				</div>
+				<Separator className="my-6" />
+				<DangerZone onDelete={onDelete} label="Delete task" />
 			</div>
+		</div>
+	);
+}
+
+// Compact at-a-glance card shown above the editor form. Three signals the
+// user usually wants the moment they select a task: is it on the critical
+// path, how long does it run, and where does it sit on the timeline.
+function TaskSummary({
+	task,
+	sched,
+}: {
+	task: Task;
+	sched: TaskSchedule | null;
+}) {
+	if (!sched) {
+		return (
+			<div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+				{task.kind === "milestone"
+					? "Milestone — fires at the latest finish of its predecessors."
+					: "Schedule unavailable (graph has a cycle)."}
+			</div>
+		);
+	}
+	const onCritical = sched.critical;
+	const span =
+		task.kind === "milestone"
+			? `day ${fmt(sched.earliestStart)}`
+			: `${fmt(sched.earliestStart)}d → ${fmt(sched.earliestFinish)}d`;
+	return (
+		<div
+			data-testid="inspector-summary"
+			className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs"
+		>
+			<span
+				className={
+					onCritical
+						? "inline-flex items-center gap-1 rounded-full bg-destructive/15 px-2 py-0.5 font-medium text-destructive"
+						: "inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 font-medium text-emerald-700 dark:text-emerald-400"
+				}
+			>
+				{onCritical ? "On critical path" : `${fmt(sched.slack)}d slack`}
+			</span>
+			{task.kind !== "milestone" && (
+				<span className="text-muted-foreground">
+					<span className="tabular-nums text-foreground">
+						{fmt(sched.duration)}d
+					</span>{" "}
+					expected
+				</span>
+			)}
+			<span className="text-muted-foreground">
+				<span className="tabular-nums text-foreground">{span}</span>
+			</span>
+		</div>
+	);
+}
+
+// Two-click confirm so a stray click in the inspector doesn't nuke a task.
+// The button arms on first click and disarms after a short timeout if the
+// user moves on without confirming.
+function DangerZone({
+	onDelete,
+	label,
+}: {
+	onDelete: () => void;
+	label: string;
+}) {
+	const [armed, setArmed] = useState(false);
+	useEffect(() => {
+		if (!armed) return;
+		const id = window.setTimeout(() => setArmed(false), 3500);
+		return () => window.clearTimeout(id);
+	}, [armed]);
+	return (
+		<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/[0.04] px-3 py-2">
+			<div className="text-xs text-muted-foreground">
+				{armed
+					? "Are you sure? Click again within 3.5s."
+					: "Permanently remove this task. Children, if any, are promoted to the parent."}
+			</div>
+			<Button
+				type="button"
+				size="sm"
+				variant={armed ? "destructive" : "outline"}
+				className="gap-1.5"
+				onClick={() => {
+					if (armed) {
+						onDelete();
+						setArmed(false);
+					} else {
+						setArmed(true);
+					}
+				}}
+				data-testid="inspector-delete"
+			>
+				<Trash2Icon className="size-3.5" />
+				{armed ? "Confirm" : label}
+			</Button>
 		</div>
 	);
 }
@@ -403,11 +529,13 @@ function ContainerForm({
 	doc,
 	changeDoc,
 	conflictPill,
+	onDelete,
 }: {
 	task: Task;
 	doc: PertDoc;
 	changeDoc: (mutate: (d: PertDoc) => void) => void;
 	conflictPill?: React.ReactNode;
+	onDelete: () => void;
 }) {
 	const scheduleResult = useMemo(() => computeSchedule(doc), [doc]);
 	const schedule = scheduleResult.ok ? scheduleResult.schedule : null;
@@ -477,115 +605,164 @@ function ContainerForm({
 			<header className="shrink-0 border-b px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 				Container
 			</header>
-			<div className="flex-1 space-y-4 overflow-auto p-4">
-				{conflictPill}
-				<div className="space-y-1.5">
-					<Label htmlFor="ci-title">Title</Label>
-					<Input
-						id="ci-title"
-						data-testid="inspector-title"
-						value={task.title}
-						onChange={(e) => {
-							const next = e.target.value;
-							mutateTask((d) => {
-								d.title = next;
-							});
-						}}
-					/>
-				</div>
-				<div className="space-y-1.5">
-					<Label htmlFor="ci-notes">Notes</Label>
-					<Textarea
-						id="ci-notes"
-						value={task.notes ?? ""}
-						onChange={(e) => {
-							const next = e.target.value;
-							mutateTask((d) => {
-								d.notes = next;
-							});
-						}}
-						rows={3}
-					/>
-				</div>
+			<div className="flex-1 overflow-auto p-4">
+				{conflictPill && <div className="mb-4">{conflictPill}</div>}
+				<ContainerSummary rollup={rollup} />
 
-				<Separator />
-
-				<div>
-					<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-						Rollup
-					</h3>
-					<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
-						<dt className="text-xs text-muted-foreground">Tasks</dt>
-						<dd className="tabular-nums">{rollup.descendantCount}</dd>
-						<dt className="text-xs text-muted-foreground">Expected</dt>
-						<dd className="tabular-nums">{fmt(rollup.expected)} d</dd>
-						<dt className="text-xs text-muted-foreground">Min slack</dt>
-						<dd className="tabular-nums">
-							{rollup.minSlack === null ? "—" : `${fmt(rollup.minSlack)} d`}
-						</dd>
-						<dt className="text-xs text-muted-foreground">Critical</dt>
-						<dd
-							className={
-								rollup.hasCritical
-									? "font-semibold tabular-nums text-destructive"
-									: "tabular-nums"
-							}
-						>
-							{rollup.criticalCount}
-						</dd>
-					</dl>
-				</div>
-
-				<Separator />
-
-				<div>
-					<div className="mb-2 flex items-center justify-between">
-						<h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-							Interfaces
-						</h3>
-						<div className="flex items-center gap-1">
-							<Button
-								type="button"
-								size="sm"
-								variant="outline"
-								className="h-7 gap-1 text-xs"
-								onClick={() => addInterface("entry")}
-								data-testid="container-add-entry"
-							>
-								<PlusIcon className="size-3" /> Entry
-							</Button>
-							<Button
-								type="button"
-								size="sm"
-								variant="outline"
-								className="h-7 gap-1 text-xs"
-								onClick={() => addInterface("exit")}
-								data-testid="container-add-exit"
-							>
-								<PlusIcon className="size-3" /> Exit
-							</Button>
+				<div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-6">
+					<div className="space-y-4">
+						<div className="space-y-1.5">
+							<Label htmlFor="ci-title">Title</Label>
+							<Input
+								id="ci-title"
+								data-testid="inspector-title"
+								value={task.title}
+								onChange={(e) => {
+									const next = e.target.value;
+									mutateTask((d) => {
+										d.title = next;
+									});
+								}}
+							/>
+						</div>
+						<div className="space-y-1.5">
+							<Label htmlFor="ci-notes">Notes</Label>
+							<Textarea
+								id="ci-notes"
+								value={task.notes ?? ""}
+								onChange={(e) => {
+									const next = e.target.value;
+									mutateTask((d) => {
+										d.notes = next;
+									});
+								}}
+								rows={3}
+							/>
+						</div>
+						<div>
+							<div className="mb-2 flex items-center justify-between">
+								<h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+									Interfaces
+								</h3>
+								<div className="flex items-center gap-1">
+									<Button
+										type="button"
+										size="sm"
+										variant="outline"
+										className="h-7 gap-1 text-xs"
+										onClick={() => addInterface("entry")}
+										data-testid="container-add-entry"
+									>
+										<PlusIcon className="size-3" /> Entry
+									</Button>
+									<Button
+										type="button"
+										size="sm"
+										variant="outline"
+										className="h-7 gap-1 text-xs"
+										onClick={() => addInterface("exit")}
+										data-testid="container-add-exit"
+									>
+										<PlusIcon className="size-3" /> Exit
+									</Button>
+								</div>
+							</div>
+							{interfaceList.length === 0 ? (
+								<p className="text-xs text-muted-foreground">
+									No interfaces yet. Add entry/exit handles to give external
+									edges specific routing targets when this container is
+									collapsed.
+								</p>
+							) : (
+								<ul className="space-y-2">
+									{interfaceList.map((iface) => (
+										<InterfaceRow
+											key={iface.id}
+											iface={iface}
+											leafChoices={leafDescendants}
+											onChange={(patch) => updateInterface(iface.id, patch)}
+											onRemove={() => removeInterface(iface.id)}
+										/>
+									))}
+								</ul>
+							)}
 						</div>
 					</div>
-					{interfaceList.length === 0 ? (
-						<p className="text-xs text-muted-foreground">
-							No interfaces yet. Add entry/exit handles to give external edges
-							specific routing targets when this container is collapsed.
-						</p>
-					) : (
-						<ul className="space-y-2">
-							{interfaceList.map((iface) => (
-								<InterfaceRow
-									key={iface.id}
-									iface={iface}
-									leafChoices={leafDescendants}
-									onChange={(patch) => updateInterface(iface.id, patch)}
-									onRemove={() => removeInterface(iface.id)}
-								/>
-							))}
-						</ul>
-					)}
+
+					<div className="space-y-4">
+						<div>
+							<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+								Rollup
+							</h3>
+							<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+								<dt className="text-xs text-muted-foreground">Tasks</dt>
+								<dd className="tabular-nums">{rollup.descendantCount}</dd>
+								<dt className="text-xs text-muted-foreground">Expected</dt>
+								<dd className="tabular-nums">{fmt(rollup.expected)} d</dd>
+								<dt className="text-xs text-muted-foreground">Min slack</dt>
+								<dd className="tabular-nums">
+									{rollup.minSlack === null ? "—" : `${fmt(rollup.minSlack)} d`}
+								</dd>
+								<dt className="text-xs text-muted-foreground">Critical</dt>
+								<dd
+									className={
+										rollup.hasCritical
+											? "font-semibold tabular-nums text-destructive"
+											: "tabular-nums"
+									}
+								>
+									{rollup.criticalCount}
+								</dd>
+							</dl>
+						</div>
+					</div>
 				</div>
+
+				<Separator className="my-6" />
+				<DangerZone onDelete={onDelete} label="Delete container" />
 			</div>
+		</div>
+	);
+}
+
+// At-a-glance pills for containers — same shape as TaskSummary but reading
+// from the rollup projection instead of the per-task schedule entry.
+function ContainerSummary({
+	rollup,
+}: {
+	rollup: ReturnType<typeof rollupContainer>;
+}) {
+	const onCritical = rollup.hasCritical;
+	return (
+		<div
+			data-testid="inspector-summary"
+			className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs"
+		>
+			<span
+				className={
+					onCritical
+						? "inline-flex items-center gap-1 rounded-full bg-destructive/15 px-2 py-0.5 font-medium text-destructive"
+						: "inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 font-medium text-emerald-700 dark:text-emerald-400"
+				}
+			>
+				{onCritical
+					? `${rollup.criticalCount} on critical path`
+					: rollup.minSlack === null
+						? "No descendants"
+						: `${fmt(rollup.minSlack)}d min slack`}
+			</span>
+			<span className="text-muted-foreground">
+				<span className="tabular-nums text-foreground">
+					{rollup.descendantCount}
+				</span>{" "}
+				task{rollup.descendantCount === 1 ? "" : "s"}
+			</span>
+			<span className="text-muted-foreground">
+				<span className="tabular-nums text-foreground">
+					{fmt(rollup.expected)}d
+				</span>{" "}
+				expected
+			</span>
 		</div>
 	);
 }
