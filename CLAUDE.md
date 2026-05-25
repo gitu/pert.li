@@ -65,7 +65,7 @@ For client-server calls inside a route, prefer `createServerFn` from `@tanstack/
 
 ### Auth
 
-Better Auth, configured in `src/lib/auth.ts`; client helper in `src/lib/auth-client.ts`. All HTTP traffic goes through `/api/auth/*` (the catch-all route). `BETTER_AUTH_SECRET` must be set; generate with `npx -y @better-auth/cli secret`.
+Better Auth, configured in `src/lib/auth.ts`; client helper in `src/lib/auth-client.ts`. All HTTP traffic goes through `/api/auth/*` (the catch-all route). `BETTER_AUTH_SECRET` must be set; generate with `pnpm dlx @better-auth/cli secret`.
 
 ### Imports & path aliases
 
