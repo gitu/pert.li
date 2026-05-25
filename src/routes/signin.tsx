@@ -71,8 +71,8 @@ function SignInPage() {
 						{mode === "signin"
 							? "Welcome back to pert.li."
 							: mode === "signup"
-								? "Pick a name and an email to get started."
-								: "We'll send a one-time link — no password needed."}
+								? "Pick a name and an email to get started. Prefer not to set a password? Use a sign-in link instead."
+								: "We'll email a one-time link. Works for new accounts too — no password ever required."}
 					</p>
 				</div>
 
@@ -181,7 +181,9 @@ function SignInPage() {
 									}}
 									className="text-foreground underline-offset-4 hover:underline"
 								>
-									Email me a sign-in link instead
+									{mode === "signup"
+										? "Skip the password — email me a sign-in link"
+										: "Email me a sign-in link instead"}
 								</button>
 							</div>
 						</>
