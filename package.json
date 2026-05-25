@@ -89,6 +89,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.15",
+    "@electric-sql/pglite": "^0.4.5",
     "@playwright/test": "1.60.0",
     "@rolldown/plugin-babel": "0.2.3",
     "@storybook/test-runner": "0.24.4",

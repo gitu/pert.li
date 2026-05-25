@@ -1,6 +1,5 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { memoryAdapter } from "better-auth/adapters/memory";
 import { genericOAuth, magicLink } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { Resend } from "resend";
@@ -12,21 +11,13 @@ import {
 	toPublicInfo,
 } from "#/lib/auth-oidc";
 
-// In e2e mode we swap better-auth onto an in-process memory store so the
-// suite can drive real sign-up / sign-in flows without a Postgres database.
-// Anything outside the auth tables (workspaces, projects, Automerge docs)
-// still queries the live db proxy and will fail until those paths get their
-// own test fakes — keep authenticated e2e tests on chrome / account flows
-// for now.
-const useMemoryAuth = process.env.E2E_AUTH_MEMORY === "1";
-// memoryAdapter throws "Model X not found" if the table key isn't already an
-// array, so we initialize the four better-auth tables up front.
-const authDatabase = useMemoryAuth
-	? memoryAdapter({ user: [], session: [], account: [], verification: [] })
-	: drizzleAdapter(db, {
-			provider: "pg",
-			schema: { user, session, account, verification },
-		});
+// Drizzle adapter works for both production Neon and the e2e PGLite
+// backend; the db proxy in src/db/index.ts routes to whichever driver
+// is configured. One auth code path = no test/prod drift.
+const authDatabase = drizzleAdapter(db, {
+	provider: "pg",
+	schema: { user, session, account, verification },
+});
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? "noreply@pert.li";
@@ -74,7 +65,7 @@ export function getOidcPublicInfo(): OidcPublicInfo | null {
 const baseURL = process.env.BETTER_AUTH_URL;
 const trustedOrigins = [
 	process.env.BETTER_AUTH_URL,
-	process.env.E2E_AUTH_MEMORY === "1"
+	process.env.E2E_PGLITE === "1"
 		? `http://localhost:${process.env.PORT ?? "3100"}`
 		: undefined,
 ].filter((u): u is string => typeof u === "string" && u.length > 0);

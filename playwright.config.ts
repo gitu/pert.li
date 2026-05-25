@@ -2,11 +2,11 @@ import { defineConfig, devices } from "@playwright/test";
 
 // End-to-end tests live in `./e2e`. They drive the real app through Chromium
 // against a Playwright-managed dev server on port 3100 (so it never fights
-// the developer's `pnpm dev` on 3000). The server runs with E2E_AUTH_MEMORY=1
-// so better-auth uses an in-process memory store — the suite can sign users
-// in for real without a Postgres database. Workspace / project / Automerge
-// paths still hit the live db proxy and will fail until they get their own
-// fakes; keep authenticated tests on account-level chrome for now.
+// the developer's `pnpm dev` on 3000). The server runs with E2E_PGLITE=1 so
+// the Drizzle client routes through an in-process Postgres (PGLite) instead
+// of Neon. Schema is pushed at boot, better-auth + workspace queries all
+// hit a real DB, and the suite can drive sign-up / project creation /
+// project navigation end-to-end.
 const E2E_PORT = Number(process.env.E2E_PORT ?? 3100);
 const STORAGE_STATE = "e2e/.auth/user.json";
 
@@ -61,24 +61,21 @@ export default defineConfig({
 		stdout: "pipe",
 		stderr: "pipe",
 		env: {
-			// Stub values so server modules that read env at import don't crash.
-			// The neon driver is lazy, so a never-resolved URL is fine as long
-			// as no test triggers an actual query.
+			// PGLite handles all DB traffic in-process — DATABASE_URL is unused
+			// but better set to a placeholder so module-load checks don't trip.
 			DATABASE_URL:
 				process.env.DATABASE_URL ??
 				"postgresql://noop:noop@127.0.0.1:1/noop?sslmode=disable",
 			BETTER_AUTH_SECRET:
 				process.env.BETTER_AUTH_SECRET ??
 				"e2e-only-not-a-real-secret-0000000000000000",
-			// Skip the neon-launchpad provisioning on this port.
 			VITE_NEON_DISABLE: "1",
-			// Skip the Automerge sync WebSocket — without a real DB the
-			// upgrade handshake (which validates a session) crashes the dev
-			// server's proxy. Public-surface tests don't need real-time sync.
+			// Skip the Automerge sync WebSocket. Per-tab BroadcastChannel is
+			// still on; UI tests don't need cross-context replication.
 			VITE_E2E_DISABLE_SYNC: "1",
-			// Use better-auth's in-process memory adapter so sign-up / sign-in
-			// flows work without a real Postgres database. See auth.server.ts.
-			E2E_AUTH_MEMORY: "1",
+			// Use in-process Postgres (PGLite) so workspace / project /
+			// audit-log queries work without provisioning Neon. See src/db/index.ts.
+			E2E_PGLITE: "1",
 			// Better-auth's CSRF check rejects non-GET requests whose Origin
 			// doesn't match BETTER_AUTH_URL. Point it at the e2e port so the
 			// sign-up POST from /signin is accepted.
