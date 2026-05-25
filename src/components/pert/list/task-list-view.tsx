@@ -801,7 +801,10 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 						variant={grouped ? "default" : "outline"}
 						size="sm"
 						className="h-7 gap-1.5 text-xs"
-						onClick={() => setGrouped((v) => !v)}
+						onClick={() => {
+							setGrouped((v) => !v);
+							setColumnsOpen(false);
+						}}
 						aria-pressed={grouped}
 						data-testid="task-list-group"
 						title={
@@ -817,7 +820,10 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 						variant={editAll ? "default" : "outline"}
 						size="sm"
 						className="h-7 gap-1.5 text-xs"
-						onClick={() => setEditAll((v) => !v)}
+						onClick={() => {
+							setEditAll((v) => !v);
+							setColumnsOpen(false);
+						}}
 						disabled={!changeDoc}
 						aria-pressed={editAll}
 						data-testid="task-list-edit-all"
@@ -836,6 +842,11 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 					</Button>
 					<DropdownMenu
 						open={columnsOpen}
+						// `modal={false}` lets clicks on the toolbar buttons behind us
+						// reach their own onClick handlers (Done / Group close the menu
+						// via setColumnsOpen). In Radix's default modal mode an invisible
+						// overlay would swallow those clicks.
+						modal={false}
 						// Outside-click, Escape, and item-select are all preventDefault-ed
 						// on the Content below — so any onOpenChange that fires here can
 						// only be Radix's Trigger detecting a click on the button itself.
