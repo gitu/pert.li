@@ -140,4 +140,47 @@ describe("buildTaskListRows", () => {
 		expect(rows[0].duration).toBe(0);
 		expect(rows[0].estimate).toBeUndefined();
 	});
+
+	it("defaults taskStatus to not_started when the field is absent", () => {
+		const doc = build(leaf("A", "Alpha"));
+		const rows = buildTaskListRows(doc, computeSchedule(doc));
+		expect(rows[0].taskStatus).toBe("not_started");
+		expect(rows[0].actualStart).toBeUndefined();
+		expect(rows[0].actualFinish).toBeUndefined();
+	});
+
+	it("surfaces actualStart / actualFinish for in-progress and completed tasks", () => {
+		const doc = build(
+			{
+				id: "P",
+				kind: "task",
+				title: "Partial",
+				parentId: null,
+				estimate: est(1, 2, 3),
+				status: "in_progress",
+				progress: 40,
+				actualStart: "2026-05-01",
+			},
+			{
+				id: "D",
+				kind: "task",
+				title: "Done",
+				parentId: null,
+				estimate: est(1, 1, 1),
+				status: "completed",
+				progress: 100,
+				actualStart: "2026-04-20",
+				actualFinish: "2026-04-25",
+			},
+		);
+		const rows = buildTaskListRows(doc, computeSchedule(doc));
+		const p = rows.find((r) => r.id === "P");
+		const d = rows.find((r) => r.id === "D");
+		expect(p?.taskStatus).toBe("in_progress");
+		expect(p?.actualStart).toBe("2026-05-01");
+		expect(p?.actualFinish).toBeUndefined();
+		expect(d?.taskStatus).toBe("completed");
+		expect(d?.actualStart).toBe("2026-04-20");
+		expect(d?.actualFinish).toBe("2026-04-25");
+	});
 });

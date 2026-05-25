@@ -53,7 +53,13 @@ import {
 	groupTasksByKey,
 	type KeyGroupNode,
 } from "#/lib/pert/task-key";
-import type { Estimate, PertDoc, TaskId, TaskKind } from "#/lib/pert/types";
+import type {
+	Estimate,
+	PertDoc,
+	TaskId,
+	TaskKind,
+	TaskStatus,
+} from "#/lib/pert/types";
 import { cn } from "#/lib/utils";
 
 export type TaskListViewProps = {
@@ -72,6 +78,12 @@ export type TaskListRow = {
 	ef: number | null;
 	slack: number | null;
 	critical: boolean;
+	// Status drives whether the Started / Finished date cells are editable.
+	// "not_started" hides the dates; in_progress allows Started; completed
+	// allows both.
+	taskStatus: TaskStatus;
+	actualStart: string | undefined;
+	actualFinish: string | undefined;
 };
 
 // Pure derivation of list rows from a doc + already-computed schedule. Lives
@@ -97,6 +109,9 @@ export function buildTaskListRows(
 				ef: s?.earliestFinish ?? null,
 				slack: s?.slack ?? null,
 				critical: s?.critical ?? false,
+				taskStatus: t.status ?? "not_started",
+				actualStart: t.actualStart,
+				actualFinish: t.actualFinish,
 			};
 		})
 		.sort((a, b) => {
@@ -120,6 +135,11 @@ const DEFAULT_VIEW_COLUMN_VISIBILITY: VisibilityState = {
 	kind: false,
 	duration: false,
 	ef: false,
+	// Started / Finished only matter once a task is in flight. Keep them out
+	// of the default skim layout; users opt in via the Columns menu or by
+	// flipping into "Edit" mode (which shows everything).
+	actualStart: false,
+	actualFinish: false,
 };
 
 // In edit mode the user has explicitly asked to mass-edit; show every
@@ -243,6 +263,13 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 		null,
 	);
 	const [editingKeyId, setEditingKeyId] = useState<TaskId | null>(null);
+	// Started / Finished date cells. Two independent editing keys so the user
+	// can flip Finished without losing the in-flight value in Started on the
+	// same row (and vice versa).
+	const [editingActualStartId, setEditingActualStartId] =
+		useState<TaskId | null>(null);
+	const [editingActualFinishId, setEditingActualFinishId] =
+		useState<TaskId | null>(null);
 	// Group rows by their dotted `key`. Collapsed group paths live in a
 	// separate set so flipping the toggle off and back on keeps the user's
 	// open/closed state instead of resetting.
@@ -494,8 +521,122 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 				},
 				size: 90,
 			},
+			{
+				accessorKey: "actualStart",
+				header: "Started",
+				enableSorting: false,
+				cell: ({ row }) => {
+					const r = row.original;
+					// Started is editable as soon as a task is in_progress or
+					// completed. Tasks the user hasn't touched yet render an inert
+					// placeholder — they don't have an actual start by definition.
+					const editable =
+						r.kind !== "milestone" &&
+						r.taskStatus !== "not_started" &&
+						!!changeDoc;
+					const editing =
+						editable && (editAll || editingActualStartId === r.id);
+					if (editing && changeDoc) {
+						return (
+							<DateEdit
+								value={r.actualStart}
+								autoFocus={!editAll}
+								onCommit={(next) => {
+									changeDoc((d) => {
+										const t = d.tasksById[r.id];
+										if (!t) return;
+										if (next) t.actualStart = next;
+										else delete t.actualStart;
+									});
+									if (!editAll) setEditingActualStartId(null);
+								}}
+								onCancel={() => {
+									if (!editAll) setEditingActualStartId(null);
+								}}
+								data-testid="task-list-actual-start"
+							/>
+						);
+					}
+					return (
+						<DateCellButton
+							value={r.actualStart}
+							disabled={!editable}
+							hint={
+								r.kind === "milestone"
+									? "Milestones don't track start dates"
+									: r.taskStatus === "not_started"
+										? "Mark the task in progress to set a start date"
+										: "Double-click to edit"
+							}
+							onActivate={() => setEditingActualStartId(r.id)}
+						/>
+					);
+				},
+				size: 140,
+			},
+			{
+				accessorKey: "actualFinish",
+				header: "Finished",
+				enableSorting: false,
+				cell: ({ row }) => {
+					const r = row.original;
+					// Finished is editable for completed tasks; for in_progress we
+					// also allow it (the user might want to log the actual finish
+					// before flipping status). Hidden / inert for not_started.
+					const editable =
+						r.kind !== "milestone" &&
+						r.taskStatus !== "not_started" &&
+						!!changeDoc;
+					const editing =
+						editable && (editAll || editingActualFinishId === r.id);
+					if (editing && changeDoc) {
+						return (
+							<DateEdit
+								value={r.actualFinish}
+								autoFocus={!editAll}
+								onCommit={(next) => {
+									changeDoc((d) => {
+										const t = d.tasksById[r.id];
+										if (!t) return;
+										if (next) t.actualFinish = next;
+										else delete t.actualFinish;
+									});
+									if (!editAll) setEditingActualFinishId(null);
+								}}
+								onCancel={() => {
+									if (!editAll) setEditingActualFinishId(null);
+								}}
+								data-testid="task-list-actual-finish"
+							/>
+						);
+					}
+					return (
+						<DateCellButton
+							value={r.actualFinish}
+							disabled={!editable}
+							hint={
+								r.kind === "milestone"
+									? "Milestones don't track finish dates"
+									: r.taskStatus === "not_started"
+										? "Mark the task in progress to set a finish date"
+										: "Double-click to edit"
+							}
+							onActivate={() => setEditingActualFinishId(r.id)}
+						/>
+					);
+				},
+				size: 140,
+			},
 		],
-		[editingId, editingEstimateId, editingKeyId, editAll, changeDoc],
+		[
+			editingId,
+			editingEstimateId,
+			editingKeyId,
+			editingActualStartId,
+			editingActualFinishId,
+			editAll,
+			changeDoc,
+		],
 	);
 
 	const table = useReactTable({
@@ -1118,4 +1259,88 @@ function fmt(n: number): string {
 function fmtNullable(n: number | null): string {
 	if (n === null) return "—";
 	return fmt(n);
+}
+
+// Reused button for the read-mode of an inline-editable date cell. Keeps the
+// disabled / hint / activation-on-double-click handling in one spot.
+function DateCellButton({
+	value,
+	disabled,
+	hint,
+	onActivate,
+}: {
+	value: string | undefined;
+	disabled: boolean;
+	hint?: string;
+	onActivate: () => void;
+}) {
+	return (
+		<button
+			type="button"
+			disabled={disabled}
+			onDoubleClick={(ev) => {
+				ev.stopPropagation();
+				if (!disabled) onActivate();
+			}}
+			title={hint}
+			className="w-full text-left text-xs text-muted-foreground tabular-nums hover:text-foreground disabled:cursor-default"
+		>
+			{value || "—"}
+		</button>
+	);
+}
+
+// Date input bound to a single yyyy-mm-dd string. Enter / blur commits;
+// Escape cancels. Clearing the field commits an empty string so the caller
+// can delete the field on the doc.
+function DateEdit({
+	value,
+	autoFocus = true,
+	onCommit,
+	onCancel,
+	"data-testid": testId,
+}: {
+	value: string | undefined;
+	autoFocus?: boolean;
+	onCommit: (next: string) => void;
+	onCancel: () => void;
+	"data-testid"?: string;
+}) {
+	const [draft, setDraft] = useState(value ?? "");
+	const initialRef = useRef(value ?? "");
+	const inputRef = useRef<HTMLInputElement>(null);
+	useEffect(() => {
+		setDraft(value ?? "");
+		initialRef.current = value ?? "";
+	}, [value]);
+	useEffect(() => {
+		if (autoFocus) inputRef.current?.focus();
+	}, [autoFocus]);
+	const commit = useCallback(() => {
+		if (draft === initialRef.current) {
+			onCancel();
+			return;
+		}
+		onCommit(draft);
+	}, [draft, onCommit, onCancel]);
+	return (
+		<input
+			ref={inputRef}
+			type="date"
+			value={draft}
+			onChange={(e) => setDraft(e.target.value)}
+			onBlur={commit}
+			onKeyDown={(e) => {
+				if (e.key === "Enter") {
+					e.preventDefault();
+					commit();
+				} else if (e.key === "Escape") {
+					e.preventDefault();
+					onCancel();
+				}
+			}}
+			data-testid={testId}
+			className="h-7 w-full rounded border bg-background px-1.5 text-xs tabular-nums"
+		/>
+	);
 }
