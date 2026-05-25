@@ -18,3 +18,9 @@ mcp-todos.json
 .playwright-mcp/
 *.png
 debug-*.log
+
+# This project is pnpm-only. If npm/yarn ever produce a lockfile here it's
+# a tooling misconfiguration (most commonly Dependabot guessing wrong when
+# `packageManager` isn't declared in package.json).
+package-lock.json
+yarn.lock
