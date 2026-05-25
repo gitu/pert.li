@@ -64,11 +64,7 @@ import { TooltipProvider } from "#/components/ui/tooltip";
 import { CreateProjectDialog } from "#/components/workspace/create-project-dialog";
 import { ProjectList } from "#/components/workspace/project-list";
 import { authClient } from "#/lib/auth-client";
-import {
-	chatDock,
-	useChatDockMode,
-	useChatDockPendingPrompt,
-} from "#/lib/chat-dock";
+import { chatDock, useChatDockMode } from "#/lib/chat-dock";
 import { setThemeMode, type ThemeMode, useThemeMode } from "#/lib/theme";
 import { hasSeenWelcome } from "#/lib/welcome";
 import { listProjects } from "#/server/workspace.ts";

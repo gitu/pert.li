@@ -36,7 +36,16 @@ import {
 	setEstimateTool,
 	setTitleTool,
 } from "#/lib/ai/tools";
-import { chatDock, useChatDockMode } from "#/lib/chat-dock";
+import {
+	chatDock,
+	useChatDockMode,
+	useChatDockPendingPrompt,
+} from "#/lib/chat-dock";
+import {
+	createChatBroadcaster,
+	readChatMessages,
+	writeChatMessages,
+} from "#/lib/chat-history";
 import type { ChangeFn } from "#/lib/pert/store";
 import { projectDocStore } from "#/lib/pert/store";
 import type { PertDoc } from "#/lib/pert/types";
@@ -162,11 +171,70 @@ export function ChatPanel({
 		[],
 	);
 
-	const { messages, sendMessage, isLoading, error, stop } = useChat({
-		connection: connectionRef.current,
-		tools,
-		live: true,
-	});
+	// Hydrate from localStorage on mount so the chat survives a reload. The
+	// snapshot is opaque to us — useChat's UIMessage shape can change between
+	// library versions and we'd rather hand it back unchanged than try to
+	// keep our types in sync. Worst case (malformed payload) we drop it.
+	const initialMessagesRef = useRef(readChatMessages() ?? undefined);
+
+	const { messages, sendMessage, isLoading, error, stop, setMessages } =
+		useChat({
+			connection: connectionRef.current,
+			tools,
+			live: true,
+			// biome-ignore lint/suspicious/noExplicitAny: the stored snapshot is opaque on purpose — see initialMessagesRef.
+			initialMessages: initialMessagesRef.current as any,
+		});
+
+	// Persist to localStorage + broadcast to other tabs on every change.
+	// Skip the very first effect run when the array matches what we just
+	// hydrated, otherwise an empty initial useChat state can wipe a saved
+	// transcript on mount.
+	const broadcasterRef = useRef<ReturnType<
+		typeof createChatBroadcaster
+	> | null>(null);
+	if (broadcasterRef.current === null) {
+		broadcasterRef.current = createChatBroadcaster();
+	}
+	const lastBroadcastSerialRef = useRef<string | null>(null);
+	useEffect(() => {
+		if (!broadcasterRef.current) return;
+		try {
+			const serial = JSON.stringify(messages);
+			if (serial === lastBroadcastSerialRef.current) return;
+			lastBroadcastSerialRef.current = serial;
+			writeChatMessages(messages as unknown as unknown[]);
+			broadcasterRef.current.post(messages as unknown as unknown[]);
+		} catch {
+			// non-serialisable payload (cyclical objects, functions in args) —
+			// drop persistence rather than crashing the chat.
+		}
+	}, [messages]);
+
+	// Remote tabs writing into the same channel get applied here. The
+	// serial-tracking ref also dedupes our own broadcasts so we don't loop.
+	useEffect(() => {
+		const bus = broadcasterRef.current;
+		if (!bus) return;
+		const unsub = bus.subscribe((snapshot) => {
+			const serial = JSON.stringify(snapshot);
+			if (serial === lastBroadcastSerialRef.current) return;
+			lastBroadcastSerialRef.current = serial;
+			// biome-ignore lint/suspicious/noExplicitAny: see initialMessagesRef.
+			setMessages(snapshot as any);
+		});
+		return () => {
+			unsub();
+		};
+	}, [setMessages]);
+
+	useEffect(() => {
+		const bus = broadcasterRef.current;
+		return () => {
+			bus?.close();
+			broadcasterRef.current = null;
+		};
+	}, []);
 
 	const [input, setInput] = useState(
 		autoSendInitial ? "" : (initialPrompt ?? ""),
@@ -187,14 +255,28 @@ export function ChatPanel({
 		}
 	}, [messages, isLoading]);
 
-	// One-shot auto-send: deliver the seeded prompt once per mount so we don't
-	// loop on prop identity changes from above.
+	// One-shot auto-send for the initial prompt prop (kept for Storybook /
+	// standalone mounts that drive ChatPanel directly without the dock store).
 	useEffect(() => {
 		if (!autoSendInitial || !initialPrompt) return;
 		if (autoSentRef.current) return;
 		autoSentRef.current = true;
 		void sendMessage(initialPrompt);
 	}, [autoSendInitial, initialPrompt, sendMessage]);
+
+	// Dock-driven prompts (tutorial CTAs, "Ask the assistant" affordances).
+	// These can arrive at any time during the chat's life and append to the
+	// existing transcript — the user's previous conversation is preserved.
+	const dockPending = useChatDockPendingPrompt();
+	useEffect(() => {
+		if (!dockPending) return;
+		chatDock.consumePendingPrompt();
+		if (dockPending.autoSend) {
+			void sendMessage(dockPending.text);
+		} else {
+			setInput(dockPending.text);
+		}
+	}, [dockPending, sendMessage]);
 
 	const submit = () => {
 		const trimmed = input.trim();
@@ -243,7 +325,7 @@ export function ChatPanel({
 					{showDockControls && <ChatDockControls />}
 				</div>
 			</header>
-			<ScrollArea className="flex-1" data-testid="chat-scroll">
+			<ScrollArea className="min-h-0 flex-1" data-testid="chat-scroll">
 				<div ref={scrollRef} className="space-y-3 p-3">
 					{messages.length === 0 && (
 						<EmptyState
