@@ -345,3 +345,15 @@ a {
     color: var(--foreground);
   }
 }
+
+/* Canvas fullscreen — both the native :fullscreen pseudo-class (when the
+ * browser API succeeds) and a fallback class for environments where
+ * requestFullscreen rejects (e.g. Storybook inside a sandboxed iframe). */
+.pertli-fullscreen-fallback {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 9999 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  background-color: var(--background);
+}

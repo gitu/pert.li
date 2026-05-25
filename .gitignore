@@ -12,3 +12,9 @@ dist-ssr
 __unconfig*
 todos.json
 mcp-todos.json
+.data
+
+# Local debugging artifacts
+.playwright-mcp/
+*.png
+debug-*.log

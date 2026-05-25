@@ -90,6 +90,35 @@ ANTHROPIC_API_KEY=
 BETTER_AUTH_SECRET=
 ```
 
+## Testing rules
+
+Every shipped feature must satisfy these. "Done" includes the test rig — a feature without test scaffolding is not merged.
+
+### Three layers, all required
+
+Every feature needs coverage at the layers that apply to it. They're complementary, not substitutes.
+
+| Layer | Tool | Covers | When required |
+|---|---|---|---|
+| **Unit / property** | Vitest (+ `fast-check`) | Pure functions, hooks (`@testing-library/react`), Zod schemas, scheduling engines, reducers | Whenever logic is testable in isolation. Anything in `src/lib/` defaults to "yes." |
+| **Component / visual** | Storybook | Reusable components in `src/components/` — visual states (default, loading, empty, error) and `play` interaction tests | Every new or touched component file under `src/components/` (excluding vendored `ui/` primitives and `storybook/` demos) |
+| **End-to-end** | Playwright MCP (or `@playwright/test` once we set up CI) | Real user flows in the running app: sign-in, sync across tabs, upload, etc. | Every new route, every cross-component flow, every collaborative behavior |
+
+A feature that introduces a pure function, a new component, AND a new flow needs all three. A feature that only refactors an existing component needs at least the component layer refreshed. Don't skip a layer because another one happens to exercise the same code path — they catch different classes of bug (logic regression vs. visual drift vs. integration breakage).
+
+### Rules
+
+1. **Real-browser verification is mandatory for end-to-end.** Drive the feature through Playwright MCP (or open it manually) and exercise the actual behavior: click, type, observe state, assert. `curl /route → 200` proves only that the route didn't crash during SSR — it is NOT a feature test.
+2. **Browser console must be clean after each interaction.** Errors and warnings count as failures. Investigate before declaring done; don't ignore "harmless" warnings without explaining why in a comment or memory.
+3. **Sync features need a two-context check.** Anything touching Automerge or shared state: edit in tab/context A, observe propagation in tab/context B. Use `mcp__plugin_playwright_playwright__browser_tabs` (same browser → BroadcastChannel) and a fresh context (different browser → WebSocket only) when both matter.
+4. **Persistence features need a hard reload.** If storage is involved (IndexedDB, NodeFS adapter, Postgres), navigate away and back (or hard reload) and confirm state survives. For server-side stores, also verify the on-disk/db record exists.
+5. **Controlled inputs over `defaultValue` for collaborative state.** With Automerge-backed values: use `value={doc.x}` + `onChange`. `defaultValue` only fires once and won't reflect remote updates — burned by this in Phase 1.
+6. **Storybook coverage rules.** Every new or touched reusable component in `src/components/` ships with a `*.stories.tsx` covering the default plus meaningful variants (loading/empty/error/interactive). Use `play` functions for interaction assertions when the component has non-trivial behavior. Storybook runs through its own isolated vite config (`.storybook/vite.config.ts`) — don't let it pick up the root `vite.config.ts` (Nitro's `configureServer` will crash). Don't backfill stories for unmodified files.
+7. **Property tests for pure logic.** Anything in `src/lib/pert/` (engine, projection, hierarchy) gets `fast-check` property tests alongside example tests. Pure functions have no excuse for being only exercised through integration.
+8. **Diagnose before re-running.** When a test fails or surprises you, fix the underlying bug — not the test methodology — until you have proof that the methodology itself is wrong. Example: if `browser_type` doesn't trigger React's `onChange`, that's a real bug unless real keyboard input also fails to fire it.
+9. **Stop dev servers between sessions.** `pnpm dev` and `pnpm storybook` both grab ports (3000 and 6006). Use `TaskStop` / `pkill -f "vite dev"` before walking away.
+10. **What NOT to test:** vendored scaffolding (shadcn primitives under `src/components/ui/`, `src/components/storybook/` demos) has upstream tests — don't re-cover them. Framework concerns (TanStack Router/SSR shell, Better Auth catch-all) likewise.
+
 ## Demo / scaffold files
 
 Files prefixed with `demo` (and the `src/components/storybook/` examples) are safe to delete — they're scaffolding from `create-tanstack`.
