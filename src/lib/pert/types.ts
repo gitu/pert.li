@@ -115,10 +115,32 @@ export type ViewState = {
 // Per-project calendar. Drives ES/EF→date rendering and working-day math.
 // `workingDays` uses ISO weekdays: 1=Mon … 7=Sun. Default is Mon–Fri.
 // `holidays` are ISO yyyy-mm-dd dates always treated as non-working.
+//
+// `team` + `allocationMode` add a "team capacity" scheduling variant. When
+// allocationMode === "team", computeSchedule stretches each task's duration by
+// `peers / capacityPerDay` (peers = max concurrent overlap from a baseline
+// CPM pass), modelling the worst-case "equal allocation across all open tasks,
+// nobody prioritising the critical path" scenario.
+export type TeamCapacity = {
+	peopleCount: number;
+	// Average % availability per person (0–100). 100 = every person works a
+	// full working day on project tasks; 50 = each person gives half a day.
+	availabilityPct: number;
+	// When true and the project has completed tasks with actualStart/Finish
+	// timestamps, the engine overrides `peopleCount × availabilityPct` with
+	// the observed PD/day derived from history. Falls back to the configured
+	// value when no usable history is available.
+	useHistoric?: boolean;
+};
+
+export type AllocationMode = "calendar" | "team";
+
 export type ProjectCalendar = {
 	startDate: string;
 	workingDays: number[];
 	holidays?: string[];
+	team?: TeamCapacity;
+	allocationMode?: AllocationMode;
 };
 
 export type PertDoc = {

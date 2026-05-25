@@ -1,5 +1,10 @@
 import { Handle, type NodeProps, Position } from "@xyflow/react";
-import { AlertOctagonIcon, CircleDotIcon, ZapIcon } from "lucide-react";
+import {
+	AlertOctagonIcon,
+	CheckCircle2Icon,
+	CircleDotIcon,
+	ZapIcon,
+} from "lucide-react";
 import { memo } from "react";
 import { PresenceBadge } from "#/components/pert/presence/presence-badge";
 import { cn } from "#/lib/utils";
@@ -12,6 +17,12 @@ export type TaskNodeData = {
 	critical: boolean;
 	hasEstimate: boolean;
 	cycle?: boolean;
+	status: "not_started" | "in_progress" | "completed";
+	progress: number;
+	// 0..1, only present when Monte Carlo has run. UI tints the border by it
+	// so users see "this task is critical 80% of trials" without opening the
+	// inspector.
+	criticality?: number;
 };
 
 // Custom React Flow node rendering a single task. Slack and critical state
@@ -19,19 +30,28 @@ export type TaskNodeData = {
 function TaskNodeImpl(props: NodeProps) {
 	const data = props.data as unknown as TaskNodeData;
 	const isMilestone = data.kind === "milestone";
+	const isDone = data.status === "completed";
+	const inFlight = data.status === "in_progress";
+	const highCriticality =
+		typeof data.criticality === "number" && data.criticality >= 0.5;
 
 	return (
 		<div
 			data-testid={`task-node-${props.id}`}
 			data-critical={data.critical}
+			data-status={data.status}
 			data-cycle={data.cycle ? "true" : undefined}
 			className={cn(
 				"group relative min-h-[80px] w-[200px] rounded-lg border bg-card px-3 py-2 text-card-foreground shadow-sm transition-colors",
 				data.cycle
 					? "border-destructive ring-2 ring-destructive/60 bg-destructive/5"
-					: data.critical
-						? "border-destructive ring-1 ring-destructive/40"
-						: "border-border",
+					: isDone
+						? "border-sky-500/60 bg-sky-500/[0.04]"
+						: data.critical || highCriticality
+							? "border-destructive ring-1 ring-destructive/40"
+							: inFlight
+								? "border-amber-500/60"
+								: "border-border",
 				props.selected && "ring-2 ring-primary",
 			)}
 		>
@@ -45,6 +65,10 @@ function TaskNodeImpl(props: NodeProps) {
 					<AlertOctagonIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
 				) : isMilestone ? (
 					<CircleDotIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+				) : isDone ? (
+					<CheckCircle2Icon className="mt-0.5 size-4 shrink-0 text-sky-600 dark:text-sky-400" />
+				) : inFlight ? (
+					<CircleDotIcon className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
 				) : data.critical ? (
 					<ZapIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
 				) : (
@@ -92,6 +116,18 @@ function TaskNodeImpl(props: NodeProps) {
 					</div>
 				</div>
 			</div>
+			{(inFlight || isDone) && (
+				<div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted">
+					<div
+						data-testid={`task-progress-${props.id}`}
+						className={cn(
+							"h-full transition-all",
+							isDone ? "bg-sky-500" : "bg-amber-500",
+						)}
+						style={{ width: `${Math.max(0, Math.min(100, data.progress))}%` }}
+					/>
+				</div>
+			)}
 			<PresenceBadge taskId={props.id} className="absolute -top-2 -right-2" />
 			<Handle
 				type="source"

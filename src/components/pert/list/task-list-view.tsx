@@ -33,6 +33,8 @@ import {
 	DropdownMenu,
 	DropdownMenuCheckboxItem,
 	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
 import { Input } from "#/components/ui/input";
@@ -105,6 +107,49 @@ export function buildTaskListRows(
 		});
 }
 
+// Column-visibility persistence: two profiles (view + edit) live in
+// localStorage so a user's preferred column set survives reloads. Reset
+// restores both to defaults. Keys are versioned so a future schema change
+// can ignore stale shapes.
+const COL_VIS_KEYS = {
+	view: "pertli.taskList.columnVis.view.v1",
+	edit: "pertli.taskList.columnVis.edit.v1",
+} as const;
+
+const DEFAULT_VIEW_COLUMN_VISIBILITY: VisibilityState = {
+	kind: false,
+	duration: false,
+	ef: false,
+};
+
+// In edit mode the user has explicitly asked to mass-edit; show every
+// editable column by default so they can tab through everything.
+const DEFAULT_EDIT_COLUMN_VISIBILITY: VisibilityState = {};
+
+function readPersistedColumnVisibility(key: string): VisibilityState | null {
+	if (typeof window === "undefined") return null;
+	try {
+		const raw = window.localStorage.getItem(key);
+		if (!raw) return null;
+		const parsed = JSON.parse(raw);
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			return parsed as VisibilityState;
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
+function writePersistedColumnVisibility(key: string, value: VisibilityState) {
+	if (typeof window === "undefined") return;
+	try {
+		window.localStorage.setItem(key, JSON.stringify(value));
+	} catch {
+		// quota / disabled storage — drop silently
+	}
+}
+
 // Tabular view of the same task graph the canvas renders. Selection is the
 // shared store, so clicks here light the canvas + the inspector and vice
 // versa. Container tasks are hidden — they belong to the canvas in Phase 5.
@@ -130,7 +175,60 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 		{ id: "es", desc: false },
 	]);
 	const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
-	const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
+	// Column visibility has two independent profiles — one for the read-only
+	// view (focused, hides CPM internals) and one for the all-cells-editable
+	// view (shows everything by default since the user explicitly opened
+	// "Edit"). Each profile is persisted to localStorage so a user's
+	// preferred layout sticks across reloads.
+	const [viewColumnVisibility, setViewColumnVisibility] =
+		useState<VisibilityState>(
+			() =>
+				readPersistedColumnVisibility(COL_VIS_KEYS.view) ??
+				DEFAULT_VIEW_COLUMN_VISIBILITY,
+		);
+	const [editColumnVisibility, setEditColumnVisibility] =
+		useState<VisibilityState>(
+			() =>
+				readPersistedColumnVisibility(COL_VIS_KEYS.edit) ??
+				DEFAULT_EDIT_COLUMN_VISIBILITY,
+		);
+	const [columnsOpen, setColumnsOpen] = useState(false);
+	// "Active" view-vs-edit visibility — flips automatically with editAll so
+	// the user can have one focused layout for skimming and a wider layout
+	// for bulk editing without manually rearranging columns each time.
+	const activeColumnVisibility = editAll
+		? editColumnVisibility
+		: viewColumnVisibility;
+	const setActiveColumnVisibility = useCallback(
+		(updater: (prev: VisibilityState) => VisibilityState) => {
+			if (editAll) {
+				setEditColumnVisibility((prev) => {
+					const next = updater(prev);
+					writePersistedColumnVisibility(COL_VIS_KEYS.edit, next);
+					return next;
+				});
+			} else {
+				setViewColumnVisibility((prev) => {
+					const next = updater(prev);
+					writePersistedColumnVisibility(COL_VIS_KEYS.view, next);
+					return next;
+				});
+			}
+		},
+		[editAll],
+	);
+	const resetColumnVisibility = useCallback(() => {
+		setViewColumnVisibility(DEFAULT_VIEW_COLUMN_VISIBILITY);
+		setEditColumnVisibility(DEFAULT_EDIT_COLUMN_VISIBILITY);
+		writePersistedColumnVisibility(
+			COL_VIS_KEYS.view,
+			DEFAULT_VIEW_COLUMN_VISIBILITY,
+		);
+		writePersistedColumnVisibility(
+			COL_VIS_KEYS.edit,
+			DEFAULT_EDIT_COLUMN_VISIBILITY,
+		);
+	}, []);
 	const [globalFilter, setGlobalFilter] = useState("");
 	const [editingId, setEditingId] = useState<TaskId | null>(null);
 	// Estimate editing is keyed separately so it can be live alongside (or
@@ -139,6 +237,7 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 	const [editingEstimateId, setEditingEstimateId] = useState<TaskId | null>(
 		null,
 	);
+	const [editingKeyId, setEditingKeyId] = useState<TaskId | null>(null);
 	// "Edit all" mode flips every editable cell into its input variant at
 	// once, so the user can tab through and modify the whole table without
 	// double-clicking each cell. Disabled when no changeDoc is available
@@ -162,6 +261,50 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 
 	const columns = useMemo<ColumnDef<TaskListRow>[]>(
 		() => [
+			{
+				accessorKey: "key",
+				header: "Key",
+				size: 120,
+				cell: ({ row }) => {
+					const r = row.original;
+					const editing = editAll || editingKeyId === r.id;
+					if (editing && changeDoc) {
+						return (
+							<KeyEdit
+								initial={r.key ?? ""}
+								autoFocus={!editAll}
+								onCommit={(value) => {
+									const trimmed = value.trim();
+									changeDoc((d) => {
+										const t = d.tasksById[r.id];
+										if (!t) return;
+										if (trimmed.length === 0) delete t.key;
+										else t.key = trimmed;
+									});
+									if (!editAll) setEditingKeyId(null);
+								}}
+								onCancel={() => {
+									if (!editAll) setEditingKeyId(null);
+								}}
+							/>
+						);
+					}
+					return (
+						<button
+							type="button"
+							className="w-full text-left font-mono text-[10px] text-muted-foreground hover:text-foreground disabled:cursor-default"
+							disabled={!changeDoc}
+							onDoubleClick={(ev) => {
+								ev.stopPropagation();
+								if (changeDoc) setEditingKeyId(r.id);
+							}}
+							title={changeDoc ? "Double-click to edit the key" : undefined}
+						>
+							{r.key ?? <span className="text-muted-foreground/60">—</span>}
+						</button>
+					);
+				},
+			},
 			{
 				accessorKey: "title",
 				header: "Title",
@@ -221,22 +364,6 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 						r.id.toLowerCase().includes(needle)
 					);
 				},
-			},
-			{
-				accessorKey: "key",
-				header: "Key",
-				cell: ({ row }) => {
-					const k = row.original.key;
-					if (!k) {
-						return <span className="text-xs text-muted-foreground/60">—</span>;
-					}
-					return (
-						<span className="font-mono text-[10px] text-muted-foreground">
-							{k}
-						</span>
-					);
-				},
-				size: 100,
 			},
 			{
 				accessorKey: "kind",
@@ -368,7 +495,7 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 				size: 90,
 			},
 		],
-		[editingId, editingEstimateId, editAll, changeDoc],
+		[editingId, editingEstimateId, editingKeyId, editAll, changeDoc],
 	);
 
 	const table = useReactTable({
@@ -377,12 +504,16 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 		state: {
 			sorting,
 			columnFilters,
-			columnVisibility,
+			columnVisibility: activeColumnVisibility,
 			globalFilter,
 		},
 		onSortingChange: setSorting,
 		onColumnFiltersChange: setColumnFilters,
-		onColumnVisibilityChange: setColumnVisibility,
+		onColumnVisibilityChange: (updater) => {
+			setActiveColumnVisibility((prev) =>
+				typeof updater === "function" ? updater(prev) : updater,
+			);
+		},
 		onGlobalFilterChange: setGlobalFilter,
 		globalFilterFn: (row, _id, value) => {
 			const needle = String(value ?? "").toLowerCase();
@@ -468,19 +599,38 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 						)}
 						{editAll ? "Done" : "Edit"}
 					</Button>
-					<DropdownMenu>
+					<DropdownMenu
+						open={columnsOpen}
+						// Open is controlled by the trigger button below. Ignore
+						// onOpenChange's other triggers (selecting an item, outside
+						// click, Escape) so the menu only closes on a second click of
+						// the Columns button — matches the user's "stay open while I
+						// pick what I want" expectation.
+						onOpenChange={(open) => {
+							if (open) setColumnsOpen(true);
+						}}
+					>
 						<DropdownMenuTrigger asChild>
 							<Button
-								variant="outline"
+								variant={columnsOpen ? "secondary" : "outline"}
 								size="sm"
 								className="h-7 gap-1.5 text-xs"
 								data-testid="task-list-columns"
+								onClick={() => setColumnsOpen((v) => !v)}
 							>
 								<SettingsIcon className="size-3.5" />
 								Columns
 							</Button>
 						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end" className="w-40">
+						<DropdownMenuContent
+							align="end"
+							className="w-48"
+							onInteractOutside={(e) => e.preventDefault()}
+							onEscapeKeyDown={(e) => e.preventDefault()}
+						>
+							<div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+								{editAll ? "Edit columns" : "View columns"}
+							</div>
 							{table
 								.getAllLeafColumns()
 								.filter((c) => c.id !== "title")
@@ -491,11 +641,25 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 										onCheckedChange={(value) =>
 											col.toggleVisibility(Boolean(value))
 										}
+										// Prevent the default "close menu on select" behavior so
+										// the user can tick / untick several columns in one go.
+										onSelect={(e) => e.preventDefault()}
 										className="text-xs capitalize"
 									>
 										{col.id}
 									</DropdownMenuCheckboxItem>
 								))}
+							<DropdownMenuSeparator />
+							<DropdownMenuItem
+								onSelect={(e) => {
+									e.preventDefault();
+									resetColumnVisibility();
+								}}
+								className="text-xs text-muted-foreground"
+								data-testid="task-list-columns-reset"
+							>
+								Reset to default
+							</DropdownMenuItem>
 						</DropdownMenuContent>
 					</DropdownMenu>
 					{scheduleResult.ok ? (
@@ -760,6 +924,48 @@ function TitleEdit({
 			onClick={(e) => e.stopPropagation()}
 			className="h-7 text-xs"
 			data-testid="task-list-title-input"
+		/>
+	);
+}
+
+// Compact key editor — monospace input, same Enter/Escape/blur semantics as
+// TitleEdit. Empty value (after trim) clears the field via the parent's
+// commit handler.
+function KeyEdit({
+	initial,
+	onCommit,
+	onCancel,
+	autoFocus = true,
+}: {
+	initial: string;
+	onCommit: (value: string) => void;
+	onCancel: () => void;
+	autoFocus?: boolean;
+}) {
+	const [value, setValue] = useState(initial);
+	const ref = useRef<HTMLInputElement>(null);
+	useEffect(() => {
+		if (autoFocus) ref.current?.focus();
+	}, [autoFocus]);
+	return (
+		<Input
+			ref={ref}
+			value={value}
+			placeholder="ungrouped"
+			onChange={(e) => setValue(e.target.value)}
+			onBlur={() => onCommit(value)}
+			onKeyDown={(e) => {
+				if (e.key === "Enter") {
+					e.preventDefault();
+					onCommit(value);
+				} else if (e.key === "Escape") {
+					e.preventDefault();
+					onCancel();
+				}
+			}}
+			onClick={(e) => e.stopPropagation()}
+			className="h-7 font-mono text-xs"
+			data-testid="task-list-key-input"
 		/>
 	);
 }

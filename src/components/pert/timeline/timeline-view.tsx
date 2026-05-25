@@ -51,7 +51,9 @@ export function TimelineView({ projectId, doc }: TimelineViewProps) {
 					</span>
 				) : (
 					<span className="text-xs text-muted-foreground">
-						{fmt(model.projectDuration)} d total
+						{fmt(model.projectDuration)} d ·{" "}
+						<span className="tabular-nums">{model.projectStartDate}</span> →{" "}
+						<span className="tabular-nums">{model.projectFinishDate}</span>
 					</span>
 				)}
 			</header>

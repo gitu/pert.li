@@ -1,5 +1,6 @@
+import { dayOffsetToDate } from "./calendar";
 import type { ScheduleResult } from "./schedule";
-import type { PertDoc, TaskId, TaskKind } from "./types";
+import type { PertDoc, TaskId, TaskKind, TaskStatus } from "./types";
 
 // Pure layout helpers for the Timeline view. The view itself only knows how
 // to render a sorted list of lanes — slack / critical / duration come from
@@ -14,6 +15,10 @@ export type TimelineLane = {
 	duration: number;
 	slack: number;
 	critical: boolean;
+	status: TaskStatus;
+	progress: number;
+	earliestStartDate: string;
+	earliestFinishDate: string;
 };
 
 export type TimelineModel = {
@@ -23,6 +28,8 @@ export type TimelineModel = {
 	// an empty / single-milestone doc still renders a usable strip.
 	axisMax: number;
 	cycle: boolean;
+	projectStartDate: string;
+	projectFinishDate: string;
 };
 
 export function buildTimelineModel(
@@ -30,7 +37,14 @@ export function buildTimelineModel(
 	scheduleResult: ScheduleResult,
 ): TimelineModel {
 	if (!scheduleResult.ok) {
-		return { lanes: [], projectDuration: 0, axisMax: 1, cycle: true };
+		return {
+			lanes: [],
+			projectDuration: 0,
+			axisMax: 1,
+			cycle: true,
+			projectStartDate: dayOffsetToDate(0, doc.calendar),
+			projectFinishDate: dayOffsetToDate(0, doc.calendar),
+		};
 	}
 	const schedule = scheduleResult.schedule;
 	const lanes: TimelineLane[] = [];
@@ -47,6 +61,10 @@ export function buildTimelineModel(
 			duration: s.duration,
 			slack: s.slack,
 			critical: s.critical,
+			status: s.status,
+			progress: s.progress,
+			earliestStartDate: s.earliestStartDate,
+			earliestFinishDate: s.earliestFinishDate,
 		});
 	}
 	lanes.sort((a, b) => {
@@ -62,6 +80,8 @@ export function buildTimelineModel(
 		projectDuration,
 		axisMax: Math.max(projectDuration, 1),
 		cycle: false,
+		projectStartDate: schedule.projectStartDate,
+		projectFinishDate: schedule.projectFinishDate,
 	};
 }
 

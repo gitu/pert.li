@@ -26,15 +26,26 @@ function CollapsedImpl(props: NodeProps) {
 	const data = props.data as unknown as ContainerNodeData;
 	const rollup = data.rollup;
 	const critical = rollup?.hasCritical ?? false;
+	const allDone =
+		(rollup?.descendantCount ?? 0) > 0 &&
+		rollup?.completedCount === rollup?.descendantCount;
+	const inFlight =
+		(rollup?.inProgressCount ?? 0) > 0 ||
+		((rollup?.completedCount ?? 0) > 0 && !allDone);
+	const progress = Math.round(rollup?.progress ?? 0);
 	return (
 		<div
 			data-testid={`container-collapsed-${props.id}`}
 			data-critical={critical}
 			className={cn(
 				"min-h-[80px] w-[220px] rounded-lg border bg-card px-3 py-2 text-card-foreground shadow-sm",
-				critical
-					? "border-destructive ring-1 ring-destructive/40"
-					: "border-border",
+				allDone
+					? "border-sky-500/60 bg-sky-500/[0.04]"
+					: critical
+						? "border-destructive ring-1 ring-destructive/40"
+						: inFlight
+							? "border-amber-500/60"
+							: "border-border",
 				props.selected && "ring-2 ring-primary",
 			)}
 		>
@@ -84,9 +95,30 @@ function CollapsedImpl(props: NodeProps) {
 								<span>min slack {fmt(rollup.minSlack)}d</span>
 							</>
 						)}
+						{rollup &&
+							(rollup.completedCount > 0 || rollup.inProgressCount > 0) && (
+								<>
+									<span aria-hidden>·</span>
+									<span>
+										{rollup.completedCount}/{rollup.descendantCount} done
+									</span>
+								</>
+							)}
 					</div>
 				</div>
 			</div>
+			{(inFlight || allDone) && (
+				<div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted">
+					<div
+						data-testid={`container-progress-${props.id}`}
+						className={cn(
+							"h-full transition-all",
+							allDone ? "bg-sky-500" : "bg-amber-500",
+						)}
+						style={{ width: `${Math.max(0, Math.min(100, progress))}%` }}
+					/>
+				</div>
+			)}
 			<Handle
 				type="source"
 				position={Position.Right}

@@ -254,6 +254,22 @@ function TaskForm({
 			}),
 		[onMutate],
 	);
+	const setActualStart = useCallback(
+		(next: string | undefined) =>
+			onMutate((d) => {
+				if (next) d.actualStart = next;
+				else delete d.actualStart;
+			}),
+		[onMutate],
+	);
+	const setActualFinish = useCallback(
+		(next: string | undefined) =>
+			onMutate((d) => {
+				if (next) d.actualFinish = next;
+				else delete d.actualFinish;
+			}),
+		[onMutate],
+	);
 
 	const status: TaskStatus = task.status ?? "not_started";
 	const progressValue =
@@ -280,6 +296,8 @@ function TaskForm({
 						onProgressChange={setProgress}
 						actualStart={task.actualStart}
 						actualFinish={task.actualFinish}
+						onActualStartChange={setActualStart}
+						onActualFinishChange={setActualFinish}
 					/>
 				)}
 
@@ -548,6 +566,8 @@ function StatusRow({
 	onProgressChange,
 	actualStart,
 	actualFinish,
+	onActualStartChange,
+	onActualFinishChange,
 }: {
 	status: TaskStatus;
 	progress: number;
@@ -555,6 +575,10 @@ function StatusRow({
 	onProgressChange: (v: number) => void;
 	actualStart?: string;
 	actualFinish?: string;
+	// Optional — when omitted, the dates render as read-only labels (e.g.
+	// in Storybook stages without a doc handle).
+	onActualStartChange?: (next: string | undefined) => void;
+	onActualFinishChange?: (next: string | undefined) => void;
 }) {
 	const isDone = status === "completed";
 	const isStarted = status !== "not_started";
@@ -621,23 +645,57 @@ function StatusRow({
 					<Progress value={progress} className="h-1" />
 				</div>
 			)}
-			{(actualStart || actualFinish) && (
-				<div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-					{actualStart && (
-						<span>
-							Started{" "}
+			{isStarted && (
+				<div className="mt-3 grid grid-cols-2 gap-3 text-xs">
+					<div className="space-y-1">
+						<Label
+							htmlFor="ti-actual-start"
+							className="text-xs text-muted-foreground"
+						>
+							Started
+						</Label>
+						{onActualStartChange ? (
+							<Input
+								id="ti-actual-start"
+								data-testid="actual-start-input"
+								type="date"
+								value={actualStart ?? ""}
+								onChange={(e) =>
+									onActualStartChange(e.target.value || undefined)
+								}
+								className="h-7 text-xs"
+							/>
+						) : (
 							<span className="tabular-nums text-foreground">
-								{actualStart}
+								{actualStart ?? "—"}
 							</span>
-						</span>
-					)}
-					{actualFinish && (
-						<span>
-							Finished{" "}
-							<span className="tabular-nums text-foreground">
-								{actualFinish}
-							</span>
-						</span>
+						)}
+					</div>
+					{(isDone || actualFinish) && (
+						<div className="space-y-1">
+							<Label
+								htmlFor="ti-actual-finish"
+								className="text-xs text-muted-foreground"
+							>
+								Finished
+							</Label>
+							{onActualFinishChange ? (
+								<Input
+									id="ti-actual-finish"
+									data-testid="actual-finish-input"
+									type="date"
+									value={actualFinish ?? ""}
+									onChange={(e) =>
+										onActualFinishChange(e.target.value || undefined)
+									}
+									className="h-7 text-xs"
+								/>
+							) : (
+								<span className="tabular-nums text-foreground">
+									{actualFinish ?? "—"}
+								</span>
+							)}
+						</div>
 					)}
 				</div>
 			)}

@@ -125,10 +125,20 @@ export const viewState: z.ZodType<ViewState> = z.object({
 	label: z.string().optional(),
 });
 
+export const teamCapacity = z.object({
+	peopleCount: z.number().int().min(0),
+	availabilityPct: z.number().min(0).max(100),
+	useHistoric: z.boolean().optional(),
+});
+
+export const allocationMode = z.enum(["calendar", "team"]);
+
 export const projectCalendar: z.ZodType<ProjectCalendar> = z.object({
 	startDate: isoDate,
 	workingDays: z.array(z.number().int().min(1).max(7)).min(1).max(7),
 	holidays: z.array(isoDate).optional(),
+	team: teamCapacity.optional(),
+	allocationMode: allocationMode.optional(),
 });
 
 export const pertDoc: z.ZodType<PertDoc> = z.object({

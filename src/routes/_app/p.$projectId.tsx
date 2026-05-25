@@ -24,6 +24,7 @@ import { PertCanvas } from "#/components/pert/canvas/canvas";
 import { FullscreenInspectorPopup } from "#/components/pert/inspector/fullscreen-inspector-popup";
 import { TaskListView } from "#/components/pert/list/task-list-view";
 import { MatrixView } from "#/components/pert/matrix/matrix-view";
+import { ProjectCalendarSheet } from "#/components/pert/project-calendar-sheet";
 import { TimelineView } from "#/components/pert/timeline/timeline-view";
 import { Button } from "#/components/ui/button";
 import { authClient } from "#/lib/auth-client";
@@ -35,6 +36,7 @@ import {
 } from "#/lib/automerge/use-project-doc";
 import {
 	clearActiveProjectDoc,
+	projectDocStore,
 	selectionStore,
 	selectTask,
 	setActiveProjectDoc,
@@ -162,6 +164,7 @@ function ProjectViewHeader({
 					/>
 				))}
 			</div>
+			<HeaderCalendarSheet projectId={projectId} />
 			<Button
 				type="button"
 				size="sm"
@@ -181,6 +184,12 @@ function ProjectViewHeader({
 			</Button>
 		</header>
 	);
+}
+
+function HeaderCalendarSheet({ projectId }: { projectId: string }) {
+	const { doc, changeDoc, projectId: activeId } = useStore(projectDocStore);
+	if (!doc || !changeDoc || activeId !== projectId) return null;
+	return <ProjectCalendarSheet doc={doc} changeDoc={changeDoc} />;
 }
 
 function ViewTab({

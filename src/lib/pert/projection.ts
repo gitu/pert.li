@@ -1,5 +1,5 @@
 import { getDescendants, getNearestCollapsedAncestor } from "./hierarchy";
-import type { Schedule, ScheduleResult } from "./schedule";
+import { type Schedule, type ScheduleResult, statusOf } from "./schedule";
 import type {
 	Dependency,
 	DependencyType,
@@ -24,6 +24,14 @@ export type ContainerRollup = {
 	minSlack: number | null;
 	criticalCount: number;
 	hasCritical: boolean;
+	// Status rollup: how many descendants are completed / in progress / not
+	// started, and the average %-complete across leaves (weighted by expected
+	// duration so half-finishing a long task counts more than half-finishing
+	// a tiny one). UI uses this for the container's completion bar.
+	completedCount: number;
+	inProgressCount: number;
+	notStartedCount: number;
+	progress: number; // 0..100
 };
 
 export type ProjectedNode =
@@ -142,17 +150,30 @@ export function rollupContainer(
 	let criticalCount = 0;
 	let scheduledCount = 0;
 	let leafCount = 0;
+	let completedCount = 0;
+	let inProgressCount = 0;
+	let notStartedCount = 0;
+	let weightedProgress = 0;
+	let progressWeight = 0;
 	for (const id of descendantIds) {
 		const t = doc.tasksById[id];
 		if (!t || t.kind === "container") continue;
 		leafCount += 1;
 		const s = schedule?.tasks[id];
+		const status = statusOf(t);
+		if (status === "completed") completedCount += 1;
+		else if (status === "in_progress") inProgressCount += 1;
+		else notStartedCount += 1;
 		if (!s) continue;
 		scheduledCount += 1;
-		expected += s.duration;
+		expected += s.expected;
 		if (minSlack === null || s.slack < minSlack) minSlack = s.slack;
 		if (s.critical) criticalCount += 1;
+		const w = s.expected > 0 ? s.expected : 1;
+		weightedProgress += s.progress * w;
+		progressWeight += w;
 	}
+	const progress = progressWeight > 0 ? weightedProgress / progressWeight : 0;
 	return {
 		containerId,
 		descendantCount: leafCount,
@@ -161,5 +182,9 @@ export function rollupContainer(
 		minSlack,
 		criticalCount,
 		hasCritical: criticalCount > 0,
+		completedCount,
+		inProgressCount,
+		notStartedCount,
+		progress,
 	};
 }

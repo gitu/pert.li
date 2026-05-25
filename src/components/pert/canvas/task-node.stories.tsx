@@ -51,6 +51,8 @@ export const Default: Story = {
 			slackDays: 1.5,
 			critical: false,
 			hasEstimate: true,
+			status: "not_started",
+			progress: 0,
 		},
 	},
 	play: async ({ canvasElement }) => {
@@ -68,11 +70,66 @@ export const Critical: Story = {
 			slackDays: 0,
 			critical: true,
 			hasEstimate: true,
+			status: "not_started",
+			progress: 0,
 		},
 	},
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await expect(canvas.getByText("critical")).toBeInTheDocument();
+	},
+};
+
+export const InProgress: Story = {
+	args: {
+		data: {
+			title: "Build auth flow",
+			kind: "task",
+			durationDays: 2.5,
+			slackDays: 1,
+			critical: false,
+			hasEstimate: true,
+			status: "in_progress",
+			progress: 60,
+		},
+	},
+	play: async ({ canvasElement }) => {
+		const node = canvasElement.querySelector(
+			'[data-testid^="task-progress-"]',
+		) as HTMLElement | null;
+		await expect(node).not.toBeNull();
+		await expect(node?.style.width).toBe("60%");
+	},
+};
+
+export const Completed: Story = {
+	args: {
+		data: {
+			title: "Spec written",
+			kind: "task",
+			durationDays: 0,
+			slackDays: 3,
+			critical: false,
+			hasEstimate: true,
+			status: "completed",
+			progress: 100,
+		},
+	},
+};
+
+export const HighCriticality: Story = {
+	args: {
+		data: {
+			title: "Migrate database",
+			kind: "task",
+			durationDays: 4,
+			slackDays: 2,
+			critical: false,
+			hasEstimate: true,
+			status: "not_started",
+			progress: 0,
+			criticality: 0.92,
+		},
 	},
 };
 
@@ -85,6 +142,8 @@ export const Milestone: Story = {
 			slackDays: 0,
 			critical: false,
 			hasEstimate: false,
+			status: "not_started",
+			progress: 0,
 		},
 	},
 };
@@ -98,6 +157,8 @@ export const NoEstimate: Story = {
 			slackDays: null,
 			critical: false,
 			hasEstimate: false,
+			status: "not_started",
+			progress: 0,
 		},
 	},
 };

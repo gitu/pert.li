@@ -1,3 +1,4 @@
+import { dayOffsetToDate, workingDaysInclusive } from "./calendar";
 import type {
 	Dependency,
 	DependencyType,
@@ -5,6 +6,7 @@ import type {
 	PertDoc,
 	Task,
 	TaskId,
+	TaskStatus,
 } from "./types";
 
 // Deterministic Critical Path Method engine. Pure function over the PERT doc;
@@ -25,10 +27,16 @@ export type Schedule = {
 	tasks: Record<TaskId, TaskSchedule>;
 	projectDuration: number;
 	criticalTaskIds: TaskId[];
+	projectStartDate: string;
+	projectFinishDate: string;
 };
 
 export type TaskSchedule = {
 	taskId: TaskId;
+	// Effective duration used in the forward/backward pass — accounts for
+	// status/progress. A completed task is 0; an in-progress task is
+	// `expected × (1 − progress/100)`. Use `expected` for the unadjusted PERT
+	// value (so the UI can show plan vs. remaining side-by-side).
 	duration: number;
 	expected: number;
 	variance: number;
@@ -38,6 +46,14 @@ export type TaskSchedule = {
 	latestFinish: number;
 	slack: number;
 	critical: boolean;
+	status: TaskStatus;
+	progress: number;
+	// Calendar projections. Always present once the doc has any tasks; default
+	// to today when the project hasn't set a startDate yet.
+	earliestStartDate: string;
+	earliestFinishDate: string;
+	latestStartDate: string;
+	latestFinishDate: string;
 };
 
 export type ScheduleResult =
@@ -69,6 +85,44 @@ export function durationOf(task: Task): number {
 	if (task.kind === "milestone") return 0;
 	if (task.kind === "container") return 0;
 	return expected(task.estimate);
+}
+
+export function statusOf(task: Task): TaskStatus {
+	return task.status ?? "not_started";
+}
+
+export function progressFractionOf(task: Task): number {
+	const status = statusOf(task);
+	if (status === "completed") return 1;
+	if (status === "not_started") return 0;
+	const raw = task.progress ?? 0;
+	if (raw <= 0) return 0;
+	if (raw >= 100) return 1;
+	return raw / 100;
+}
+
+// Effective remaining duration the CPM math should use. Completed work is
+// burned down to zero; in-progress work shrinks by the reported fraction. The
+// UI keeps `expected` separately so it can render plan vs. remaining.
+export function effectiveDurationOf(task: Task): number {
+	const planned = durationOf(task);
+	if (planned <= 0) return 0;
+	const status = statusOf(task);
+	if (status === "completed") return 0;
+	const remaining = 1 - progressFractionOf(task);
+	return planned * remaining;
+}
+
+// Effective variance — completed and in-progress work has reduced uncertainty.
+// We scale by the same remaining fraction so a half-done task contributes half
+// the variance into the Monte Carlo sums.
+export function effectiveVarianceOf(task: Task): number {
+	const planned = variance(task.estimate);
+	if (planned <= 0) return 0;
+	const status = statusOf(task);
+	if (status === "completed") return 0;
+	const remaining = 1 - progressFractionOf(task);
+	return planned * remaining;
 }
 
 type SchedulableDep = {
@@ -175,60 +229,54 @@ export function computeSchedule(doc: PertDoc): ScheduleResult {
 	}
 	const order = cycleCheck.order;
 
-	const duration: Record<TaskId, number> = {};
-	const es: Record<TaskId, number> = {};
-	const ef: Record<TaskId, number> = {};
-	for (const id of taskIds) duration[id] = durationOf(tasks[id]);
-
-	// Forward pass.
-	for (const id of order) {
-		const incoming = predecessors[id];
-		let earliestStart = 0;
-		for (const edge of incoming) {
-			const candidate = startConstraint(edge, es, ef, duration[id]);
-			if (candidate > earliestStart) earliestStart = candidate;
-		}
-		es[id] = earliestStart;
-		ef[id] = earliestStart + duration[id];
+	const plannedDuration: Record<TaskId, number> = {};
+	const baselineDuration: Record<TaskId, number> = {};
+	for (const id of taskIds) {
+		baselineDuration[id] = effectiveDurationOf(tasks[id]);
+		plannedDuration[id] = durationOf(tasks[id]);
 	}
 
-	const projectDuration = order.reduce(
-		(max, id) => (ef[id] > max ? ef[id] : max),
-		0,
+	// Two-pass: first run the unconstrained CPM, then if the project is on a
+	// team-capacity calendar, scale each task's duration by the worst-case
+	// "equal allocation across concurrent peers" rule and re-run. The peer
+	// count comes from the baseline ES/EF windows.
+	let duration = baselineDuration;
+	const teamCapacity = teamCapacityPerDay(doc);
+	if (teamCapacity > 0) {
+		const baseline = runForwardBackward(
+			taskIds,
+			order,
+			successors,
+			predecessors,
+			baselineDuration,
+		);
+		duration = scaleForTeamCapacity(
+			taskIds,
+			baselineDuration,
+			baseline.es,
+			baseline.ef,
+			teamCapacity,
+		);
+	}
+
+	const { es, ef, ls, lf, projectDuration } = runForwardBackward(
+		taskIds,
+		order,
+		successors,
+		predecessors,
+		duration,
 	);
-
-	// Backward pass over reverse topo order.
-	const lf: Record<TaskId, number> = {};
-	const ls: Record<TaskId, number> = {};
-	const reverse = [...order].reverse();
-	for (const id of reverse) {
-		const outgoing = successors[id];
-		let latestFinish = projectDuration;
-		if (outgoing.length > 0) {
-			latestFinish = Number.POSITIVE_INFINITY;
-			for (const edge of outgoing) {
-				const candidate = finishConstraint(
-					edge,
-					ls[edge.to],
-					lf[edge.to],
-					duration[id],
-				);
-				if (candidate < latestFinish) latestFinish = candidate;
-			}
-		}
-		lf[id] = latestFinish;
-		ls[id] = latestFinish - duration[id];
-	}
 
 	const tasksOut: Record<TaskId, TaskSchedule> = {};
 	const critical: TaskId[] = [];
+	const calendar = doc.calendar;
 	for (const id of taskIds) {
 		const slack = ls[id] - es[id];
 		const isCritical = Math.abs(slack) <= EPSILON;
 		tasksOut[id] = {
 			taskId: id,
 			duration: duration[id],
-			expected: duration[id],
+			expected: plannedDuration[id],
 			variance: variance(tasks[id].estimate),
 			earliestStart: es[id],
 			earliestFinish: ef[id],
@@ -236,6 +284,12 @@ export function computeSchedule(doc: PertDoc): ScheduleResult {
 			latestFinish: lf[id],
 			slack,
 			critical: isCritical,
+			status: statusOf(tasks[id]),
+			progress: Math.round(progressFractionOf(tasks[id]) * 100),
+			earliestStartDate: dayOffsetToDate(es[id], calendar),
+			earliestFinishDate: dayOffsetToDate(ef[id], calendar),
+			latestStartDate: dayOffsetToDate(ls[id], calendar),
+			latestFinishDate: dayOffsetToDate(lf[id], calendar),
 		};
 		if (isCritical) critical.push(id);
 	}
@@ -246,6 +300,8 @@ export function computeSchedule(doc: PertDoc): ScheduleResult {
 			tasks: tasksOut,
 			projectDuration,
 			criticalTaskIds: critical,
+			projectStartDate: dayOffsetToDate(0, calendar),
+			projectFinishDate: dayOffsetToDate(projectDuration, calendar),
 		},
 	};
 }
@@ -288,4 +344,158 @@ function finishConstraint(
 		case "start_to_finish":
 			return successorLf - edge.lag + predecessorDuration;
 	}
+}
+
+// Single forward + backward CPM pass given a duration map. Returns the four
+// schedule fields plus the project duration. No team/calendar awareness here
+// — caller picks which duration map to feed in.
+function runForwardBackward(
+	taskIds: TaskId[],
+	order: TaskId[],
+	successors: Record<TaskId, SchedulableDep[]>,
+	predecessors: Record<TaskId, SchedulableDep[]>,
+	duration: Record<TaskId, number>,
+): {
+	es: Record<TaskId, number>;
+	ef: Record<TaskId, number>;
+	ls: Record<TaskId, number>;
+	lf: Record<TaskId, number>;
+	projectDuration: number;
+} {
+	const es: Record<TaskId, number> = {};
+	const ef: Record<TaskId, number> = {};
+	for (const id of order) {
+		let earliestStart = 0;
+		for (const edge of predecessors[id]) {
+			const candidate = startConstraint(edge, es, ef, duration[id]);
+			if (candidate > earliestStart) earliestStart = candidate;
+		}
+		es[id] = earliestStart;
+		ef[id] = earliestStart + duration[id];
+	}
+	let projectDuration = 0;
+	for (const id of taskIds)
+		if (ef[id] > projectDuration) projectDuration = ef[id];
+
+	const ls: Record<TaskId, number> = {};
+	const lf: Record<TaskId, number> = {};
+	const reverse = [...order].reverse();
+	for (const id of reverse) {
+		const outgoing = successors[id];
+		let latestFinish = projectDuration;
+		if (outgoing.length > 0) {
+			latestFinish = Number.POSITIVE_INFINITY;
+			for (const edge of outgoing) {
+				const candidate = finishConstraint(
+					edge,
+					ls[edge.to],
+					lf[edge.to],
+					duration[id],
+				);
+				if (candidate < latestFinish) latestFinish = candidate;
+			}
+		}
+		lf[id] = latestFinish;
+		ls[id] = latestFinish - duration[id];
+	}
+	return { es, ef, ls, lf, projectDuration };
+}
+
+// Observed PD/day delivered by the team across completed tasks. Returns null
+// when no completed task has both actualStart and actualFinish (no signal yet)
+// or the elapsed working-day count is zero.
+//
+// Caveats: the "PD delivered" is the *planned* expected duration, not real
+// time-tracking. Good enough for a velocity estimate; not an accurate billing
+// figure. Completed tasks without actualStart/Finish are skipped — they don't
+// tell us how long they took.
+export type HistoricCapacity = {
+	deliveredPd: number;
+	elapsedWorkingDays: number;
+	perDay: number;
+	sampleCount: number;
+};
+
+export function historicCapacityPerDay(doc: PertDoc): HistoricCapacity | null {
+	let deliveredPd = 0;
+	let elapsedWorkingDays = 0;
+	let sampleCount = 0;
+	for (const task of Object.values(doc.tasksById)) {
+		if (task.kind !== "task") continue;
+		if (statusOf(task) !== "completed") continue;
+		if (!task.actualStart || !task.actualFinish) continue;
+		const pd = expected(task.estimate);
+		if (pd <= 0) continue;
+		const elapsed = workingDaysInclusive(
+			task.actualStart,
+			task.actualFinish,
+			doc.calendar,
+		);
+		if (elapsed <= 0) continue;
+		deliveredPd += pd;
+		elapsedWorkingDays += elapsed;
+		sampleCount += 1;
+	}
+	if (sampleCount === 0 || elapsedWorkingDays <= 0) return null;
+	return {
+		deliveredPd,
+		elapsedWorkingDays,
+		perDay: deliveredPd / elapsedWorkingDays,
+		sampleCount,
+	};
+}
+
+// Resolves the calendar's team capacity to "person-days available per
+// project day". Returns 0 when team mode is off or capacity is zero — the
+// schedule then falls back to the unconstrained CPM.
+//
+// When the calendar's team has `useHistoric: true` and the project has
+// usable history, the observed PD/day overrides the configured value.
+export function teamCapacityPerDay(doc: PertDoc): number {
+	const cal = doc.calendar;
+	if (!cal || cal.allocationMode !== "team" || !cal.team) return 0;
+	if (cal.team.useHistoric) {
+		const historic = historicCapacityPerDay(doc);
+		if (historic && historic.perDay > 0) return historic.perDay;
+	}
+	const pd =
+		Math.max(0, cal.team.peopleCount) *
+		(Math.max(0, Math.min(100, cal.team.availabilityPct)) / 100);
+	return pd > 0 ? pd : 0;
+}
+
+// "Worst-case equal allocation" duration scaling. For each task, count how
+// many other tasks share its baseline [ES, EF) window — that's its peer set.
+// Capacity per task is then `capacity / peers`, so a task that wants E
+// person-days takes `E * peers / capacity` calendar days.
+//
+// We use the MAX overlap during the window rather than averaging — that's
+// what "worst case" means: assume the team got crowded at the bottleneck and
+// stayed crowded for the whole task. Tasks with zero baseline duration
+// (completed, milestones, missing estimate) keep their zero.
+function scaleForTeamCapacity(
+	taskIds: TaskId[],
+	baseline: Record<TaskId, number>,
+	es: Record<TaskId, number>,
+	ef: Record<TaskId, number>,
+	capacityPerDay: number,
+): Record<TaskId, number> {
+	const scaled: Record<TaskId, number> = {};
+	for (const id of taskIds) {
+		const dur = baseline[id];
+		if (dur <= 0) {
+			scaled[id] = 0;
+			continue;
+		}
+		let peers = 1;
+		for (const other of taskIds) {
+			if (other === id) continue;
+			if (baseline[other] <= 0) continue;
+			// Overlap on [a.es, a.ef) ∩ [b.es, b.ef) — half-open, so touching
+			// windows don't count as concurrent.
+			if (es[other] < ef[id] && ef[other] > es[id]) peers += 1;
+		}
+		scaled[id] = (dur * peers) / capacityPerDay;
+	}
+	return scaled;
 }
