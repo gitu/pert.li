@@ -1030,18 +1030,25 @@ function renderFlatTaskRow({
 //                    summed in quadrature (independent-tasks assumption).
 //                    null when no task has a usable estimate spread.
 function summarizeGroup(group: KeyGroupNode<TaskListRow>): {
+	totalCount: number;
+	completedCount: number;
+	completedPct: number | null;
 	totalDuration: number;
 	doneDuration: number;
 	remainingDuration: number;
 	progress: number | null;
 	ci95: number | null;
 } {
+	let totalCount = 0;
+	let completedCount = 0;
 	let totalDuration = 0;
 	let doneDuration = 0;
 	let variance = 0;
 	let hasSpread = false;
 	const walk = (node: KeyGroupNode<TaskListRow>) => {
 		for (const row of node.rows) {
+			totalCount += 1;
+			if (row.taskStatus === "completed") completedCount += 1;
 			if (row.duration <= 0) continue;
 			const pct =
 				row.taskStatus === "completed"
@@ -1063,8 +1070,13 @@ function summarizeGroup(group: KeyGroupNode<TaskListRow>): {
 		for (const child of node.children) walk(child);
 	};
 	walk(group);
+	const completedPct =
+		totalCount > 0 ? (completedCount / totalCount) * 100 : null;
 	if (totalDuration === 0) {
 		return {
+			totalCount,
+			completedCount,
+			completedPct,
 			totalDuration: 0,
 			doneDuration: 0,
 			remainingDuration: 0,
@@ -1073,6 +1085,9 @@ function summarizeGroup(group: KeyGroupNode<TaskListRow>): {
 		};
 	}
 	return {
+		totalCount,
+		completedCount,
+		completedPct,
 		totalDuration,
 		doneDuration,
 		remainingDuration: totalDuration - doneDuration,
@@ -1172,6 +1187,21 @@ function renderGroupedRows({
 										{Math.round(summary.progress)}%
 									</span>{" "}
 									done
+								</span>
+							</>
+						)}
+						{summary.completedPct !== null && summary.totalCount > 0 && (
+							<>
+								<span className="text-muted-foreground">·</span>
+								<span className="text-muted-foreground">
+									<span className="tabular-nums text-foreground">
+										{summary.completedCount}/{summary.totalCount}
+									</span>{" "}
+									(
+									<span className="tabular-nums text-foreground">
+										{Math.round(summary.completedPct)}%
+									</span>
+									) completed
 								</span>
 							</>
 						)}
