@@ -5,7 +5,7 @@
 # Stage 2 (build)  — compile TanStack Start to .output/ (Nitro node-server).
 # Stage 3 (runner) — copy only the standalone .output/ + minimum prod deps.
 
-ARG NODE_VERSION=22.13.0
+ARG NODE_VERSION=24.0.0
 
 # ---------- deps ----------
 FROM node:${NODE_VERSION}-alpine AS deps

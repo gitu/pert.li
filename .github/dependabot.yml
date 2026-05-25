@@ -34,6 +34,27 @@ updates:
     ignore:
       - dependency-name: nitro
 
+  # Dockerfile base image (currently `node:24.0.0-alpine`, referenced via
+  # the ARG NODE_VERSION default). Dependabot resolves ARG-based FROM
+  # lines and edits the ARG value when a newer patch/minor is available.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - docker
+    groups:
+      non-major:
+        applies-to: version-updates
+        update-types:
+          - patch
+          - minor
+
   # GitHub Actions versions in .github/workflows/*. Same weekly + group
   # strategy. Major action updates land separately.
   - package-ecosystem: github-actions
