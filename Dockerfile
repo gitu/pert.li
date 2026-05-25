@@ -13,7 +13,10 @@ WORKDIR /app
 
 # Corepack ships pnpm; pin the version we test against. Keep this in sync
 # with the pnpm version local devs use (the lockfile is pnpm 11+).
-RUN corepack enable && corepack prepare pnpm@11.0.0 --activate
+# Install pnpm directly via npm. Corepack's bundled signing keys in
+# Node 22.13 are stale and reject pnpm 11.x releases ("Cannot find
+# matching keyid"). Going through npm sidesteps the signature dance.
+RUN npm install -g pnpm@11.3.0
 
 COPY package.json pnpm-lock.yaml .npmrc pnpm-workspace.yaml ./
 # `pnpm fetch` populates the content-addressed store from the lockfile;
@@ -24,7 +27,10 @@ RUN pnpm fetch
 # ---------- build ----------
 FROM node:${NODE_VERSION}-alpine AS build
 WORKDIR /app
-RUN corepack enable && corepack prepare pnpm@11.0.0 --activate
+# Install pnpm directly via npm. Corepack's bundled signing keys in
+# Node 22.13 are stale and reject pnpm 11.x releases ("Cannot find
+# matching keyid"). Going through npm sidesteps the signature dance.
+RUN npm install -g pnpm@11.3.0
 COPY --from=deps /app /app
 COPY . .
 # Postinstall scripts of `onlyBuiltDependencies` (esbuild, lightningcss,
