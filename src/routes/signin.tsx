@@ -4,13 +4,16 @@ import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { authClient } from "#/lib/auth-client";
+import { getOidcButton } from "#/server/oidc";
 
 export const Route = createFileRoute("/signin")({
 	component: SignInPage,
+	loader: () => getOidcButton(),
 });
 
 function SignInPage() {
 	const navigate = useNavigate();
+	const oidcButton = Route.useLoaderData();
 	const [mode, setMode] = useState<"signin" | "signup" | "link">("signin");
 	const [name, setName] = useState("");
 	const [email, setEmail] = useState("");
@@ -18,6 +21,26 @@ function SignInPage() {
 	const [error, setError] = useState<string | null>(null);
 	const [info, setInfo] = useState<string | null>(null);
 	const [pending, setPending] = useState(false);
+	const [oauthPending, setOauthPending] = useState(false);
+
+	async function startOauth() {
+		if (!oidcButton) return;
+		setError(null);
+		setInfo(null);
+		setOauthPending(true);
+		try {
+			// better-auth redirects the browser to the IdP; the promise only
+			// settles on error. We don't clear oauthPending on success because the
+			// page is about to navigate away.
+			await authClient.signIn.oauth2({
+				providerId: oidcButton.providerId,
+				callbackURL: "/",
+			});
+		} catch (err) {
+			setOauthPending(false);
+			setError(err instanceof Error ? err.message : "OAuth sign-in failed");
+		}
+	}
 
 	async function onSubmit(event: React.FormEvent) {
 		event.preventDefault();
@@ -75,6 +98,27 @@ function SignInPage() {
 								: "We'll email a one-time link. Works for new accounts too — no password ever required."}
 					</p>
 				</div>
+
+				{oidcButton && mode !== "link" && (
+					<>
+						<Button
+							type="button"
+							variant="outline"
+							className="w-full"
+							onClick={startOauth}
+							disabled={oauthPending || pending}
+						>
+							{oauthPending
+								? "Redirecting…"
+								: `Continue with ${oidcButton.displayName}`}
+						</Button>
+						<div className="flex items-center gap-2 text-xs text-muted-foreground">
+							<span className="h-px flex-1 bg-border" />
+							or
+							<span className="h-px flex-1 bg-border" />
+						</div>
+					</>
+				)}
 
 				{mode === "signup" && (
 					<div className="space-y-2">

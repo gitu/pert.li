@@ -23,10 +23,13 @@ import {
 	PlusIcon,
 	SettingsIcon,
 	SunIcon,
-	UserIcon,
+	UserCogIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { PanelImperativeHandle } from "react-resizable-panels";
+import { ProfileDialog } from "#/components/account/profile-dialog";
+import { UserAvatar } from "#/components/account/user-avatar";
 import { ChatPanel } from "#/components/ai/chat-panel";
 import { HistoryDrawer } from "#/components/pert/history/history-drawer";
 import { TaskInspector } from "#/components/pert/inspector/task-inspector";
@@ -55,7 +58,6 @@ import {
 	SheetDescription,
 	SheetHeader,
 	SheetTitle,
-	SheetTrigger,
 } from "#/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs";
 import { TooltipProvider } from "#/components/ui/tooltip";
@@ -79,8 +81,39 @@ function AppShell() {
 	const navigate = useNavigate();
 	const { data: session, isPending } = authClient.useSession();
 	const [createOpen, setCreateOpen] = useState(false);
+	const [profileOpen, setProfileOpen] = useState(false);
+	// First time the session loads without a name we prompt the user — but only
+	// once, so dismissing the dialog (or saving anything) doesn't immediately
+	// re-open it on the next re-render.
+	const promptedNameRef = useRef(false);
+	const sessionName = session?.user?.name?.trim() ?? "";
+	useEffect(() => {
+		if (session?.user && !sessionName && !promptedNameRef.current) {
+			promptedNameRef.current = true;
+			setProfileOpen(true);
+		}
+	}, [session?.user, sessionName]);
 	const dockMode = useChatDockMode();
 	const pinnedChat = dockMode === "pinned";
+	// Singleton chat: ChatPanel mounts once below the layout and createPortal
+	// teleports its DOM between the Sheet body, the pinned column, or a hidden
+	// fallback host depending on dock mode. Same React instance → useChat
+	// state persists across mode flips (no more conversation wipe when the
+	// user toggles pin).
+	const [sheetSlot, setSheetSlot] = useState<HTMLDivElement | null>(null);
+	const [pinnedSlot, setPinnedSlot] = useState<HTMLDivElement | null>(null);
+	const [fallbackSlot, setFallbackSlot] = useState<HTMLDivElement | null>(null);
+	// During a mode flip (e.g. sheet→pinned) the new slot's ref callback hasn't
+	// fired yet for one render, so the "active" target is briefly null. Fall
+	// back to the hidden host in that window so ChatPanel never unmounts —
+	// otherwise useChat would lose its messages mid-transition.
+	const activeChatTarget =
+		dockMode === "pinned"
+			? pinnedSlot
+			: dockMode === "sheet"
+				? sheetSlot
+				: null;
+	const chatTarget = activeChatTarget ?? fallbackSlot;
 	// The Details / History panel below the main view is project-scoped — it
 	// reads from the active project doc. On the workspace overview (and any
 	// other non-project route) it just shows an "open a project" empty state,
@@ -130,6 +163,7 @@ function AppShell() {
 				<TopBar
 					user={session.user}
 					onNewProject={() => setCreateOpen(true)}
+					onEditProfile={() => setProfileOpen(true)}
 					leftCollapsed={leftCollapsed}
 					bottomCollapsed={bottomCollapsed}
 					// Hide the bottom-panel toggle on routes without a bottom
@@ -210,14 +244,47 @@ function AppShell() {
 									maxSize="50%"
 									className="bg-card"
 								>
-									<PinnedChat />
+									<div ref={setPinnedSlot} className="h-full" />
 								</ResizablePanel>
 							</>
 						)}
 					</ResizablePanelGroup>
 				</div>
 			</div>
+			{/* Hidden fallback host keeps ChatPanel mounted even when the chat is
+			    "closed" — toggling pin / sheet / closed doesn't unmount the chat,
+			    so the conversation survives every mode flip. */}
+			<div ref={setFallbackSlot} aria-hidden className="hidden" />
+			{/* Sheet stays mounted; we just control its `open` from the dock state.
+			    The slot div is the portal target when mode === "sheet". */}
+			<Sheet
+				open={dockMode === "sheet"}
+				onOpenChange={(open) => {
+					if (open) chatDock.openSheet();
+					else if (dockMode === "sheet") chatDock.close();
+				}}
+			>
+				<SheetContent
+					side="right"
+					className="flex w-full flex-col gap-0 p-0 sm:max-w-md"
+				>
+					<SheetHeader className="sr-only">
+						<SheetTitle>Project chat</SheetTitle>
+						<SheetDescription>
+							Conversation with the AI planning assistant.
+						</SheetDescription>
+					</SheetHeader>
+					<div ref={setSheetSlot} className="flex min-h-0 flex-1 flex-col" />
+				</SheetContent>
+			</Sheet>
+			<ChatHost target={chatTarget} />
 			<CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
+			<ProfileDialog
+				open={profileOpen}
+				onOpenChange={setProfileOpen}
+				user={session.user}
+				required={!sessionName}
+			/>
 		</TooltipProvider>
 	);
 }
@@ -225,27 +292,22 @@ function AppShell() {
 function TopBar({
 	user,
 	onNewProject,
+	onEditProfile,
 	leftCollapsed,
 	bottomCollapsed,
 	showBottomToggle,
 	onToggleLeft,
 	onToggleBottom,
 }: {
-	user: { name?: string | null; email: string };
+	user: { name?: string | null; email: string; image?: string | null };
 	onNewProject: () => void;
+	onEditProfile: () => void;
 	leftCollapsed: boolean;
 	bottomCollapsed: boolean;
 	showBottomToggle: boolean;
 	onToggleLeft: () => void;
 	onToggleBottom: () => void;
 }) {
-	const initials = (user.name ?? user.email)
-		.split(/\s+/)
-		.map((s) => s[0]?.toUpperCase())
-		.filter(Boolean)
-		.slice(0, 2)
-		.join("");
-
 	return (
 		<header className="flex h-12 shrink-0 items-center gap-2 border-b bg-card px-3">
 			<Button
@@ -318,9 +380,12 @@ function TopBar({
 						className="gap-2 px-2"
 						aria-label="Account menu"
 					>
-						<span className="grid size-7 place-items-center rounded-full bg-muted text-xs font-medium">
-							{initials || <UserIcon className="size-4" />}
-						</span>
+						<UserAvatar
+							name={user.name}
+							email={user.email}
+							image={user.image}
+							size={28}
+						/>
 						<span className="hidden text-sm md:inline">
 							{user.name ?? user.email}
 						</span>
@@ -332,6 +397,10 @@ function TopBar({
 						<div className="text-xs text-muted-foreground">{user.email}</div>
 					</DropdownMenuLabel>
 					<DropdownMenuSeparator />
+					<DropdownMenuItem onClick={onEditProfile}>
+						<UserCogIcon className="size-4" />
+						Edit profile
+					</DropdownMenuItem>
 					<ThemeMenu />
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onClick={() => void authClient.signOut()}>
@@ -387,76 +456,34 @@ function ThemeMenu() {
 
 function ChatTrigger() {
 	const mode = useChatDockMode();
-	const sheetOpen = mode === "sheet";
 	return (
-		<Sheet
-			open={sheetOpen}
-			onOpenChange={(open) => {
-				if (open) chatDock.openSheet();
-				else if (mode === "sheet") chatDock.close();
+		<Button
+			size="sm"
+			variant={mode === "pinned" ? "secondary" : "ghost"}
+			className="gap-1.5"
+			aria-label="Open chat"
+			aria-pressed={mode !== "closed"}
+			data-testid="topbar-chat-trigger"
+			onClick={() => {
+				if (mode === "closed") chatDock.openSheet();
+				else chatDock.close();
 			}}
 		>
-			<SheetTrigger asChild>
-				<Button
-					size="sm"
-					variant={mode === "pinned" ? "secondary" : "ghost"}
-					className="gap-1.5"
-					aria-label="Open chat"
-					aria-pressed={mode !== "closed"}
-					data-testid="topbar-chat-trigger"
-					onClick={(e) => {
-						// When the chat is pinned the Sheet trigger would still try to
-						// open the overlay; intercept so the button instead toggles the
-						// pinned column closed.
-						if (mode === "pinned") {
-							e.preventDefault();
-							chatDock.close();
-						}
-					}}
-				>
-					<BotIcon className="size-4" />
-					Chat
-				</Button>
-			</SheetTrigger>
-			<SheetContent
-				side="right"
-				className="flex w-full flex-col gap-0 p-0 sm:max-w-md"
-			>
-				<SheetHeader className="sr-only">
-					<SheetTitle>Project chat</SheetTitle>
-					<SheetDescription>
-						Conversation with the AI planning assistant.
-					</SheetDescription>
-				</SheetHeader>
-				<ChatPanel showDockControls />
-			</SheetContent>
-		</Sheet>
+			<BotIcon className="size-4" />
+			Chat
+		</Button>
 	);
 }
 
-function PinnedChat() {
-	const pending = useChatDockPendingPrompt();
-	// Snapshot the seed locally so the prompt is consumed exactly once even if
-	// the user later re-opens the chat through the topbar button. The `key` on
-	// ChatPanel ensures a fresh chat connection per tutorial click (so the new
-	// lesson isn't grafted onto a prior conversation).
-	const [seed, setSeed] = useState(pending);
-	useEffect(() => {
-		if (pending) {
-			setSeed(pending);
-			chatDock.consumePendingPrompt();
-		}
-	}, [pending]);
-	return (
-		<div className="flex h-full flex-col">
-			<ChatPanel
-				key={seed?.text ?? "live"}
-				showDockControls
-				initialPrompt={seed?.text}
-				autoSendInitial={seed?.autoSend ?? false}
-			/>
-		</div>
-	);
+// Singleton ChatPanel host. ChatPanel mounts here once and its DOM is
+// teleported via createPortal to whichever slot the dock points at — Sheet
+// body, pinned column, or a hidden fallback. The React instance never
+// remounts on a mode flip, so useChat's in-memory message log persists.
+// Tutorial CTAs go through the dock store's pendingPrompt; ChatPanel
+// consumes them internally and appends to the transcript.
+function ChatHost({ target }: { target: HTMLDivElement | null }) {
+	if (!target) return null;
+	return createPortal(<ChatPanel showDockControls />, target);
 }
 
 function WorkspaceSwitcher() {

@@ -1,10 +1,15 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { magicLink } from "better-auth/plugins";
+import { genericOAuth, magicLink } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { Resend } from "resend";
 import { db } from "#/db";
 import { account, session, user, verification } from "#/db/schema";
+import {
+	type OidcPublicInfo,
+	parseOidcConfig,
+	toPublicInfo,
+} from "#/lib/auth-oidc";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? "noreply@pert.li";
@@ -14,6 +19,31 @@ if (!/@pert\.li$/i.test(FROM_EMAIL)) {
 	);
 }
 const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
+
+// Optional: a single OIDC provider for on-prem / Entra ID deployments. When
+// the OIDC_* env vars aren't set the plugin isn't loaded at all, so the
+// signin page just shows email+password and magic link.
+const oidcConfig = parseOidcConfig(process.env);
+const oidcPlugins = oidcConfig
+	? [
+			genericOAuth({
+				config: [
+					{
+						providerId: oidcConfig.providerId,
+						clientId: oidcConfig.clientId,
+						clientSecret: oidcConfig.clientSecret,
+						discoveryUrl: oidcConfig.discoveryUrl,
+						scopes: oidcConfig.scopes,
+					},
+				],
+			}),
+		]
+	: [];
+
+/** Browser-safe view of the OIDC config (no secrets). null when unset. */
+export function getOidcPublicInfo(): OidcPublicInfo | null {
+	return oidcConfig ? toPublicInfo(oidcConfig) : null;
+}
 
 export const auth = betterAuth({
 	database: drizzleAdapter(db, {
@@ -45,6 +75,7 @@ export const auth = betterAuth({
 				}
 			},
 		}),
+		...oidcPlugins,
 		tanstackStartCookies(),
 	],
 });

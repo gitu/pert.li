@@ -90,6 +90,19 @@ ANTHROPIC_API_KEY=
 BETTER_AUTH_SECRET=
 ```
 
+Optional — single OIDC SSO provider (custom on-prem IdP, Microsoft Entra ID / Azure AD, Okta, Keycloak, Authentik). Leaving these unset hides the SSO button on `/signin`.
+
+```env
+OIDC_PROVIDER_ID=        # defaults to "oidc"; URL segment for the callback
+OIDC_PROVIDER_NAME=      # button label ("Continue with {name}"); defaults to "SSO"
+OIDC_DISCOVERY_URL=      # https://idp.example.com/.well-known/openid-configuration
+OIDC_CLIENT_ID=
+OIDC_CLIENT_SECRET=
+OIDC_SCOPES=             # comma-separated; defaults to "openid,email,profile"
+```
+
+Register `<app-origin>/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>` as the redirect URI with the IdP. For Entra ID the discovery URL is `https://login.microsoftonline.com/<tenant-id>/v2.0/.well-known/openid-configuration`.
+
 ## Testing rules
 
 Every shipped feature must satisfy these. "Done" includes the test rig — a feature without test scaffolding is not merged.
