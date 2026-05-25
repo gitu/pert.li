@@ -6,12 +6,14 @@ export type ProjectListProps = {
 	projects: ProjectSummary[];
 	activeProjectId?: string;
 	empty?: React.ReactNode;
+	onSelect?: (project: ProjectSummary) => void;
 };
 
 export function ProjectList({
 	projects,
 	activeProjectId,
 	empty,
+	onSelect,
 }: ProjectListProps) {
 	if (projects.length === 0) {
 		return (
@@ -29,6 +31,7 @@ export function ProjectList({
 						<Link
 							to="/p/$projectId"
 							params={{ projectId: project.id }}
+							onClick={() => onSelect?.(project)}
 							className={[
 								"flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors",
 								active

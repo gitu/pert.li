@@ -8,30 +8,58 @@ import * as schema from "./schema.ts";
 type AppDatabase = PgDatabase<PgQueryResultHKT, typeof schema> &
 	Record<string, unknown>;
 
+const DEFAULT_LOCAL_PGLITE_DIR = "./.data/pglite";
+
+type DbMode = "e2e-pglite" | "local-pglite" | "neon";
+
+function resolveMode(): DbMode {
+	if (process.env.E2E_PGLITE === "1") return "e2e-pglite";
+	// Opt-in via LOCAL_PGLITE=1, OR opt-in by absence of DATABASE_URL — that
+	// way `pnpm dev` works zero-config the first time without Neon launchpad,
+	// and a developer that wants real Neon just provisions DATABASE_URL.
+	if (
+		process.env.LOCAL_PGLITE === "1" ||
+		!process.env.DATABASE_URL ||
+		process.env.DATABASE_URL.trim() === ""
+	) {
+		return "local-pglite";
+	}
+	return "neon";
+}
+
+async function initPglite(dataDir?: string): Promise<AppDatabase> {
+	const [{ PGlite }, pgliteDriver, { pushSchema }] = await Promise.all([
+		import("@electric-sql/pglite"),
+		import("drizzle-orm/pglite"),
+		import("drizzle-kit/api"),
+	]);
+	const client = dataDir ? new PGlite(dataDir) : new PGlite();
+	const drizzleDb = pgliteDriver.drizzle(client, { schema });
+	const { apply } = await pushSchema(schema, drizzleDb);
+	await apply();
+	return drizzleDb as unknown as AppDatabase;
+}
+
 let _db: AppDatabase | undefined;
 let _initPromise: Promise<AppDatabase> | undefined;
 
 async function init(): Promise<AppDatabase> {
-	// E2E mode: in-process Postgres via PGLite. The schema is pushed
-	// programmatically on first init so tests start against an empty,
-	// fully-migrated DB without a separate setup step.
-	if (process.env.E2E_PGLITE === "1") {
-		const [{ PGlite }, pgliteDriver, { pushSchema }] = await Promise.all([
-			import("@electric-sql/pglite"),
-			import("drizzle-orm/pglite"),
-			import("drizzle-kit/api"),
-		]);
-		const client = new PGlite(); // memory-only
-		const drizzleDb = pgliteDriver.drizzle(client, { schema });
-		const { apply } = await pushSchema(schema, drizzleDb);
-		await apply();
-		return drizzleDb as unknown as AppDatabase;
+	const mode = resolveMode();
+	if (mode === "e2e-pglite") {
+		// Fresh in-memory DB per server start so tests don't see prior state.
+		return initPglite();
 	}
-
+	if (mode === "local-pglite") {
+		const dir = process.env.LOCAL_PGLITE_DIR ?? DEFAULT_LOCAL_PGLITE_DIR;
+		console.log(`[db] Using local PGLite at ${dir} (no DATABASE_URL set)`);
+		return initPglite(dir);
+	}
+	// Production / Neon-backed: synchronous driver, no schema push (managed
+	// out-of-band via `pnpm db:push` / migrations).
 	const url = process.env.DATABASE_URL;
 	if (!url) {
 		throw new Error(
-			"DATABASE_URL is not set. In dev, the neon vite plugin should provision it on first start.",
+			"DATABASE_URL is not set. Set it to a Postgres URL, or unset it (and remove LOCAL_PGLITE=0) to use the local PGLite fallback.",
 		);
 	}
 	return drizzle(neon(url), { schema }) as unknown as AppDatabase;
@@ -51,17 +79,21 @@ export async function ensureDb(): Promise<AppDatabase> {
 export function getDb(): AppDatabase {
 	if (!_db) {
 		throw new Error(
-			"db accessed before init. In e2e mode call `await ensureDb()` once at startup; in normal mode the first import is sync.",
+			"db accessed before init. PGLite paths are async — call `await ensureDb()` once at startup.",
 		);
 	}
 	return _db;
 }
 
-// In e2e mode the PGLite init is async (the schema push), so we eagerly
-// resolve it at module load via top-level await. The dev-server's readiness
-// probe then doesn't return until the DB is ready. In production the
-// neon-http driver is sync to construct and the proxy below initializes
-// lazily on first property access.
+// E2E mode: in-process, throw-away DB per server start. The schema push is
+// async, so we resolve it at module load via top-level await. Playwright
+// only probes once Vite reports ready, so this is safe in the test harness.
+//
+// Local dev (PGLite on disk) is *not* eagerly initialized here because top-
+// level await blocks the SSR module graph, racing with Vite's HMR WS
+// upgrade through Nitro's proxy. Instead, the Vite plugin in
+// `pglite-vite-plugin.ts` calls `ensureDb()` during `configureServer` so
+// the DB is ready before the server starts listening.
 if (process.env.E2E_PGLITE === "1") {
 	await ensureDb();
 }

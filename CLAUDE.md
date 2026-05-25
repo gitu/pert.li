@@ -91,10 +91,14 @@ Tailwind CSS v4 via `@tailwindcss/vite` (no `tailwind.config.js` — config live
 Required in `.env.local`:
 
 ```env
-DATABASE_URL=            # auto-populated by neon plugin in dev
+DATABASE_URL=            # optional — leave unset to use the local PGLite fallback at ./.data/pglite
 ANTHROPIC_API_KEY=
 BETTER_AUTH_SECRET=
 ```
+
+**Local DB defaults to PGLite.** First-run `pnpm dev` works zero-config: the dev server boots an in-process Postgres at `./.data/pglite`, pushes the current Drizzle schema, and is ready in ~2s. Data persists across restarts. To use Neon instead, either set `DATABASE_URL` in `.env.local` (Drizzle hits Neon directly) or set `USE_NEON_PROVISION=1` to re-enable the Neon launchpad plugin in `vite.config.ts`.
+
+**SQL-level tests** use `withPglite()` from `src/test/with-pglite.ts` — see `src/server/__tests__/workspace-store.test.ts` for the pattern (vi.mock `#/db` to a per-test PGLite instance + seed via the schema's `user` table directly).
 
 The chat handler auto-detects the LLM provider (Anthropic → OpenAI → Gemini, by key presence). To use a different one, set `LLM_PROVIDER=openai|anthropic|gemini` and (optionally) `LLM_MODEL=<id>`. The OpenAI adapter accepts an `OPENAI_BASE_URL` override so it can talk to any OpenAI-compatible `/v1` endpoint — Azure OpenAI, OpenRouter, LM Studio, Ollama, vLLM, llama.cpp. Defaults to `https://api.openai.com/v1` when unset.
 

@@ -31,6 +31,9 @@ import type { PanelImperativeHandle } from "react-resizable-panels";
 import { ProfileDialog } from "#/components/account/profile-dialog";
 import { UserAvatar } from "#/components/account/user-avatar";
 import { ChatPanel } from "#/components/ai/chat-panel";
+import { MobileBottomNav } from "#/components/app-shell/mobile-bottom-nav";
+import { MobileProjectsSheet } from "#/components/app-shell/mobile-projects-sheet";
+import { MobileTopBar } from "#/components/app-shell/mobile-top-bar";
 import { HistoryDrawer } from "#/components/pert/history/history-drawer";
 import { TaskInspector } from "#/components/pert/inspector/task-inspector";
 import { Button } from "#/components/ui/button";
@@ -66,6 +69,8 @@ import { ProjectList } from "#/components/workspace/project-list";
 import { authClient } from "#/lib/auth-client";
 import { chatDock, useChatDockMode } from "#/lib/chat-dock";
 import { setThemeMode, type ThemeMode, useThemeMode } from "#/lib/theme";
+import { useIsMobile } from "#/lib/use-media-query";
+import { ViewModeProvider } from "#/lib/view-mode";
 import { hasSeenWelcome } from "#/lib/welcome";
 import { listProjects } from "#/server/workspace.ts";
 
@@ -78,6 +83,8 @@ function AppShell() {
 	const { data: session, isPending } = authClient.useSession();
 	const [createOpen, setCreateOpen] = useState(false);
 	const [profileOpen, setProfileOpen] = useState(false);
+	const [mobileProjectsOpen, setMobileProjectsOpen] = useState(false);
+	const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
 	// First time the session loads without a name we prompt the user — but only
 	// once, so dismissing the dialog (or saving anything) doesn't immediately
 	// re-open it on the next re-render.
@@ -89,13 +96,15 @@ function AppShell() {
 			setProfileOpen(true);
 		}
 	}, [session?.user, sessionName]);
+	const isMobile = useIsMobile();
 	const dockMode = useChatDockMode();
-	const pinnedChat = dockMode === "pinned";
+	const pinnedChat = dockMode === "pinned" && !isMobile;
 	// Singleton chat: ChatPanel mounts once below the layout and createPortal
 	// teleports its DOM between the Sheet body, the pinned column, or a hidden
 	// fallback host depending on dock mode. Same React instance → useChat
 	// state persists across mode flips (no more conversation wipe when the
-	// user toggles pin).
+	// user toggles pin). Slots live in this outer component so a viewport
+	// flip (e.g. tablet rotation) doesn't unmount the chat.
 	const [sheetSlot, setSheetSlot] = useState<HTMLDivElement | null>(null);
 	const [pinnedSlot, setPinnedSlot] = useState<HTMLDivElement | null>(null);
 	const [fallbackSlot, setFallbackSlot] = useState<HTMLDivElement | null>(null);
@@ -103,38 +112,14 @@ function AppShell() {
 	// fired yet for one render, so the "active" target is briefly null. Fall
 	// back to the hidden host in that window so ChatPanel never unmounts —
 	// otherwise useChat would lose its messages mid-transition.
-	const activeChatTarget =
-		dockMode === "pinned"
-			? pinnedSlot
-			: dockMode === "sheet"
-				? sheetSlot
-				: null;
+	const activeChatTarget = pinnedChat
+		? pinnedSlot
+		: dockMode === "sheet"
+			? sheetSlot
+			: null;
 	const chatTarget = activeChatTarget ?? fallbackSlot;
-	// The Details / History panel below the main view is project-scoped — it
-	// reads from the active project doc. On the workspace overview (and any
-	// other non-project route) it just shows an "open a project" empty state,
-	// so we hide it entirely there to keep the home page focused.
 	const leafParams = useParams({ strict: false }) as { projectId?: string };
 	const inProject = Boolean(leafParams.projectId);
-
-	// Refs into the collapsible panels so the topbar buttons can drive them
-	// imperatively (react-resizable-panels handles the size animation + min
-	// clamping). Mirror collapse state into React so the button icons can flip.
-	const leftRef = useRef<PanelImperativeHandle>(null);
-	const bottomRef = useRef<PanelImperativeHandle>(null);
-	const [leftCollapsed, setLeftCollapsed] = useState(false);
-	const [bottomCollapsed, setBottomCollapsed] = useState(false);
-
-	const toggleLeft = useCallback(() => {
-		const p = leftRef.current;
-		if (!p) return;
-		p.isCollapsed() ? p.expand() : p.collapse();
-	}, []);
-	const toggleBottom = useCallback(() => {
-		const p = bottomRef.current;
-		if (!p) return;
-		p.isCollapsed() ? p.expand() : p.collapse();
-	}, []);
 
 	useEffect(() => {
 		if (!isPending && !session) {
@@ -154,134 +139,272 @@ function AppShell() {
 	}
 
 	return (
-		<TooltipProvider delayDuration={150}>
-			<div className="flex h-svh w-svw flex-col bg-background">
-				<TopBar
-					user={session.user}
-					onNewProject={() => setCreateOpen(true)}
-					onEditProfile={() => setProfileOpen(true)}
-					leftCollapsed={leftCollapsed}
-					bottomCollapsed={bottomCollapsed}
-					// Hide the bottom-panel toggle on routes without a bottom
-					// panel — nothing to collapse.
-					showBottomToggle={inProject}
-					onToggleLeft={toggleLeft}
-					onToggleBottom={toggleBottom}
-				/>
-				<div className="min-h-0 flex-1">
-					<ResizablePanelGroup
-						// Remount when the pin state flips so the new column count picks
-						// up sensible defaults instead of inheriting the previous layout.
-						key={pinnedChat ? "shell-pinned" : "shell-sheet"}
-						orientation="horizontal"
-						className="h-full w-full"
+		<ViewModeProvider>
+			<TooltipProvider delayDuration={150}>
+				{isMobile ? (
+					<MobileShell
+						user={session.user}
+						inProject={inProject}
+						onNewProject={() => setCreateOpen(true)}
+						onEditProfile={() => setProfileOpen(true)}
+						onOpenProjects={() => setMobileProjectsOpen(true)}
+						onOpenHistory={() => setMobileHistoryOpen(true)}
+					/>
+				) : (
+					<DesktopShell
+						user={session.user}
+						inProject={inProject}
+						pinnedChat={pinnedChat}
+						setPinnedSlot={setPinnedSlot}
+						onNewProject={() => setCreateOpen(true)}
+						onEditProfile={() => setProfileOpen(true)}
+					/>
+				)}
+				{/* Hidden fallback host keeps ChatPanel mounted even when the chat is
+				    "closed" — toggling pin / sheet / closed doesn't unmount the chat,
+				    so the conversation survives every mode flip. Also keeps state
+				    across desktop ↔ mobile viewport flips. */}
+				<div ref={setFallbackSlot} aria-hidden className="hidden" />
+				{/* Sheet stays mounted; we just control its `open` from the dock state.
+				    The slot div is the portal target when mode === "sheet". */}
+				<Sheet
+					open={dockMode === "sheet"}
+					onOpenChange={(open) => {
+						if (open) chatDock.openSheet();
+						else if (dockMode === "sheet") chatDock.close();
+					}}
+				>
+					<SheetContent
+						side="right"
+						className="flex w-full flex-col gap-0 p-0 sm:max-w-md"
 					>
-						<ResizablePanel
-							panelRef={leftRef}
-							defaultSize={pinnedChat ? "14%" : "18%"}
-							minSize="10%"
-							maxSize="32%"
-							collapsible
-							collapsedSize={0}
-							onResize={(size) => setLeftCollapsed(size.asPercentage === 0)}
-							className="bg-sidebar"
-						>
-							<LeftNav onNewProject={() => setCreateOpen(true)} />
-						</ResizablePanel>
+						<SheetHeader className="sr-only">
+							<SheetTitle>Project chat</SheetTitle>
+							<SheetDescription>
+								Conversation with the AI planning assistant.
+							</SheetDescription>
+						</SheetHeader>
+						<div ref={setSheetSlot} className="flex min-h-0 flex-1 flex-col" />
+					</SheetContent>
+				</Sheet>
+				<ChatHost target={chatTarget} />
+				{/* Mobile-only chrome — projects sidebar replacement and history
+				    drawer. Kept here so the state lives alongside the other dialogs;
+				    rendering is gated by `isMobile` to avoid them ever opening on
+				    desktop. */}
+				{isMobile && (
+					<>
+						<MobileProjectsSheet
+							open={mobileProjectsOpen}
+							onOpenChange={setMobileProjectsOpen}
+							onNewProject={() => setCreateOpen(true)}
+						/>
+						<MobileHistorySheet
+							open={mobileHistoryOpen && inProject}
+							onOpenChange={setMobileHistoryOpen}
+						/>
+					</>
+				)}
+				<CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
+				<ProfileDialog
+					open={profileOpen}
+					onOpenChange={setProfileOpen}
+					user={session.user}
+					required={!sessionName}
+				/>
+			</TooltipProvider>
+		</ViewModeProvider>
+	);
+}
 
-						<ResizableHandle withHandle />
+function DesktopShell({
+	user,
+	inProject,
+	pinnedChat,
+	setPinnedSlot,
+	onNewProject,
+	onEditProfile,
+}: {
+	user: { name?: string | null; email: string; image?: string | null };
+	inProject: boolean;
+	pinnedChat: boolean;
+	setPinnedSlot: (el: HTMLDivElement | null) => void;
+	onNewProject: () => void;
+	onEditProfile: () => void;
+}) {
+	// Refs into the collapsible panels so the topbar buttons can drive them
+	// imperatively (react-resizable-panels handles the size animation + min
+	// clamping). Mirror collapse state into React so the button icons can flip.
+	const leftRef = useRef<PanelImperativeHandle>(null);
+	const bottomRef = useRef<PanelImperativeHandle>(null);
+	const [leftCollapsed, setLeftCollapsed] = useState(false);
+	const [bottomCollapsed, setBottomCollapsed] = useState(false);
 
-						<ResizablePanel
-							// Remount when the bottom panel toggles in/out so the new
-							// inner layout (vertical split vs single pane) doesn't fight
-							// react-resizable-panels' size accounting.
-							key={inProject ? "main-with-bottom" : "main-only"}
-							defaultSize={pinnedChat ? "54%" : "82%"}
-							minSize="30%"
-						>
-							{inProject ? (
-								<ResizablePanelGroup
-									orientation="vertical"
-									className="h-full w-full"
-								>
-									<ResizablePanel defaultSize="62%" minSize="30%">
-										<main className="h-full overflow-hidden">
-											<Outlet />
-										</main>
-									</ResizablePanel>
-									<ResizableHandle withHandle />
-									<ResizablePanel
-										panelRef={bottomRef}
-										defaultSize="38%"
-										minSize="14%"
-										collapsible
-										collapsedSize={0}
-										onResize={(size) =>
-											setBottomCollapsed(size.asPercentage === 0)
-										}
-										className="bg-card"
-									>
-										<RightTabs />
-									</ResizablePanel>
-								</ResizablePanelGroup>
-							) : (
-								<main className="h-full overflow-hidden">
-									<Outlet />
-								</main>
-							)}
-						</ResizablePanel>
+	const toggleLeft = useCallback(() => {
+		const p = leftRef.current;
+		if (!p) return;
+		p.isCollapsed() ? p.expand() : p.collapse();
+	}, []);
+	const toggleBottom = useCallback(() => {
+		const p = bottomRef.current;
+		if (!p) return;
+		p.isCollapsed() ? p.expand() : p.collapse();
+	}, []);
 
-						{pinnedChat && (
-							<>
+	return (
+		<div className="flex h-svh w-svw flex-col bg-background">
+			<TopBar
+				user={user}
+				onNewProject={onNewProject}
+				onEditProfile={onEditProfile}
+				leftCollapsed={leftCollapsed}
+				bottomCollapsed={bottomCollapsed}
+				// Hide the bottom-panel toggle on routes without a bottom
+				// panel — nothing to collapse.
+				showBottomToggle={inProject}
+				onToggleLeft={toggleLeft}
+				onToggleBottom={toggleBottom}
+			/>
+			<div className="min-h-0 flex-1">
+				<ResizablePanelGroup
+					// Remount when the pin state flips so the new column count picks
+					// up sensible defaults instead of inheriting the previous layout.
+					key={pinnedChat ? "shell-pinned" : "shell-sheet"}
+					orientation="horizontal"
+					className="h-full w-full"
+				>
+					<ResizablePanel
+						panelRef={leftRef}
+						defaultSize={pinnedChat ? "14%" : "18%"}
+						minSize="10%"
+						maxSize="32%"
+						collapsible
+						collapsedSize={0}
+						onResize={(size) => setLeftCollapsed(size.asPercentage === 0)}
+						className="bg-sidebar"
+					>
+						<LeftNav onNewProject={onNewProject} />
+					</ResizablePanel>
+
+					<ResizableHandle withHandle />
+
+					<ResizablePanel
+						// Remount when the bottom panel toggles in/out so the new
+						// inner layout (vertical split vs single pane) doesn't fight
+						// react-resizable-panels' size accounting.
+						key={inProject ? "main-with-bottom" : "main-only"}
+						defaultSize={pinnedChat ? "54%" : "82%"}
+						minSize="30%"
+					>
+						{inProject ? (
+							<ResizablePanelGroup
+								orientation="vertical"
+								className="h-full w-full"
+							>
+								<ResizablePanel defaultSize="62%" minSize="30%">
+									<main className="h-full overflow-hidden">
+										<Outlet />
+									</main>
+								</ResizablePanel>
 								<ResizableHandle withHandle />
 								<ResizablePanel
-									defaultSize="32%"
-									minSize="20%"
-									maxSize="50%"
+									panelRef={bottomRef}
+									defaultSize="38%"
+									minSize="14%"
+									collapsible
+									collapsedSize={0}
+									onResize={(size) =>
+										setBottomCollapsed(size.asPercentage === 0)
+									}
 									className="bg-card"
 								>
-									<div ref={setPinnedSlot} className="h-full" />
+									<RightTabs />
 								</ResizablePanel>
-							</>
+							</ResizablePanelGroup>
+						) : (
+							<main className="h-full overflow-hidden">
+								<Outlet />
+							</main>
 						)}
-					</ResizablePanelGroup>
-				</div>
+					</ResizablePanel>
+
+					{pinnedChat && (
+						<>
+							<ResizableHandle withHandle />
+							<ResizablePanel
+								defaultSize="32%"
+								minSize="20%"
+								maxSize="50%"
+								className="bg-card"
+							>
+								<div ref={setPinnedSlot} className="h-full" />
+							</ResizablePanel>
+						</>
+					)}
+				</ResizablePanelGroup>
 			</div>
-			{/* Hidden fallback host keeps ChatPanel mounted even when the chat is
-			    "closed" — toggling pin / sheet / closed doesn't unmount the chat,
-			    so the conversation survives every mode flip. */}
-			<div ref={setFallbackSlot} aria-hidden className="hidden" />
-			{/* Sheet stays mounted; we just control its `open` from the dock state.
-			    The slot div is the portal target when mode === "sheet". */}
-			<Sheet
-				open={dockMode === "sheet"}
-				onOpenChange={(open) => {
-					if (open) chatDock.openSheet();
-					else if (dockMode === "sheet") chatDock.close();
-				}}
-			>
-				<SheetContent
-					side="right"
-					className="flex w-full flex-col gap-0 p-0 sm:max-w-md"
-				>
-					<SheetHeader className="sr-only">
-						<SheetTitle>Project chat</SheetTitle>
-						<SheetDescription>
-							Conversation with the AI planning assistant.
-						</SheetDescription>
-					</SheetHeader>
-					<div ref={setSheetSlot} className="flex min-h-0 flex-1 flex-col" />
-				</SheetContent>
-			</Sheet>
-			<ChatHost target={chatTarget} />
-			<CreateProjectDialog open={createOpen} onOpenChange={setCreateOpen} />
-			<ProfileDialog
-				open={profileOpen}
-				onOpenChange={setProfileOpen}
-				user={session.user}
-				required={!sessionName}
+		</div>
+	);
+}
+
+function MobileShell({
+	user,
+	inProject,
+	onNewProject,
+	onEditProfile,
+	onOpenProjects,
+	onOpenHistory,
+}: {
+	user: { name?: string | null; email: string; image?: string | null };
+	inProject: boolean;
+	onNewProject: () => void;
+	onEditProfile: () => void;
+	onOpenProjects: () => void;
+	onOpenHistory: () => void;
+}) {
+	// `onNewProject` is exposed here for symmetry with the desktop shell —
+	// the mobile "+ project" affordance lives inside MobileProjectsSheet
+	// rather than the top bar, so we pass it through to that sheet from the
+	// outer AppShell, not from here. Reference the prop so TS strict's
+	// noUnusedParameters doesn't complain.
+	void onNewProject;
+	return (
+		<div className="flex h-svh w-svw flex-col bg-background">
+			<MobileTopBar
+				user={user}
+				onOpenProjects={onOpenProjects}
+				onOpenHistory={onOpenHistory}
+				onEditProfile={onEditProfile}
 			/>
-		</TooltipProvider>
+			<main className="min-h-0 flex-1 overflow-hidden">
+				<Outlet />
+			</main>
+			{inProject && <MobileBottomNav />}
+		</div>
+	);
+}
+
+function MobileHistorySheet({
+	open,
+	onOpenChange,
+}: {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+}) {
+	return (
+		<Sheet open={open} onOpenChange={onOpenChange}>
+			<SheetContent side="left" className="flex w-80 flex-col gap-0 p-0">
+				<SheetHeader className="shrink-0 border-b p-3 text-left">
+					<SheetTitle className="text-base">History</SheetTitle>
+					<SheetDescription className="sr-only">
+						Recent edits to this project.
+					</SheetDescription>
+				</SheetHeader>
+				<div className="min-h-0 flex-1 overflow-hidden">
+					<HistoryDrawer />
+				</div>
+			</SheetContent>
+		</Sheet>
 	);
 }
 

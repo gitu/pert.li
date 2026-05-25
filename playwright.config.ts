@@ -47,7 +47,25 @@ export default defineConfig({
 				...devices["Desktop Chrome"],
 				storageState: STORAGE_STATE,
 			},
-			testMatch: /authed\/.*\.spec\.ts/,
+			// Direct children of e2e/authed/ only — e2e/authed/mobile/ is owned
+			// by the mobile-authenticated project below.
+			testMatch: /authed\/[^/]+\.spec\.ts$/,
+			dependencies: ["setup"],
+		},
+		// Same authenticated session, but a mobile-Chromium viewport so the
+		// mobile shell, sheets, and view replacements get exercised through
+		// real touch-sized chrome. Pixel 7 (412×915, Chrome on Android) is
+		// used rather than iPhone 14 because the latter pulls in WebKit and
+		// doubles browser-install time; the mobile UI is not iOS-specific.
+		// If iOS-only behaviour later matters, add a second project on
+		// `devices['iPhone 14']`.
+		{
+			name: "mobile-authenticated",
+			use: {
+				...devices["Pixel 7"],
+				storageState: STORAGE_STATE,
+			},
+			testMatch: /authed\/mobile\/.*\.spec\.ts$/,
 			dependencies: ["setup"],
 		},
 	],

@@ -8,6 +8,7 @@ import { nitro } from "nitro/vite";
 import { defineConfig } from "vite";
 import wasm from "vite-plugin-wasm";
 import neon from "./neon-vite-plugin.ts";
+import pglitePreWarm from "./pglite-vite-plugin.ts";
 
 // Vite only injects VITE_-prefixed env into the client. Server-side process.env
 // is whatever Node inherits, which doesn't include `.env.local` by default.
@@ -17,6 +18,12 @@ import neon from "./neon-vite-plugin.ts";
 dotenv.config({ path: ".env", quiet: true });
 dotenv.config({ path: ".env.local", override: true, quiet: true });
 process.env.PROJECT_ROOT = process.cwd();
+
+// Default first-run experience uses an in-process Postgres (PGLite) on disk,
+// so `pnpm dev` works zero-config. To use Neon's launchpad provisioning set
+// USE_NEON_PROVISION=1 (or just drop a DATABASE_URL into .env.local — the
+// neon plugin will detect it and skip).
+const useNeonProvisioning = process.env.USE_NEON_PROVISION === "1";
 
 const config = defineConfig({
 	resolve: { tsconfigPaths: true },
@@ -42,7 +49,8 @@ const config = defineConfig({
 			features: { websocket: true },
 			handlers: [{ route: "/sync", handler: "./src/server/sync.ts" }],
 		}),
-		neon,
+		...(useNeonProvisioning ? [neon] : []),
+		pglitePreWarm(),
 		tailwindcss(),
 		tanstackStart(),
 		viteReact(),
