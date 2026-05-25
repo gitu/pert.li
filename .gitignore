@@ -18,6 +18,12 @@ mcp-todos.json
 .idea/
 .vscode/
 
+# Playwright e2e outputs
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
 # Local debugging artifacts
 .playwright-mcp/
 *.png

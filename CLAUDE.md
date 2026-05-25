@@ -30,7 +30,13 @@ pnpm db:migrate        # Apply migrations
 pnpm db:studio         # Open Drizzle Studio
 
 pnpm storybook         # Storybook on :6006
+
+pnpm e2e               # Playwright (spawns its own dev server on :3100; doesn't touch :3000)
+pnpm e2e:ui            # Playwright with its UI mode
+pnpm e2e:install       # One-time: download the Chromium binary
 ```
+
+Playwright config lives in `playwright.config.ts`. Tests live in `./e2e/*.spec.ts`. The server it spins up runs with a stub `DATABASE_URL` and `VITE_E2E_DISABLE_SYNC=1` — so the public surfaces work, but anything that hits the DB or Automerge sync will need a real DB (Neon branch / PGLite) wired in first. The current suite is intentionally limited to unauthenticated pages.
 
 Adding shadcn/ui components (from `.cursorrules`):
 
@@ -125,7 +131,7 @@ Every feature needs coverage at the layers that apply to it. They're complementa
 |---|---|---|---|
 | **Unit / property** | Vitest (+ `fast-check`) | Pure functions, hooks (`@testing-library/react`), Zod schemas, scheduling engines, reducers | Whenever logic is testable in isolation. Anything in `src/lib/` defaults to "yes." |
 | **Component / visual** | Storybook | Reusable components in `src/components/` — visual states (default, loading, empty, error) and `play` interaction tests | Every new or touched component file under `src/components/` (excluding vendored `ui/` primitives and `storybook/` demos) |
-| **End-to-end** | Playwright MCP (or `@playwright/test` once we set up CI) | Real user flows in the running app: sign-in, sync across tabs, upload, etc. | Every new route, every cross-component flow, every collaborative behavior |
+| **End-to-end** | `@playwright/test` in `./e2e/*.spec.ts` (run via `pnpm e2e`), or Playwright MCP for ad-hoc exploration | Real user flows in the running app: sign-in, sync across tabs, upload, etc. | Every new route, every cross-component flow, every collaborative behavior |
 
 A feature that introduces a pure function, a new component, AND a new flow needs all three. A feature that only refactors an existing component needs at least the component layer refreshed. Don't skip a layer because another one happens to exercise the same code path — they catch different classes of bug (logic regression vs. visual drift vs. integration breakage).
 
