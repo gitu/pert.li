@@ -16,6 +16,9 @@ import { createOpenaiChat } from "@tanstack/ai-openai";
 //   LLM_MODEL        provider-specific model id   (defaults below)
 //   ANTHROPIC_API_KEY
 //   OPENAI_API_KEY
+//   OPENAI_BASE_URL  optional — override the OpenAI API endpoint. Lets you
+//                    point at Azure OpenAI, OpenRouter, LM Studio, Ollama,
+//                    vLLM, or any other OpenAI-compatible /v1 server.
 //   GOOGLE_API_KEY  (Gemini also accepts GEMINI_API_KEY)
 //
 // The adapter creators read API keys from process.env themselves — we just
@@ -40,6 +43,7 @@ export type ProviderEnv = Partial<{
 	LLM_MODEL: string;
 	ANTHROPIC_API_KEY: string;
 	OPENAI_API_KEY: string;
+	OPENAI_BASE_URL: string;
 	GOOGLE_API_KEY: string;
 	GEMINI_API_KEY: string;
 }>;
@@ -119,8 +123,14 @@ export function createTextAdapter(
 	switch (config.provider) {
 		case "anthropic":
 			return createAnthropicChat(model, env.ANTHROPIC_API_KEY ?? "");
-		case "openai":
-			return createOpenaiChat(model, env.OPENAI_API_KEY ?? "");
+		case "openai": {
+			const baseURL = env.OPENAI_BASE_URL?.trim();
+			return createOpenaiChat(
+				model,
+				env.OPENAI_API_KEY ?? "",
+				baseURL ? { baseURL } : undefined,
+			);
+		}
 		case "gemini":
 			return createGeminiChat(
 				model,

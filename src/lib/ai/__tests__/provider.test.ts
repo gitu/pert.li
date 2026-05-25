@@ -1,5 +1,32 @@
-import { describe, expect, it } from "vitest";
-import { DEFAULT_MODELS, resolveProvider } from "#/lib/ai/provider";
+import { describe, expect, it, vi } from "vitest";
+import {
+	createTextAdapter,
+	DEFAULT_MODELS,
+	resolveProvider,
+} from "#/lib/ai/provider";
+
+vi.mock("@tanstack/ai-openai", () => ({
+	createOpenaiChat: vi.fn((model, apiKey, config) => ({
+		__kind: "openai-mock",
+		model,
+		apiKey,
+		config,
+	})),
+}));
+vi.mock("@tanstack/ai-anthropic", () => ({
+	createAnthropicChat: vi.fn((model, apiKey) => ({
+		__kind: "anthropic-mock",
+		model,
+		apiKey,
+	})),
+}));
+vi.mock("@tanstack/ai-gemini", () => ({
+	createGeminiChat: vi.fn((model, apiKey) => ({
+		__kind: "gemini-mock",
+		model,
+		apiKey,
+	})),
+}));
 
 describe("resolveProvider — explicit LLM_PROVIDER", () => {
 	it("respects LLM_PROVIDER=openai when key is set", () => {
@@ -93,5 +120,47 @@ describe("resolveProvider — auto-detect", () => {
 
 	it("throws when no keys are present", () => {
 		expect(() => resolveProvider({})).toThrow(/No LLM provider configured/);
+	});
+});
+
+describe("createTextAdapter — OpenAI base URL override", () => {
+	it("omits config entirely when OPENAI_BASE_URL is unset (uses default api.openai.com)", () => {
+		const adapter = createTextAdapter(
+			{ provider: "openai", model: "gpt-4o" },
+			{ OPENAI_API_KEY: "sk" },
+		) as { config: unknown };
+		expect(adapter.config).toBeUndefined();
+	});
+
+	it("passes a custom baseURL through to createOpenaiChat (Azure / OpenRouter / Ollama / vLLM)", () => {
+		const adapter = createTextAdapter(
+			{ provider: "openai", model: "gpt-4o" },
+			{
+				OPENAI_API_KEY: "sk",
+				OPENAI_BASE_URL: "https://my-openrouter-proxy.example.com/v1",
+			},
+		) as { config: { baseURL: string } };
+		expect(adapter.config).toEqual({
+			baseURL: "https://my-openrouter-proxy.example.com/v1",
+		});
+	});
+
+	it("trims surrounding whitespace on OPENAI_BASE_URL", () => {
+		const adapter = createTextAdapter(
+			{ provider: "openai", model: "gpt-4o" },
+			{
+				OPENAI_API_KEY: "sk",
+				OPENAI_BASE_URL: "  https://idp.example.com/v1  ",
+			},
+		) as { config: { baseURL: string } };
+		expect(adapter.config?.baseURL).toBe("https://idp.example.com/v1");
+	});
+
+	it("treats an empty / whitespace-only OPENAI_BASE_URL as 'use default'", () => {
+		const adapter = createTextAdapter(
+			{ provider: "openai", model: "gpt-4o" },
+			{ OPENAI_API_KEY: "sk", OPENAI_BASE_URL: "   " },
+		) as { config: unknown };
+		expect(adapter.config).toBeUndefined();
 	});
 });

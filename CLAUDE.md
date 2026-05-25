@@ -90,6 +90,8 @@ ANTHROPIC_API_KEY=
 BETTER_AUTH_SECRET=
 ```
 
+The chat handler auto-detects the LLM provider (Anthropic → OpenAI → Gemini, by key presence). To use a different one, set `LLM_PROVIDER=openai|anthropic|gemini` and (optionally) `LLM_MODEL=<id>`. The OpenAI adapter accepts an `OPENAI_BASE_URL` override so it can talk to any OpenAI-compatible `/v1` endpoint — Azure OpenAI, OpenRouter, LM Studio, Ollama, vLLM, llama.cpp. Defaults to `https://api.openai.com/v1` when unset.
+
 Optional — single OIDC SSO provider (custom on-prem IdP, Microsoft Entra ID / Azure AD, Okta, Keycloak, Authentik). Leaving these unset hides the SSO button on `/signin`.
 
 ```env
