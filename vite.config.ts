@@ -30,7 +30,15 @@ const config = defineConfig({
 	plugins: [
 		devtools(),
 		nitro({
-			rollupConfig: { external: [/^@sentry\//] },
+			// `@automerge/automerge`'s ESM build references CJS-only `__dirname`
+			// when resolving its wasm side-file. Bundling that into the Nitro
+			// node-server output crashes at startup ("__dirname is not defined
+			// in ES module scope"). Keeping it external means Nitro copies the
+			// package — wasm and all — into .output/server/node_modules/ and
+			// the runtime resolves the path via real `node_modules`.
+			rollupConfig: {
+				external: [/^@sentry\//, /^@automerge\//],
+			},
 			features: { websocket: true },
 			handlers: [{ route: "/sync", handler: "./src/server/sync.ts" }],
 		}),

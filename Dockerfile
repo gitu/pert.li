@@ -1,9 +1,11 @@
 # syntax=docker/dockerfile:1.7
 # Multi-stage build for pert.li → Cloud Run.
 #
-# Stage 1 (deps)   — install all dependencies once, cached on lockfile hash.
-# Stage 2 (build)  — compile TanStack Start to .output/ (Nitro node-server).
-# Stage 3 (runner) — copy only the standalone .output/ + minimum prod deps.
+# Stage 1 (deps)      — fetch the full content-addressed store from the lockfile.
+# Stage 2 (build)     — install all deps and compile TanStack Start to .output/.
+# Stage 3 (prod-deps) — install ONLY production deps (for externalized packages
+#                       like @automerge/* that Nitro doesn't bundle).
+# Stage 4 (runner)    — copy .output/ + the prod node_modules into a slim image.
 
 ARG NODE_VERSION=24.0.0
 
@@ -11,11 +13,9 @@ ARG NODE_VERSION=24.0.0
 FROM node:${NODE_VERSION}-alpine AS deps
 WORKDIR /app
 
-# Corepack ships pnpm; pin the version we test against. Keep this in sync
-# with the pnpm version local devs use (the lockfile is pnpm 11+).
 # Install pnpm directly via npm. Corepack's bundled signing keys in
-# Node 22.13 are stale and reject pnpm 11.x releases ("Cannot find
-# matching keyid"). Going through npm sidesteps the signature dance.
+# Node 22.13 / 24 are stale for newer pnpm releases ("Cannot find
+# matching keyid"); going through npm sidesteps the signature dance.
 RUN npm install -g pnpm@11.3.0
 
 COPY package.json pnpm-lock.yaml .npmrc pnpm-workspace.yaml ./
@@ -27,9 +27,6 @@ RUN pnpm fetch
 # ---------- build ----------
 FROM node:${NODE_VERSION}-alpine AS build
 WORKDIR /app
-# Install pnpm directly via npm. Corepack's bundled signing keys in
-# Node 22.13 are stale and reject pnpm 11.x releases ("Cannot find
-# matching keyid"). Going through npm sidesteps the signature dance.
 RUN npm install -g pnpm@11.3.0
 COPY --from=deps /app /app
 COPY . .
@@ -40,11 +37,23 @@ COPY . .
 # prompting in non-interactive contexts.
 RUN pnpm install --offline --frozen-lockfile
 
-# Build args / env that affect the bundle.
 ARG NODE_ENV=production
 ENV NODE_ENV=${NODE_ENV}
 
 RUN pnpm build
+
+# ---------- prod-deps ----------
+# @automerge/* is externalized (its ESM bundle references CJS-only
+# `__dirname` for wasm path resolution; bundling crashes at startup).
+# Externalized packages need to live in node_modules at runtime, so we
+# install a clean production-only tree here and ship it alongside .output.
+# `pnpm deploy` flattens symlinks into a real prod node_modules.
+FROM node:${NODE_VERSION}-alpine AS prod-deps
+WORKDIR /app
+RUN npm install -g pnpm@11.3.0
+COPY --from=deps /app /app
+COPY package.json pnpm-lock.yaml .npmrc pnpm-workspace.yaml ./
+RUN pnpm install --offline --frozen-lockfile --prod --ignore-scripts
 
 # ---------- runner ----------
 FROM node:${NODE_VERSION}-alpine AS runner
@@ -55,13 +64,10 @@ ENV NODE_ENV=production
 ENV PORT=8080
 ENV AUTOMERGE_STORAGE=postgres
 
-# Drop privileges. The `node` user is bundled in the official image.
 USER node
 
-# The Nitro `node-server` preset emits a self-contained .output/ directory
-# (server bundle + tiny native deps under .output/server/node_modules). We
-# don't need package.json, lockfile, or src in the runtime image.
 COPY --chown=node:node --from=build /app/.output ./.output
+COPY --chown=node:node --from=prod-deps /app/node_modules ./node_modules
 
 EXPOSE 8080
 CMD ["node", ".output/server/index.mjs"]
