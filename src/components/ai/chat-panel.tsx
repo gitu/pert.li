@@ -5,9 +5,12 @@ import {
 	BotIcon,
 	ChevronDownIcon,
 	ChevronRightIcon,
+	PinIcon,
+	PinOffIcon,
 	SquareIcon,
 	UserIcon,
 	WrenchIcon,
+	XIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
@@ -26,12 +29,14 @@ import {
 import {
 	addDependencyTool,
 	addTaskTool,
+	askChoiceTool,
 	readProjectTool,
 	removeDependencyTool,
 	removeTaskTool,
 	setEstimateTool,
 	setTitleTool,
 } from "#/lib/ai/tools";
+import { chatDock, useChatDockMode } from "#/lib/chat-dock";
 import type { ChangeFn } from "#/lib/pert/store";
 import { projectDocStore } from "#/lib/pert/store";
 import type { PertDoc } from "#/lib/pert/types";
@@ -49,6 +54,14 @@ export type ChatPanelProps = {
 	className?: string;
 	endpoint?: string;
 	initialPrompt?: string;
+	// When true (and `initialPrompt` is set), submit the prompt as soon as the
+	// chat connection is alive. Used by tutorial CTAs that want a one-click
+	// "open the chat and ask this for me" experience.
+	autoSendInitial?: boolean;
+	// Show the chrome that lets the user pin/unpin or dismiss the chat.
+	// Defaults to false so the standalone (Storybook / playground) mounts stay
+	// frictionless; the app shell sets it to true.
+	showDockControls?: boolean;
 };
 
 // Snapshot helper — tools execute outside React render, so we read the
@@ -70,6 +83,8 @@ export function ChatPanel({
 	className,
 	endpoint = "/api/chat",
 	initialPrompt,
+	autoSendInitial = false,
+	showDockControls = false,
 }: ChatPanelProps) {
 	const connectionRef = useRef(fetchServerSentEvents(endpoint));
 
@@ -139,6 +154,10 @@ export function ChatPanel({
 					});
 					return result;
 				}),
+				// ask_choice is pure UI — acknowledge immediately so the model loop
+				// continues. The chips themselves are rendered below from the message
+				// log; clicking one sends the option's value as a normal user message.
+				askChoiceTool.client(() => ({ ok: true as const })),
 			] as const,
 		[],
 	);
@@ -149,22 +168,53 @@ export function ChatPanel({
 		live: true,
 	});
 
-	const [input, setInput] = useState(initialPrompt ?? "");
+	const [input, setInput] = useState(
+		autoSendInitial ? "" : (initialPrompt ?? ""),
+	);
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const autoSentRef = useRef(false);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: deps here are the trigger, not the read set — we want to auto-scroll on every message or streaming-state change.
 	useEffect(() => {
-		scrollRef.current?.scrollTo({
-			top: scrollRef.current.scrollHeight,
-			behavior: "smooth",
-		});
+		// The scrollable element is Radix's ScrollArea Viewport, not the inner
+		// div we attached the ref to. Walk up to find it; the inner div itself
+		// has `overflow: visible` and scrolling it is a no-op.
+		const viewport = scrollRef.current?.closest(
+			"[data-slot='scroll-area-viewport']",
+		);
+		if (viewport instanceof HTMLElement) {
+			viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+		}
 	}, [messages, isLoading]);
+
+	// One-shot auto-send: deliver the seeded prompt once per mount so we don't
+	// loop on prop identity changes from above.
+	useEffect(() => {
+		if (!autoSendInitial || !initialPrompt) return;
+		if (autoSentRef.current) return;
+		autoSentRef.current = true;
+		void sendMessage(initialPrompt);
+	}, [autoSendInitial, initialPrompt, sendMessage]);
 
 	const submit = () => {
 		const trimmed = input.trim();
 		if (!trimmed || isLoading) return;
 		setInput("");
 		void sendMessage(trimmed);
+	};
+
+	// Any ask_choice tool calls emitted AFTER the last user message are still
+	// awaiting a response. Once the user types or clicks an option a new user
+	// message lands and the prompts fall out of "pending" automatically.
+	const pendingChoice = useMemo(
+		() => findPendingChoice(messages as ChatMessage[]),
+		[messages],
+	);
+
+	const chooseOption = (value: string) => {
+		if (isLoading) return;
+		setInput("");
+		void sendMessage(value);
 	};
 
 	return (
@@ -177,7 +227,7 @@ export function ChatPanel({
 				<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
 					Chat
 				</div>
-				<div className="ml-auto flex items-center gap-2">
+				<div className="ml-auto flex items-center gap-1">
 					{isLoading && (
 						<Button
 							type="button"
@@ -190,15 +240,18 @@ export function ChatPanel({
 							<SquareIcon className="size-3" /> Stop
 						</Button>
 					)}
+					{showDockControls && <ChatDockControls />}
 				</div>
 			</header>
 			<ScrollArea className="flex-1" data-testid="chat-scroll">
 				<div ref={scrollRef} className="space-y-3 p-3">
 					{messages.length === 0 && (
-						<EmptyState>
-							Ask anything about your project — task breakdowns, estimates, or
-							critical-path tradeoffs.
-						</EmptyState>
+						<EmptyState
+							onSeed={(text) => {
+								setInput("");
+								void sendMessage(text);
+							}}
+						/>
 					)}
 					{messages.map((m) => (
 						<MessageRow key={m.id} message={m} />
@@ -213,6 +266,13 @@ export function ChatPanel({
 					)}
 				</div>
 			</ScrollArea>
+			{pendingChoice && (
+				<ChoicePrompt
+					prompt={pendingChoice}
+					disabled={isLoading}
+					onChoose={chooseOption}
+				/>
+			)}
 			<div className="shrink-0 border-t p-2">
 				<div className="flex items-end gap-2">
 					<Textarea
@@ -256,17 +316,198 @@ export function ChatPanel({
 	);
 }
 
-function EmptyState({ children }: { children: React.ReactNode }) {
+type ChoiceOption = { label: string; value?: string };
+
+export type PendingChoice = {
+	toolCallId: string;
+	question: string;
+	options: ChoiceOption[];
+};
+
+// Walks the message log to find an unresolved `ask_choice` call: any
+// ask_choice tool-call that appears AFTER the last user message and whose
+// arguments are present + valid. Returns the most recent one (the model
+// occasionally re-asks if it didn't get a response).
+export function findPendingChoice(
+	messages: ChatMessage[],
+): PendingChoice | null {
+	let lastUserIdx = -1;
+	for (let i = messages.length - 1; i >= 0; i--) {
+		if (messages[i].role === "user") {
+			lastUserIdx = i;
+			break;
+		}
+	}
+	let candidate: PendingChoice | null = null;
+	for (let i = lastUserIdx + 1; i < messages.length; i++) {
+		for (const part of messages[i].parts) {
+			if (part.type !== "tool-call") continue;
+			if (part.name !== "ask_choice") continue;
+			const parsed = parseChoiceArgs(part.arguments);
+			if (!parsed) continue;
+			candidate = { toolCallId: String(part.id ?? ""), ...parsed };
+		}
+	}
+	return candidate;
+}
+
+function parseChoiceArgs(
+	raw: unknown,
+): { question: string; options: ChoiceOption[] } | null {
+	if (typeof raw !== "string" || !raw) return null;
+	try {
+		const obj = JSON.parse(raw) as {
+			question?: unknown;
+			options?: unknown;
+		};
+		if (typeof obj.question !== "string") return null;
+		if (!Array.isArray(obj.options)) return null;
+		const options: ChoiceOption[] = [];
+		for (const opt of obj.options) {
+			if (!opt || typeof opt !== "object") continue;
+			const o = opt as { label?: unknown; value?: unknown };
+			if (typeof o.label !== "string" || !o.label) continue;
+			options.push({
+				label: o.label,
+				value: typeof o.value === "string" ? o.value : undefined,
+			});
+		}
+		if (options.length === 0) return null;
+		return { question: obj.question, options };
+	} catch {
+		return null;
+	}
+}
+
+export function ChoicePrompt({
+	prompt,
+	disabled,
+	onChoose,
+}: {
+	prompt: PendingChoice;
+	disabled: boolean;
+	onChoose: (value: string) => void;
+}) {
 	return (
-		<div className="grid h-full place-items-center p-4 text-center text-sm text-muted-foreground">
-			<p className="max-w-sm">{children}</p>
+		<div
+			className="shrink-0 border-t bg-muted/20 px-3 py-2"
+			data-testid="chat-choice-prompt"
+			data-tool-call-id={prompt.toolCallId}
+		>
+			<div className="mb-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+				Pick one — or type your own
+			</div>
+			<div className="mb-2 text-xs leading-snug">{prompt.question}</div>
+			<div className="flex flex-wrap gap-1.5">
+				{prompt.options.map((opt) => (
+					<Button
+						// Scoped by toolCallId so duplicate labels across re-asks don't
+						// collide; within a single prompt labels are unique enough.
+						key={`${prompt.toolCallId}-${opt.label}`}
+						type="button"
+						size="sm"
+						variant="secondary"
+						className="h-7 text-[11px]"
+						disabled={disabled}
+						onClick={() => onChoose(opt.value ?? opt.label)}
+						data-testid="chat-choice-option"
+					>
+						{opt.label}
+					</Button>
+				))}
+			</div>
+		</div>
+	);
+}
+
+function ChatDockControls() {
+	const mode = useChatDockMode();
+	const pinned = mode === "pinned";
+	return (
+		<>
+			<Button
+				type="button"
+				size="icon"
+				variant="ghost"
+				className="size-7"
+				onClick={() => chatDock.togglePin()}
+				aria-label={pinned ? "Unpin chat" : "Pin chat to side"}
+				aria-pressed={pinned}
+				data-testid="chat-pin-toggle"
+			>
+				{pinned ? (
+					<PinOffIcon className="size-3.5" />
+				) : (
+					<PinIcon className="size-3.5" />
+				)}
+			</Button>
+			<Button
+				type="button"
+				size="icon"
+				variant="ghost"
+				className="size-7"
+				onClick={() => chatDock.close()}
+				aria-label="Close chat"
+				data-testid="chat-close"
+			>
+				<XIcon className="size-3.5" />
+			</Button>
+		</>
+	);
+}
+
+export const TUTORIAL_SEEDS: ReadonlyArray<{ label: string; prompt: string }> =
+	[
+		{
+			label: "What is PERT?",
+			prompt:
+				"I'm new to PERT. Give me a beginner-friendly intro: what it is, what problem it solves, and the few terms I should know (three-point estimate, critical path, slack). Keep it under ~200 words and end by offering to walk me through a concrete example.",
+		},
+		{
+			label: "Three-point estimates",
+			prompt:
+				"Teach me how three-point estimates (optimistic / most likely / pessimistic) work in PERT. Show the expected duration formula and one concrete worked example. Then ask if I want to try estimating a task of my own.",
+		},
+		{
+			label: "Critical path explained",
+			prompt:
+				"Explain the critical path in plain language. Use a small 4-task example with dependencies, walk through ES/EF/LS/LF and slack, and call out which path is critical and why.",
+		},
+		{
+			label: "Walk me through pert.li",
+			prompt:
+				"Walk me through pert.li like a tutorial. Explain the canvas, list, timeline, table, and matrix views; the inspector; and how to create tasks, set estimates, and wire dependencies. Pause for questions after each section.",
+		},
+	];
+
+function EmptyState({ onSeed }: { onSeed: (text: string) => void }) {
+	return (
+		<div className="flex h-full flex-col items-center justify-center gap-4 p-4 text-center">
+			<p className="max-w-sm text-sm text-muted-foreground">
+				Ask anything about your project — or start a quick tutorial below.
+			</p>
+			<div className="flex w-full max-w-sm flex-wrap justify-center gap-1.5">
+				{TUTORIAL_SEEDS.map((seed) => (
+					<Button
+						key={seed.label}
+						type="button"
+						size="sm"
+						variant="secondary"
+						className="h-7 text-[11px]"
+						onClick={() => onSeed(seed.prompt)}
+						data-testid={`chat-seed-${seed.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+					>
+						{seed.label}
+					</Button>
+				))}
+			</div>
 		</div>
 	);
 }
 
 type MessagePart = { type: string } & Record<string, unknown>;
 
-type ChatMessage = {
+export type ChatMessage = {
 	id: string;
 	role: "system" | "user" | "assistant";
 	parts: Array<MessagePart>;
@@ -422,14 +663,19 @@ function extractText(message: ChatMessage): string {
 }
 
 function extractToolCalls(message: ChatMessage): Array<ToolCallView> {
-	return message.parts
-		.filter((p) => p.type === "tool-call")
-		.map((p) => ({
-			id: String(p.id ?? ""),
-			name: String(p.name ?? ""),
-			args: typeof p.arguments === "string" ? p.arguments : "",
-			state: String(p.state ?? ""),
-		}));
+	return (
+		message.parts
+			.filter((p) => p.type === "tool-call")
+			.map((p) => ({
+				id: String(p.id ?? ""),
+				name: String(p.name ?? ""),
+				args: typeof p.arguments === "string" ? p.arguments : "",
+				state: String(p.state ?? ""),
+			}))
+			// `ask_choice` is pure UI — the question + chips render below the
+			// chat scroller. Showing a "wrench chip" for it would be redundant.
+			.filter((c) => c.name !== "ask_choice")
+	);
 }
 
 function extractToolResult(

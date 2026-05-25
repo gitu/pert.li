@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
@@ -16,6 +17,11 @@ import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as AppPProjectIdRouteImport } from './routes/_app/p.$projectId'
 
+const WelcomeRoute = WelcomeRouteImport.update({
+  id: '/welcome',
+  path: '/welcome',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SigninRoute = SigninRouteImport.update({
   id: '/signin',
   path: '/signin',
@@ -49,12 +55,14 @@ const AppPProjectIdRoute = AppPProjectIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/signin': typeof SigninRoute
+  '/welcome': typeof WelcomeRoute
   '/api/chat': typeof ApiChatRoute
   '/p/$projectId': typeof AppPProjectIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesByTo {
   '/signin': typeof SigninRoute
+  '/welcome': typeof WelcomeRoute
   '/api/chat': typeof ApiChatRoute
   '/': typeof AppIndexRoute
   '/p/$projectId': typeof AppPProjectIdRoute
@@ -64,6 +72,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/signin': typeof SigninRoute
+  '/welcome': typeof WelcomeRoute
   '/api/chat': typeof ApiChatRoute
   '/_app/': typeof AppIndexRoute
   '/_app/p/$projectId': typeof AppPProjectIdRoute
@@ -71,13 +80,26 @@ export interface FileRoutesById {
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/signin' | '/api/chat' | '/p/$projectId' | '/api/auth/$'
+  fullPaths:
+    | '/'
+    | '/signin'
+    | '/welcome'
+    | '/api/chat'
+    | '/p/$projectId'
+    | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/signin' | '/api/chat' | '/' | '/p/$projectId' | '/api/auth/$'
+  to:
+    | '/signin'
+    | '/welcome'
+    | '/api/chat'
+    | '/'
+    | '/p/$projectId'
+    | '/api/auth/$'
   id:
     | '__root__'
     | '/_app'
     | '/signin'
+    | '/welcome'
     | '/api/chat'
     | '/_app/'
     | '/_app/p/$projectId'
@@ -87,12 +109,20 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   SigninRoute: typeof SigninRoute
+  WelcomeRoute: typeof WelcomeRoute
   ApiChatRoute: typeof ApiChatRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/welcome': {
+      id: '/welcome'
+      path: '/welcome'
+      fullPath: '/welcome'
+      preLoaderRoute: typeof WelcomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/signin': {
       id: '/signin'
       path: '/signin'
@@ -153,6 +183,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   SigninRoute: SigninRoute,
+  WelcomeRoute: WelcomeRoute,
   ApiChatRoute: ApiChatRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }

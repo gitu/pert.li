@@ -11,15 +11,22 @@ import {
 	CheckIcon,
 	ChevronsUpDownIcon,
 	FolderTreeIcon,
+	HistoryIcon,
 	LaptopIcon,
 	LayersIcon,
 	LogOutIcon,
 	MoonIcon,
+	PanelLeftCloseIcon,
+	PanelLeftIcon,
+	PanelRightCloseIcon,
+	PanelRightIcon,
 	PlusIcon,
+	SettingsIcon,
 	SunIcon,
 	UserIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { PanelImperativeHandle } from "react-resizable-panels";
 import { ChatPanel } from "#/components/ai/chat-panel";
 import { HistoryDrawer } from "#/components/pert/history/history-drawer";
 import { TaskInspector } from "#/components/pert/inspector/task-inspector";
@@ -50,11 +57,18 @@ import {
 	SheetTitle,
 	SheetTrigger,
 } from "#/components/ui/sheet";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs";
 import { TooltipProvider } from "#/components/ui/tooltip";
 import { CreateProjectDialog } from "#/components/workspace/create-project-dialog";
 import { ProjectList } from "#/components/workspace/project-list";
 import { authClient } from "#/lib/auth-client";
+import {
+	chatDock,
+	useChatDockMode,
+	useChatDockPendingPrompt,
+} from "#/lib/chat-dock";
 import { setThemeMode, type ThemeMode, useThemeMode } from "#/lib/theme";
+import { hasSeenWelcome } from "#/lib/welcome";
 import { listProjects } from "#/server/workspace.ts";
 
 export const Route = createFileRoute("/_app")({
@@ -65,10 +79,34 @@ function AppShell() {
 	const navigate = useNavigate();
 	const { data: session, isPending } = authClient.useSession();
 	const [createOpen, setCreateOpen] = useState(false);
+	const dockMode = useChatDockMode();
+	const pinnedChat = dockMode === "pinned";
+
+	// Refs into the side panels so the topbar collapse buttons can drive them
+	// imperatively (react-resizable-panels handles the size animation + min
+	// clamping). Mirror collapse state into React so the button icons can flip.
+	const leftRef = useRef<PanelImperativeHandle>(null);
+	const rightRef = useRef<PanelImperativeHandle>(null);
+	const [leftCollapsed, setLeftCollapsed] = useState(false);
+	const [rightCollapsed, setRightCollapsed] = useState(false);
+
+	const toggleLeft = useCallback(() => {
+		const p = leftRef.current;
+		if (!p) return;
+		p.isCollapsed() ? p.expand() : p.collapse();
+	}, []);
+	const toggleRight = useCallback(() => {
+		const p = rightRef.current;
+		if (!p) return;
+		p.isCollapsed() ? p.expand() : p.collapse();
+	}, []);
 
 	useEffect(() => {
 		if (!isPending && !session) {
-			navigate({ to: "/signin" });
+			// First-time visitors get the marketing page; returning ones (who
+			// already saw it and either signed in or bounced) go straight to the
+			// sign-in form so we don't make them re-scroll the pitch.
+			navigate({ to: hasSeenWelcome() ? "/signin" : "/welcome" });
 		}
 	}, [isPending, session, navigate]);
 
@@ -83,16 +121,30 @@ function AppShell() {
 	return (
 		<TooltipProvider delayDuration={150}>
 			<div className="flex h-svh w-svw flex-col bg-background">
-				<TopBar user={session.user} onNewProject={() => setCreateOpen(true)} />
+				<TopBar
+					user={session.user}
+					onNewProject={() => setCreateOpen(true)}
+					leftCollapsed={leftCollapsed}
+					rightCollapsed={rightCollapsed}
+					onToggleLeft={toggleLeft}
+					onToggleRight={toggleRight}
+				/>
 				<div className="min-h-0 flex-1">
 					<ResizablePanelGroup
+						// Remount when the pin state flips so the new column count picks
+						// up sensible defaults instead of inheriting the previous layout.
+						key={pinnedChat ? "shell-pinned" : "shell-sheet"}
 						orientation="horizontal"
 						className="h-full w-full"
 					>
 						<ResizablePanel
-							defaultSize="18%"
-							minSize="12%"
+							panelRef={leftRef}
+							defaultSize={pinnedChat ? "14%" : "18%"}
+							minSize="10%"
 							maxSize="32%"
+							collapsible
+							collapsedSize={0}
+							onResize={(size) => setLeftCollapsed(size.asPercentage === 0)}
 							className="bg-sidebar"
 						>
 							<LeftNav onNewProject={() => setCreateOpen(true)} />
@@ -100,39 +152,43 @@ function AppShell() {
 
 						<ResizableHandle withHandle />
 
-						<ResizablePanel defaultSize="56%" minSize="30%">
-							<ResizablePanelGroup
-								orientation="vertical"
-								className="h-full w-full"
-							>
-								<ResizablePanel defaultSize="70%" minSize="30%">
-									<main className="h-full overflow-hidden">
-										<Outlet />
-									</main>
-								</ResizablePanel>
-								<ResizableHandle withHandle />
-								<ResizablePanel
-									defaultSize="30%"
-									minSize="10%"
-									collapsible
-									className="bg-muted/30"
-								>
-									<BottomDrawer />
-								</ResizablePanel>
-							</ResizablePanelGroup>
+						<ResizablePanel
+							defaultSize={pinnedChat ? "36%" : "56%"}
+							minSize="24%"
+						>
+							<main className="h-full overflow-hidden">
+								<Outlet />
+							</main>
 						</ResizablePanel>
 
 						<ResizableHandle withHandle />
 
 						<ResizablePanel
-							defaultSize="26%"
-							minSize="18%"
+							panelRef={rightRef}
+							defaultSize={pinnedChat ? "18%" : "26%"}
+							minSize="14%"
 							maxSize="42%"
 							collapsible
+							collapsedSize={0}
+							onResize={(size) => setRightCollapsed(size.asPercentage === 0)}
 							className="bg-card"
 						>
-							<RightInspector />
+							<RightTabs />
 						</ResizablePanel>
+
+						{pinnedChat && (
+							<>
+								<ResizableHandle withHandle />
+								<ResizablePanel
+									defaultSize="32%"
+									minSize="20%"
+									maxSize="50%"
+									className="bg-card"
+								>
+									<PinnedChat />
+								</ResizablePanel>
+							</>
+						)}
 					</ResizablePanelGroup>
 				</div>
 			</div>
@@ -144,9 +200,17 @@ function AppShell() {
 function TopBar({
 	user,
 	onNewProject,
+	leftCollapsed,
+	rightCollapsed,
+	onToggleLeft,
+	onToggleRight,
 }: {
 	user: { name?: string | null; email: string };
 	onNewProject: () => void;
+	leftCollapsed: boolean;
+	rightCollapsed: boolean;
+	onToggleLeft: () => void;
+	onToggleRight: () => void;
 }) {
 	const initials = (user.name ?? user.email)
 		.split(/\s+/)
@@ -156,7 +220,23 @@ function TopBar({
 		.join("");
 
 	return (
-		<header className="flex h-12 shrink-0 items-center gap-3 border-b bg-card px-3">
+		<header className="flex h-12 shrink-0 items-center gap-2 border-b bg-card px-3">
+			<Button
+				type="button"
+				size="icon"
+				variant="ghost"
+				className="size-8"
+				onClick={onToggleLeft}
+				aria-label={leftCollapsed ? "Show sidebar" : "Hide sidebar"}
+				aria-pressed={!leftCollapsed}
+				data-testid="topbar-toggle-left"
+			>
+				{leftCollapsed ? (
+					<PanelLeftIcon className="size-4" />
+				) : (
+					<PanelLeftCloseIcon className="size-4" />
+				)}
+			</Button>
 			<Link to="/" className="flex items-center gap-2">
 				<div className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
 					<LayersIcon className="size-4" />
@@ -176,6 +256,22 @@ function TopBar({
 				New project
 			</Button>
 			<ChatTrigger />
+			<Button
+				type="button"
+				size="icon"
+				variant="ghost"
+				className="size-8"
+				onClick={onToggleRight}
+				aria-label={rightCollapsed ? "Show inspector" : "Hide inspector"}
+				aria-pressed={!rightCollapsed}
+				data-testid="topbar-toggle-right"
+			>
+				{rightCollapsed ? (
+					<PanelRightIcon className="size-4" />
+				) : (
+					<PanelRightCloseIcon className="size-4" />
+				)}
+			</Button>
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<Button
@@ -252,15 +348,33 @@ function ThemeMenu() {
 }
 
 function ChatTrigger() {
+	const mode = useChatDockMode();
+	const sheetOpen = mode === "sheet";
 	return (
-		<Sheet>
+		<Sheet
+			open={sheetOpen}
+			onOpenChange={(open) => {
+				if (open) chatDock.openSheet();
+				else if (mode === "sheet") chatDock.close();
+			}}
+		>
 			<SheetTrigger asChild>
 				<Button
 					size="sm"
-					variant="ghost"
+					variant={mode === "pinned" ? "secondary" : "ghost"}
 					className="gap-1.5"
 					aria-label="Open chat"
+					aria-pressed={mode !== "closed"}
 					data-testid="topbar-chat-trigger"
+					onClick={(e) => {
+						// When the chat is pinned the Sheet trigger would still try to
+						// open the overlay; intercept so the button instead toggles the
+						// pinned column closed.
+						if (mode === "pinned") {
+							e.preventDefault();
+							chatDock.close();
+						}
+					}}
 				>
 					<BotIcon className="size-4" />
 					Chat
@@ -276,9 +390,34 @@ function ChatTrigger() {
 						Conversation with the AI planning assistant.
 					</SheetDescription>
 				</SheetHeader>
-				<ChatPanel />
+				<ChatPanel showDockControls />
 			</SheetContent>
 		</Sheet>
+	);
+}
+
+function PinnedChat() {
+	const pending = useChatDockPendingPrompt();
+	// Snapshot the seed locally so the prompt is consumed exactly once even if
+	// the user later re-opens the chat through the topbar button. The `key` on
+	// ChatPanel ensures a fresh chat connection per tutorial click (so the new
+	// lesson isn't grafted onto a prior conversation).
+	const [seed, setSeed] = useState(pending);
+	useEffect(() => {
+		if (pending) {
+			setSeed(pending);
+			chatDock.consumePendingPrompt();
+		}
+	}, [pending]);
+	return (
+		<div className="flex h-full flex-col">
+			<ChatPanel
+				key={seed?.text ?? "live"}
+				showDockControls
+				initialPrompt={seed?.text}
+				autoSendInitial={seed?.autoSend ?? false}
+			/>
+		</div>
 	);
 }
 
@@ -349,14 +488,50 @@ function LeftNav({ onNewProject }: { onNewProject: () => void }) {
 	);
 }
 
-function RightInspector() {
+// Right-rail panel: a single tabbed surface that combines task editing with
+// project history. Defaults to Details so opening a project lands the user on
+// the most-edited tab; switching to History is one click away.
+function RightTabs() {
 	return (
-		<div className="flex h-full flex-col">
-			<TaskInspector />
-		</div>
+		<Tabs
+			defaultValue="details"
+			className="flex h-full min-h-0 flex-col gap-0"
+			data-testid="right-tabs"
+		>
+			<div className="shrink-0 border-b bg-card/40 px-2 py-1.5">
+				<TabsList variant="line" className="w-full">
+					<TabsTrigger
+						value="details"
+						className="gap-1.5 text-xs"
+						data-testid="right-tab-details"
+					>
+						<SettingsIcon className="size-3.5" />
+						Details
+					</TabsTrigger>
+					<TabsTrigger
+						value="history"
+						className="gap-1.5 text-xs"
+						data-testid="right-tab-history"
+					>
+						<HistoryIcon className="size-3.5" />
+						History
+					</TabsTrigger>
+				</TabsList>
+			</div>
+			<TabsContent
+				value="details"
+				// `mt-0` because the default Tabs layout adds a gap-2 the right rail
+				// doesn't want — the tab strip already has its own bottom border.
+				className="mt-0 min-h-0 flex-1 overflow-hidden"
+			>
+				<TaskInspector />
+			</TabsContent>
+			<TabsContent
+				value="history"
+				className="mt-0 min-h-0 flex-1 overflow-hidden"
+			>
+				<HistoryDrawer />
+			</TabsContent>
+		</Tabs>
 	);
-}
-
-function BottomDrawer() {
-	return <HistoryDrawer />;
 }

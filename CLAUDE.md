@@ -119,6 +119,12 @@ A feature that introduces a pure function, a new component, AND a new flow needs
 9. **Stop dev servers between sessions.** `pnpm dev` and `pnpm storybook` both grab ports (3000 and 6006). Use `TaskStop` / `pkill -f "vite dev"` before walking away.
 10. **What NOT to test:** vendored scaffolding (shadcn primitives under `src/components/ui/`, `src/components/storybook/` demos) has upstream tests — don't re-cover them. Framework concerns (TanStack Router/SSR shell, Better Auth catch-all) likewise.
 
+## AI assistant system prompt
+
+The in-app chat assistant's system prompt lives in `src/lib/ai/chat.server.ts` (`SYSTEM_PROMPT`). It contains an **ABOUT PERT.LI** block that enumerates the visible product surfaces — views, panels, controls, chat dock chrome, sign-in flow — so the assistant's tutorials and walkthroughs match what the user actually sees.
+
+When you ship a change that renames, adds, or removes a top-level surface (a view tab, an inspector control, a sidebar entry, a tool, a major route, the chat dock chrome, a theme/account-menu option), update that block **before** declaring the feature done. If you're unsure whether a change qualifies, verify by re-reading the section against the running UI; if anything reads as stale, fix it. Tool-level changes (adding/removing a `*Tool` in `src/lib/ai/tools.ts`) also need the matching `TOOLS —` bullet updated.
+
 ## Demo / scaffold files
 
 Files prefixed with `demo` (and the `src/components/storybook/` examples) are safe to delete — they're scaffolding from `create-tanstack`.

@@ -5,7 +5,13 @@ import { useState } from "react";
 import { Button } from "#/components/ui/button";
 import { CreateProjectDialog } from "#/components/workspace/create-project-dialog";
 import { InviteMemberDialog } from "#/components/workspace/invite-member-dialog";
+import { TutorialCard } from "#/components/workspace/tutorial-card";
 import { listProjects } from "#/server/workspace.ts";
+
+// Beginner-friendly tutorial CTA is prominent while the workspace is sparse
+// (0-2 projects). Past that, the user has presumably found their footing and
+// the card collapses into a small hint to keep the home page focused.
+const TUTORIAL_PROMINENT_THRESHOLD = 3;
 
 export const Route = createFileRoute("/_app/")({
 	component: WorkspaceHome,
@@ -20,9 +26,11 @@ function WorkspaceHome() {
 	});
 	const projects = projectsQuery.data ?? [];
 	const workspaceId = projects[0]?.workspaceId;
+	const showTutorialProminent =
+		!projectsQuery.isPending && projects.length < TUTORIAL_PROMINENT_THRESHOLD;
 
 	return (
-		<div className="mx-auto flex h-full max-w-3xl flex-col gap-8 p-10">
+		<div className="mx-auto flex h-full max-w-3xl flex-col gap-8 overflow-y-auto p-10">
 			<header className="space-y-2">
 				<p className="text-xs uppercase tracking-wide text-muted-foreground">
 					Workspace
@@ -49,6 +57,8 @@ function WorkspaceHome() {
 					</Button>
 				</div>
 			</header>
+
+			{showTutorialProminent && <TutorialCard />}
 
 			<section className="space-y-3">
 				<h2 className="text-sm font-medium text-muted-foreground">

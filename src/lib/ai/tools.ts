@@ -135,6 +135,46 @@ export const removeTaskTool = toolDefinition({
 	]),
 });
 
+// Presents a multiple-choice question to the user. The tool itself just
+// acknowledges immediately; the UI surfaces the question + clickable chips
+// above the chat input. Clicking a chip sends `value` (falling back to
+// `label`) as the user's next message. The user can still type freeform —
+// the chips are an assist, not a gate.
+export const askChoiceTool = toolDefinition({
+	name: "ask_choice",
+	description:
+		"Present a multiple-choice question to the user. Use during tutorials, for clarifying questions, or whenever the next step branches on a small set of choices. The UI renders the options as buttons below your message — DO NOT also list them as text or write 'pick one' (the buttons make that obvious). The user may also type a freeform reply.",
+	inputSchema: z.object({
+		question: z
+			.string()
+			.min(1)
+			.describe(
+				"The question to ask. Keep it under ~140 chars — it appears as a small label above the chips.",
+			),
+		options: z
+			.array(
+				z.object({
+					label: z
+						.string()
+						.min(1)
+						.describe(
+							"Short text shown on the button. Keep under ~32 chars so chips wrap cleanly.",
+						),
+					value: z
+						.string()
+						.optional()
+						.describe(
+							"Optional message text sent on click. Defaults to `label`. Use this when the human-readable label is shorter than the answer you want the user's message to carry (e.g. label 'Yes' → value 'Yes, continue with the critical path section').",
+						),
+				}),
+			)
+			.min(2)
+			.max(6)
+			.describe("Between 2 and 6 mutually-exclusive options."),
+	}),
+	outputSchema: z.object({ ok: z.literal(true) }),
+});
+
 export const CHAT_TOOL_DEFINITIONS = [
 	readProjectTool,
 	addTaskTool,
@@ -143,4 +183,5 @@ export const CHAT_TOOL_DEFINITIONS = [
 	addDependencyTool,
 	removeDependencyTool,
 	removeTaskTool,
+	askChoiceTool,
 ] as const;
