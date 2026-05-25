@@ -16,7 +16,8 @@ import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "../..");
-const BUNDLE_DIR = join(ROOT, ".output/public");
+// `BUNDLE_DIR` lets CI point at the bundle copied out of a built image.
+const BUNDLE_DIR = process.env.BUNDLE_DIR ?? join(ROOT, ".output/public");
 
 // Tiny `.env`-style parser so we don't pull in dotenv here. Handles
 // `KEY=value` with optional surrounding quotes and trailing `# comments`.
@@ -48,9 +49,24 @@ function parseEnvFile(path) {
 	return out;
 }
 
+// In CI we don't have .env files — secrets come in via the runtime
+// environment. `SECRET_CHECK_KEYS=DATABASE_URL,BETTER_AUTH_SECRET,...`
+// names the keys to read from process.env and treat as secrets to scan
+// for. Locally, .env / .env.local stay authoritative.
+const envFromProcess = (process.env.SECRET_CHECK_KEYS ?? "")
+	.split(",")
+	.map((s) => s.trim())
+	.filter(Boolean)
+	.reduce((acc, key) => {
+		const value = process.env[key];
+		if (value) acc[key] = value;
+		return acc;
+	}, {});
+
 const env = {
 	...parseEnvFile(join(ROOT, ".env")),
 	...parseEnvFile(join(ROOT, ".env.local")),
+	...envFromProcess,
 };
 
 // VITE_* and PUBLIC_* keys are intentionally exposed — skip them.

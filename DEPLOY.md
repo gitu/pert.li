@@ -34,7 +34,16 @@ Run on every push to `main`.
      gcloud secrets create BETTER_AUTH_SECRET --data-file=-
    echo -n 'AIza...your-gemini-key...' | \
      gcloud secrets create GEMINI_API_KEY --data-file=-
+   echo -n 're_...your-resend-api-key...' | \
+     gcloud secrets create RESEND_API_KEY --data-file=-
    ```
+
+   `RESEND_API_KEY` powers passwordless magic-link sign-in via Better Auth.
+   The sender address is the `_RESEND_FROM_EMAIL` substitution in
+   `cloudbuild.yaml` (default `onboarding@resend.dev`, which Resend allows
+   without domain verification but only delivers to the API key owner's
+   email — override with `--substitutions=_RESEND_FROM_EMAIL=mail@yourdomain.com`
+   on the trigger once you've verified a domain in Resend).
 
    Add `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` the same way if you want to
    swap providers; then either add them to `--set-secrets` in
