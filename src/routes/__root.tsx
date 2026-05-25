@@ -26,13 +26,31 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 				content: "width=device-width, initial-scale=1",
 			},
 			{
-				title: "TanStack Start Starter",
+				title: "pert.li — collaborative PERT planning",
+			},
+			{
+				name: "description",
+				content:
+					"Plan something nested. Real-time collaborative PERT charts with three-point estimates, deterministic CPM, and an AI planning assistant.",
+			},
+			{
+				name: "theme-color",
+				content: "#18181b",
 			},
 		],
 		links: [
 			{
 				rel: "stylesheet",
 				href: appCss,
+			},
+			{
+				rel: "icon",
+				type: "image/svg+xml",
+				href: "/favicon.svg",
+			},
+			{
+				rel: "manifest",
+				href: "/manifest.json",
 			},
 		],
 	}),
