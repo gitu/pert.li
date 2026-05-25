@@ -118,6 +118,7 @@ steps:
   - id: secrets-check
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
+    waitFor: ["build"]
     secretEnv:
       - DATABASE_URL
       - BETTER_AUTH_SECRET
@@ -141,12 +142,38 @@ steps:
           "$$IMAGE" \
           /workspace/scripts/check-secret-leak.mjs
 
+  # 2b. Push the Drizzle schema (src/db/schema.ts) to the production database
+  #     before we deploy, so the running image never finds itself ahead of
+  #     the DB. Runs inside the just-built `cache-build` image which carries
+  #     the full dev-deps tree (drizzle-kit lives there).
+  #
+  #     ⚠️  `drizzle-kit push` applies changes directly. For destructive
+  #     schema changes (column drops, renames) generate a SQL migration with
+  #     `pnpm db:generate` and use `db:migrate` instead — push is fine for
+  #     additive changes but will happily nuke columns it thinks are gone.
+  - id: db-push
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    waitFor: ["build"]
+    secretEnv:
+      - DATABASE_URL
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        IMAGE=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-build
+        docker run --rm \
+          -w /app \
+          -e DATABASE_URL \
+          "$$IMAGE" \
+          pnpm db:push
+
   # 3. Push all tags — both the deployable ones (:SHA and :latest) and the
   #    per-stage cache images (:cache-deps, :cache-build, :cache-prod-deps)
   #    so the next run can rehydrate them via --cache-from.
   - id: push
     name: gcr.io/cloud-builders/docker
-    waitFor: ["secrets-check"]
+    waitFor: ["secrets-check", "db-push"]
     args:
       - push
       - --all-tags
