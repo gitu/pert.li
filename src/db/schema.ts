@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import {
 	boolean,
+	customType,
+	index,
 	jsonb,
 	pgEnum,
 	pgTable,
@@ -8,6 +10,21 @@ import {
 	timestamp,
 	uniqueIndex,
 } from "drizzle-orm/pg-core";
+
+// Drizzle has no first-class `bytea` helper. The neon-http driver returns
+// bytea as a Node Buffer; Buffers are also accepted as input parameters,
+// which round-trips Uint8Array views fine.
+const bytea = customType<{ data: Uint8Array; driverData: Buffer }>({
+	dataType() {
+		return "bytea";
+	},
+	fromDriver(value) {
+		return new Uint8Array(value);
+	},
+	toDriver(value) {
+		return Buffer.from(value);
+	},
+});
 
 // --- Better Auth tables -----------------------------------------------------
 
@@ -123,6 +140,20 @@ export const userWorkspaceDoc = pgTable("user_workspace_doc", {
 	automergeDocUrl: text("automerge_doc_url").notNull().unique(),
 	createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+// Automerge document storage. Keys are the `/`-joined StorageKey parts
+// from the automerge-repo adapter interface (e.g. `docId/snapshot/<hash>`,
+// `docId/incremental/<hash>`, `docId/sync-state/<peerId>`). Range queries
+// rely on a btree index for the `key = $p OR key LIKE $p || '/%'` pattern.
+export const automergeStorage = pgTable(
+	"automerge_storage",
+	{
+		key: text("key").primaryKey(),
+		data: bytea("data").notNull(),
+		updatedAt: timestamp("updated_at").notNull().defaultNow(),
+	},
+	(t) => [index("automerge_storage_key_idx").on(t.key)],
+);
 
 export const auditLog = pgTable("audit_log", {
 	id: text("id").primaryKey(),

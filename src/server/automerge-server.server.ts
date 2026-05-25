@@ -1,10 +1,16 @@
 import { EventEmitter } from "node:events";
-import { type DocumentId, type PeerId, Repo } from "@automerge/automerge-repo";
+import {
+	type DocumentId,
+	type PeerId,
+	Repo,
+	type StorageAdapterInterface,
+} from "@automerge/automerge-repo";
 import { WebSocketServerAdapter } from "@automerge/automerge-repo-network-websocket";
 import { NodeFSStorageAdapter } from "@automerge/automerge-repo-storage-nodefs";
 import { and, eq } from "drizzle-orm";
 import { db } from "#/db";
 import { project, userWorkspaceDoc, workspaceMember } from "#/db/schema";
+import { PostgresStorageAdapter } from "./automerge-pg-storage.server";
 
 // --- crossws ⇄ ws-shaped server shim --------------------------------------
 //
@@ -66,11 +72,11 @@ let _bundle: ServerRepoBundle | undefined;
 function buildBundle(): ServerRepoBundle {
 	const wss = new FakeWebSocketServer();
 	const adapter = new WebSocketServerAdapter(wss as unknown as never);
-	const storageDir = process.env.AUTOMERGE_STORAGE_DIR ?? ".data/automerge";
+	const { storage, storageLabel } = resolveStorage();
 
 	const repo = new Repo({
 		network: [adapter],
-		storage: new NodeFSStorageAdapter(storageDir),
+		storage,
 		peerId: `sync-server-${process.pid}` as PeerId,
 		sharePolicy: async (peerId, documentId) => {
 			if (!documentId) return false;
@@ -81,10 +87,38 @@ function buildBundle(): ServerRepoBundle {
 	});
 
 	if (process.env.NODE_ENV !== "production") {
-		console.log(`[sync] Automerge sync server ready (storage: ${storageDir})`);
+		console.log(
+			`[sync] Automerge sync server ready (storage: ${storageLabel})`,
+		);
 	}
 
 	return { repo, adapter, wss };
+}
+
+// Storage selection:
+//  - In production (NODE_ENV=production) we ALWAYS use Postgres — the
+//    filesystem on Cloud Run / Fly machines is ephemeral, so NodeFS would
+//    silently lose collaborative state on every cold start.
+//  - In dev, default to NodeFS (no DB roundtrip per write, easier to nuke).
+//    Override with AUTOMERGE_STORAGE=postgres to mirror prod locally.
+function resolveStorage(): {
+	storage: StorageAdapterInterface;
+	storageLabel: string;
+} {
+	const choice =
+		process.env.AUTOMERGE_STORAGE ??
+		(process.env.NODE_ENV === "production" ? "postgres" : "nodefs");
+	if (choice === "postgres") {
+		return {
+			storage: new PostgresStorageAdapter(),
+			storageLabel: "postgres (automerge_storage)",
+		};
+	}
+	const storageDir = process.env.AUTOMERGE_STORAGE_DIR ?? ".data/automerge";
+	return {
+		storage: new NodeFSStorageAdapter(storageDir),
+		storageLabel: `nodefs (${storageDir})`,
+	};
 }
 
 export function getServerRepoBundle(): ServerRepoBundle {

@@ -1,0 +1,71 @@
+# Cloud Build pipeline triggered on push to `main`.
+#
+# Builds the Docker image, pushes it to Artifact Registry, and deploys to
+# Cloud Run. Secrets (DATABASE_URL, BETTER_AUTH_SECRET, GEMINI_API_KEY,
+# etc.) are stored in Secret Manager and mounted as env vars on the
+# service — they never appear in the image.
+#
+# Substitution variables (set on the trigger or via `--substitutions`):
+#   _REGION         deploy region, e.g. europe-west1
+#   _SERVICE        Cloud Run service name, e.g. pert-li
+#   _REPO           Artifact Registry repo, e.g. pert-li
+#   _BETTER_AUTH_URL  public URL of the service (https://pert-li-xxx-uc.a.run.app)
+substitutions:
+  _REGION: europe-west1
+  _SERVICE: pert-li
+  _REPO: pert-li
+  _BETTER_AUTH_URL: https://pert-li.example.run.app
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}"
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:latest"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+steps:
+  # 1. Build the image, tagged with the commit SHA and `latest`.
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:latest
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:latest
+      - .
+
+  # 2. Push both tags.
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}
+
+  # 3. Deploy to Cloud Run. min=0 (scale to zero) per project decision;
+  #    session-affinity keeps a given client on a single instance so the
+  #    in-memory Automerge Repo stays consistent for their session.
+  #    Real-time fan-out across instances would need a Redis pub/sub
+  #    (defer until we see multi-instance load).
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=8080
+      - --min-instances=0
+      - --max-instances=3
+      - --concurrency=80
+      - --cpu=1
+      - --memory=1Gi
+      - --timeout=3600
+      - --session-affinity
+      - --set-env-vars=NODE_ENV=production,AUTOMERGE_STORAGE=postgres,BETTER_AUTH_URL=${_BETTER_AUTH_URL}
+      - --set-secrets=DATABASE_URL=DATABASE_URL:latest,BETTER_AUTH_SECRET=BETTER_AUTH_SECRET:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest
