@@ -234,9 +234,13 @@ function SignInPage() {
 					)}
 				</div>
 
-				<div className="text-center text-xs text-muted-foreground">
+				<div className="flex items-center justify-center gap-3 text-center text-xs text-muted-foreground">
 					<Link to="/" className="hover:text-foreground">
 						← back to home
+					</Link>
+					<span aria-hidden>·</span>
+					<Link to="/privacy" className="hover:text-foreground">
+						Privacy
 					</Link>
 				</div>
 			</form>

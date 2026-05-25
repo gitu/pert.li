@@ -57,7 +57,10 @@ function WelcomePage() {
 			<footer className="border-t">
 				<div className="mx-auto flex max-w-6xl flex-col gap-2 px-6 py-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
 					<div>pert.li — collaborative PERT planning.</div>
-					<div className="flex items-center gap-3">
+					<div className="flex items-center gap-4">
+						<Link to="/privacy" className="hover:text-foreground">
+							Privacy
+						</Link>
 						<Link to="/signin" className="hover:text-foreground">
 							Sign in
 						</Link>

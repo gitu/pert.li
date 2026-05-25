@@ -105,6 +105,14 @@ OIDC_SCOPES=             # comma-separated; defaults to "openid,email,profile"
 
 Register `<app-origin>/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>` as the redirect URI with the IdP. For Entra ID the discovery URL is `https://login.microsoftonline.com/<tenant-id>/v2.0/.well-known/openid-configuration`.
 
+Optional — privacy policy URL override:
+
+```env
+PRIVACY_POLICY_URL=      # if set, /privacy redirects here instead of the default
+```
+
+The built-in `/privacy` route documents what cookies pert.li stores (only functional ones for sign-in / OAuth state) and explicitly states no analytics or tracking are used. Self-hosted deployments that need their own legal copy can either replace `src/routes/privacy.tsx` or set this env var to redirect users to an external policy page.
+
 ## Testing rules
 
 Every shipped feature must satisfy these. "Done" includes the test rig — a feature without test scaffolding is not merged.

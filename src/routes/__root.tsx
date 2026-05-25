@@ -6,6 +6,7 @@ import {
 	Scripts,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { CookieHint } from "../components/legal/cookie-hint";
 import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
 import { RepoProvider } from "../lib/automerge/provider";
 import { THEME_PRELOAD_SCRIPT, ThemeProvider } from "../lib/theme";
@@ -68,6 +69,7 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 			<body>
 				<ThemeProvider>
 					<RepoProvider>{children}</RepoProvider>
+					<CookieHint />
 				</ThemeProvider>
 				<TanStackDevtools
 					config={{
