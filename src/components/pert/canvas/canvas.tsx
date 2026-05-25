@@ -72,7 +72,8 @@ const CONTAINER_MIN_HEIGHT = 160;
 function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const scheduleResult = useMemo(() => computeSchedule(doc), [doc]);
 	const prefs = useCanvasPrefs(projectId);
-	useAutoLayout(doc, changeDoc, prefs.spacing);
+	const collapsedSet = useCollapsedSet(projectId);
+	useAutoLayout(doc, changeDoc, prefs.spacing, collapsedSet);
 	const fullscreenContainerRef = useRef<HTMLDivElement | null>(null);
 	const { active: fullscreenActive, toggle: toggleFullscreen } = useFullscreen(
 		fullscreenContainerRef,
@@ -82,16 +83,20 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		const positions = await computeLayout(doc, {
 			spacing: prefs.spacing,
 			forceReflow: true,
+			collapsed: collapsedSet,
 		});
 		changeDoc((d) => {
 			for (const task of Object.values(d.tasksById)) {
-				if (task.kind === "container") continue;
 				const pos = positions[task.id];
 				if (!pos) continue;
+				// Expanded containers derive their position from their
+				// children's bounds at render time, so writing a position on
+				// them is harmless. Collapsed containers + leaf tasks rely
+				// on this stored position to render.
 				task.layout = { ...(task.layout ?? {}), position: pos };
 			}
 		});
-	}, [doc, changeDoc, prefs.spacing]);
+	}, [doc, changeDoc, prefs.spacing, collapsedSet]);
 
 	const handleSetEdgeStyle = useCallback(
 		(style: EdgeStyle) => setEdgeStyle(projectId, style),
@@ -102,7 +107,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		[projectId],
 	);
 
-	const collapsedSet = useCollapsedSet(projectId);
 	const projection = useMemo(
 		() => projectGraph(doc, scheduleResult, collapsedSet),
 		[doc, scheduleResult, collapsedSet],
@@ -627,6 +631,7 @@ function useAutoLayout(
 	doc: PertDoc,
 	changeDoc: (mutate: (d: PertDoc) => void) => void,
 	spacing: LayoutSpacing,
+	collapsed: ReadonlySet<TaskId>,
 ) {
 	useEffect(() => {
 		const tasks = Object.values(doc.tasksById);
@@ -635,7 +640,7 @@ function useAutoLayout(
 		);
 		if (missing.length === 0) return;
 		let cancelled = false;
-		computeLayout(doc, { spacing }).then((positions) => {
+		computeLayout(doc, { spacing, collapsed }).then((positions) => {
 			if (cancelled) return;
 			changeDoc((d) => {
 				for (const task of Object.values(d.tasksById)) {
@@ -650,7 +655,7 @@ function useAutoLayout(
 		return () => {
 			cancelled = true;
 		};
-	}, [doc, changeDoc, spacing]);
+	}, [doc, changeDoc, spacing, collapsed]);
 }
 
 // Fullscreen toggle via the browser Fullscreen API, with a class-based
