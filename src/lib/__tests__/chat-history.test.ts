@@ -35,7 +35,7 @@ describe("readChatMessages / writeChatMessages", () => {
 	});
 
 	it("returns null when the stored payload is not an array", () => {
-		window.localStorage.setItem("pertli.chatMessages.v1", "\"oops\"");
+		window.localStorage.setItem("pertli.chatMessages.v1", '"oops"');
 		expect(readChatMessages()).toBeNull();
 	});
 
@@ -117,7 +117,7 @@ describe("createChatBroadcaster — storage-event fallback", () => {
 		window.dispatchEvent(
 			new StorageEvent("storage", {
 				key: "pertli.chatMessages.v1",
-				newValue: "\"not an array\"",
+				newValue: '"not an array"',
 			}),
 		);
 		expect(seen).toEqual([]);
