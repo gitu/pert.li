@@ -13,9 +13,14 @@ import {
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? "noreply@pert.li";
+// Soft check: warn if the sender isn't on the verified @pert.li domain, but
+// don't crash the server. Cloud Run can run with Resend's sandbox sender
+// (`onboarding@resend.dev`) until the production DNS is in place, and dev
+// environments often default to it too. A hard throw blocked boot for
+// everyone the moment the domain wasn't yet verified.
 if (!/@pert\.li$/i.test(FROM_EMAIL)) {
-	throw new Error(
-		`RESEND_FROM_EMAIL must be a @pert.li address (got "${FROM_EMAIL}")`,
+	console.warn(
+		`[auth] RESEND_FROM_EMAIL is "${FROM_EMAIL}". For production set this to a verified @pert.li sender; the sandbox address only delivers to the Resend account owner.`,
 	);
 }
 const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
