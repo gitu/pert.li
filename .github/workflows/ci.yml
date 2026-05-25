@@ -48,6 +48,22 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Vite's pre-bundled deps and Vitest's transform cache live under
+      # `node_modules/.vite` and `node_modules/.cache`. They're a function
+      # of the lockfile (deps), the build config, and the source — restoring
+      # them across runs skips the cold-start dep optimization in both
+      # `pnpm test` (vitest's first transform) and `pnpm build`.
+      - name: Cache Vite / Vitest deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules/.vite
+            node_modules/.cache
+          key: ${{ runner.os }}-vite-${{ hashFiles('pnpm-lock.yaml', 'vite.config.ts', 'vitest.config.ts') }}-${{ hashFiles('src/**') }}
+          restore-keys: |
+            ${{ runner.os }}-vite-${{ hashFiles('pnpm-lock.yaml', 'vite.config.ts', 'vitest.config.ts') }}-
+            ${{ runner.os }}-vite-
+
       - name: Approve build scripts
         # pnpm 11 requires explicit approval for postinstall scripts even when
         # listed in pnpm.onlyBuiltDependencies. --all is fine here because

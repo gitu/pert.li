@@ -29,14 +29,84 @@ options:
   machineType: E2_HIGHCPU_8
 
 steps:
-  # 1. Build the image, tagged with the commit SHA and `latest`.
+  # 0. Pre-pull cache images for each intermediate stage AND the final
+  #    `:latest`. The runner image only ships final-stage layers, so without
+  #    per-stage cache images we'd lose hits on the slow `deps` and `build`
+  #    stages (pnpm fetch + install + tsc + vite). All best-effort — the
+  #    first ever build has nothing to pull.
+  - id: pull-cache
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        for tag in cache-deps cache-build cache-prod-deps latest; do
+          docker pull ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:$$tag || true
+        done
+
+  # 1a. Build + push the `deps` stage as its own cache image. This is the
+  #     stage that runs `pnpm fetch` and is invalidated only when the
+  #     lockfile / package.json changes — cache hits here save the most time.
+  - id: build-deps-cache
+    name: gcr.io/cloud-builders/docker
+    waitFor: ["pull-cache"]
+    env:
+      - DOCKER_BUILDKIT=1
+    args:
+      - build
+      - --target=deps
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-deps
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-deps
+      - --build-arg=BUILDKIT_INLINE_CACHE=1
+      - .
+
+  # 1b. Build + push the `build` stage. Includes the deps stage + the
+  #     compile step (`pnpm install --offline` + `pnpm build`).
+  - id: build-build-cache
+    name: gcr.io/cloud-builders/docker
+    waitFor: ["build-deps-cache"]
+    env:
+      - DOCKER_BUILDKIT=1
+    args:
+      - build
+      - --target=build
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-build
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-deps
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-build
+      - --build-arg=BUILDKIT_INLINE_CACHE=1
+      - .
+
+  # 1c. Build + push the `prod-deps` stage (production-only node_modules).
+  - id: build-prod-deps-cache
+    name: gcr.io/cloud-builders/docker
+    waitFor: ["build-deps-cache"]
+    env:
+      - DOCKER_BUILDKIT=1
+    args:
+      - build
+      - --target=prod-deps
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-prod-deps
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-deps
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-prod-deps
+      - --build-arg=BUILDKIT_INLINE_CACHE=1
+      - .
+
+  # 1. Build the final runner image, tagged with the commit SHA and `latest`.
+  #    BuildKit reuses the deps / build / prod-deps stage layers built above.
   - id: build
     name: gcr.io/cloud-builders/docker
+    waitFor: ["build-build-cache", "build-prod-deps-cache"]
+    env:
+      - DOCKER_BUILDKIT=1
     args:
       - build
       - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
       - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:latest
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-deps
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-build
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-prod-deps
       - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:latest
+      - --build-arg=BUILDKIT_INLINE_CACHE=1
       - .
 
   # 2. Pre-push gate: scan the just-built client bundle for any literal
@@ -71,7 +141,9 @@ steps:
           "$$IMAGE" \
           /workspace/scripts/check-secret-leak.mjs
 
-  # 3. Push both tags.
+  # 3. Push all tags — both the deployable ones (:SHA and :latest) and the
+  #    per-stage cache images (:cache-deps, :cache-build, :cache-prod-deps)
+  #    so the next run can rehydrate them via --cache-from.
   - id: push
     name: gcr.io/cloud-builders/docker
     waitFor: ["secrets-check"]
