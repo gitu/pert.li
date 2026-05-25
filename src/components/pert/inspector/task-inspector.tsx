@@ -55,12 +55,20 @@ import { useMonteCarlo } from "#/lib/pert/use-monte-carlo";
 // their own edits — Automerge's local mutations are synchronous, so there's
 // no latency hiding the round-trip.
 
+// In read-only mode the project store carries `changeDoc === null` (set by
+// the mobile shell when view-mode === "mobile-readonly"). The inspector
+// still has a doc + projectId, so it must render the task data — just
+// route every would-be mutation through a no-op so the existing edit
+// chrome doesn't crash. A banner at the top of the form announces the
+// read-only state and points at the pencil toggle.
+const noopChangeDoc: (mutate: (d: PertDoc) => void) => void = () => {};
+
 export function TaskInspector() {
 	const selection = useStore(selectionStore);
 	const { doc, changeDoc, projectId } = useStore(projectDocStore);
 	const mc = useMonteCarlo(doc, { trials: 1500 });
 
-	if (!doc || !changeDoc || !projectId) {
+	if (!doc || !projectId) {
 		return <EmptyState message="Open a project to edit tasks." />;
 	}
 	if (selection.projectId !== projectId || !selection.taskId) {
@@ -72,50 +80,63 @@ export function TaskInspector() {
 	if (!task) {
 		return <EmptyState message="The selected task has been removed." />;
 	}
+	const readOnly = !changeDoc;
+	const safeChangeDoc = changeDoc ?? noopChangeDoc;
 	const conflicts = readTaskConflicts(doc, task.id);
 	const conflictPill = conflicts ? (
 		<ConflictPill
 			conflicts={conflicts}
 			taskId={task.id}
-			onResolve={changeDoc}
+			onResolve={safeChangeDoc}
 		/>
 	) : null;
 	const onDelete = () => {
-		changeDoc((d) => {
+		if (readOnly) return;
+		safeChangeDoc((d) => {
 			removeTaskMutation(d, { taskId: task.id });
 		});
 		// Clear selection so the inspector falls back to its empty state instead
 		// of showing "the selected task has been removed."
 		selectionStore.setState((s) => ({ ...s, taskId: null }));
 	};
-	if (task.kind === "container") {
-		return (
+	const body =
+		task.kind === "container" ? (
 			<ContainerForm
 				key={task.id}
 				task={task}
 				doc={doc}
-				changeDoc={changeDoc}
+				changeDoc={safeChangeDoc}
 				conflictPill={conflictPill}
 				onDelete={onDelete}
 				mcResult={mc.result}
 			/>
+		) : (
+			<TaskForm
+				key={task.id}
+				task={task}
+				scheduleResult={computeSchedule(doc)}
+				conflictPill={conflictPill}
+				mcResult={mc.result}
+				onMutate={(mutate) =>
+					safeChangeDoc((d) => {
+						const draft = d.tasksById[task.id];
+						if (draft) mutate(draft);
+					})
+				}
+				onDelete={onDelete}
+			/>
 		);
-	}
+	if (!readOnly) return body;
 	return (
-		<TaskForm
-			key={task.id}
-			task={task}
-			scheduleResult={computeSchedule(doc)}
-			conflictPill={conflictPill}
-			mcResult={mc.result}
-			onMutate={(mutate) =>
-				changeDoc((d) => {
-					const draft = d.tasksById[task.id];
-					if (draft) mutate(draft);
-				})
-			}
-			onDelete={onDelete}
-		/>
+		<div className="flex h-full min-h-0 flex-col">
+			<div
+				data-testid="inspector-readonly-banner"
+				className="shrink-0 border-b bg-muted/40 px-3 py-1.5 text-[11px] text-muted-foreground"
+			>
+				View only — tap the pencil in the top bar to edit.
+			</div>
+			<div className="min-h-0 flex-1 overflow-hidden">{body}</div>
+		</div>
 	);
 }
 
