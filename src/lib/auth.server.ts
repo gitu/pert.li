@@ -7,10 +7,12 @@ import { db } from "#/db";
 import { account, session, user, verification } from "#/db/schema";
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-// `onboarding@resend.dev` is Resend's shared sender — works without a
-// verified domain but only delivers to the API key's own account email.
-// Production should set RESEND_FROM_EMAIL to a verified-domain address.
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? "onboarding@resend.dev";
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? "noreply@pert.li";
+if (!/@pert\.li$/i.test(FROM_EMAIL)) {
+	throw new Error(
+		`RESEND_FROM_EMAIL must be a @pert.li address (got "${FROM_EMAIL}")`,
+	);
+}
 const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
 export const auth = betterAuth({
