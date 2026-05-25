@@ -2,13 +2,13 @@ import { defineConfig, devices } from "@playwright/test";
 
 // End-to-end tests live in `./e2e`. They drive the real app through Chromium
 // against a Playwright-managed dev server on port 3100 (so it never fights
-// the developer's `pnpm dev` on 3000). The current suite covers public
-// surfaces only — welcome, signin, privacy, cookie hint — none of which
-// query the database, so we pass a placeholder DATABASE_URL purely to
-// satisfy the lazy db client at module load. The neon-http driver doesn't
-// actually connect until a query is made; if a future test needs auth,
-// swap this for PGLite or a disposable Neon branch.
+// the developer's `pnpm dev` on 3000). The server runs with E2E_AUTH_MEMORY=1
+// so better-auth uses an in-process memory store — the suite can sign users
+// in for real without a Postgres database. Workspace / project / Automerge
+// paths still hit the live db proxy and will fail until they get their own
+// fakes; keep authenticated tests on account-level chrome for now.
 const E2E_PORT = Number(process.env.E2E_PORT ?? 3100);
+const STORAGE_STATE = "e2e/.auth/user.json";
 
 export default defineConfig({
 	testDir: "./e2e",
@@ -25,7 +25,32 @@ export default defineConfig({
 		baseURL: process.env.E2E_BASE_URL ?? `http://localhost:${E2E_PORT}`,
 		trace: "on-first-retry",
 	},
-	projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+	projects: [
+		// Unauthenticated public surfaces (welcome, signin, privacy, cookies).
+		// Each test gets a fresh context — no storage state injected.
+		{
+			name: "public",
+			use: { ...devices["Desktop Chrome"] },
+			testIgnore: ["**/auth.setup.ts", "**/authed/**"],
+		},
+		// One-shot setup that signs up a fresh user via the real form and
+		// writes the cookies to STORAGE_STATE for the authenticated project
+		// to consume. Runs before "authenticated" thanks to the dependency.
+		{
+			name: "setup",
+			use: { ...devices["Desktop Chrome"] },
+			testMatch: /auth\.setup\.ts/,
+		},
+		{
+			name: "authenticated",
+			use: {
+				...devices["Desktop Chrome"],
+				storageState: STORAGE_STATE,
+			},
+			testMatch: /authed\/.*\.spec\.ts/,
+			dependencies: ["setup"],
+		},
+	],
 	webServer: {
 		command: `pnpm exec vite dev --port ${E2E_PORT}`,
 		url: `http://localhost:${E2E_PORT}`,
@@ -51,6 +76,14 @@ export default defineConfig({
 			// upgrade handshake (which validates a session) crashes the dev
 			// server's proxy. Public-surface tests don't need real-time sync.
 			VITE_E2E_DISABLE_SYNC: "1",
+			// Use better-auth's in-process memory adapter so sign-up / sign-in
+			// flows work without a real Postgres database. See auth.server.ts.
+			E2E_AUTH_MEMORY: "1",
+			// Better-auth's CSRF check rejects non-GET requests whose Origin
+			// doesn't match BETTER_AUTH_URL. Point it at the e2e port so the
+			// sign-up POST from /signin is accepted.
+			BETTER_AUTH_URL: `http://localhost:${E2E_PORT}`,
+			PORT: String(E2E_PORT),
 		},
 	},
 });

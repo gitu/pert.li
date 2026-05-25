@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { memoryAdapter } from "better-auth/adapters/memory";
 import { genericOAuth, magicLink } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { Resend } from "resend";
@@ -10,6 +11,22 @@ import {
 	parseOidcConfig,
 	toPublicInfo,
 } from "#/lib/auth-oidc";
+
+// In e2e mode we swap better-auth onto an in-process memory store so the
+// suite can drive real sign-up / sign-in flows without a Postgres database.
+// Anything outside the auth tables (workspaces, projects, Automerge docs)
+// still queries the live db proxy and will fail until those paths get their
+// own test fakes — keep authenticated e2e tests on chrome / account flows
+// for now.
+const useMemoryAuth = process.env.E2E_AUTH_MEMORY === "1";
+// memoryAdapter throws "Model X not found" if the table key isn't already an
+// array, so we initialize the four better-auth tables up front.
+const authDatabase = useMemoryAuth
+	? memoryAdapter({ user: [], session: [], account: [], verification: [] })
+	: drizzleAdapter(db, {
+			provider: "pg",
+			schema: { user, session, account, verification },
+		});
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? "noreply@pert.li";
@@ -50,11 +67,22 @@ export function getOidcPublicInfo(): OidcPublicInfo | null {
 	return oidcConfig ? toPublicInfo(oidcConfig) : null;
 }
 
+// Vite's environment runner sandboxes process.env so better-auth's auto-
+// detect of BETTER_AUTH_URL / origin can miss values the outer process saw.
+// Pass baseURL + trustedOrigins through explicitly so the CSRF check works
+// against any deployment URL (custom domain, on-prem, e2e test port).
+const baseURL = process.env.BETTER_AUTH_URL;
+const trustedOrigins = [
+	process.env.BETTER_AUTH_URL,
+	process.env.E2E_AUTH_MEMORY === "1"
+		? `http://localhost:${process.env.PORT ?? "3100"}`
+		: undefined,
+].filter((u): u is string => typeof u === "string" && u.length > 0);
+
 export const auth = betterAuth({
-	database: drizzleAdapter(db, {
-		provider: "pg",
-		schema: { user, session, account, verification },
-	}),
+	database: authDatabase,
+	baseURL,
+	trustedOrigins,
 	emailAndPassword: {
 		enabled: true,
 	},
