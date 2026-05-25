@@ -28,10 +28,16 @@ function resolveMode(): DbMode {
 }
 
 async function initPglite(dataDir?: string): Promise<AppDatabase> {
+	// `drizzle-kit/api` re-exports every Drizzle driver entry point (mysql2,
+	// aws-data-api, singlestore, …) — most of those have optional peer deps
+	// that aren't installed in this repo, so when Rolldown follows the
+	// dynamic-import string at build time it trips MISSING_EXPORT errors.
+	// PGLite paths only run in dev / e2e, so we tell the bundler to ignore
+	// the specifier; at runtime the module is resolved normally.
 	const [{ PGlite }, pgliteDriver, { pushSchema }] = await Promise.all([
 		import("@electric-sql/pglite"),
 		import("drizzle-orm/pglite"),
-		import("drizzle-kit/api"),
+		import(/* @vite-ignore */ "drizzle-kit/api"),
 	]);
 	const client = dataDir ? new PGlite(dataDir) : new PGlite();
 	const drizzleDb = pgliteDriver.drizzle(client, { schema });

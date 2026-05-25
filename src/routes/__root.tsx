@@ -74,21 +74,31 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 					{children}
 					<CookieHint />
 				</ThemeProvider>
+				<TanStackDevtools
+					config={{
+						position: "bottom-right",
+					}}
+					plugins={[
+						{
+							name: "Tanstack Router",
+							render: <TanStackRouterDevtoolsPanel />,
+						},
+						TanStackQueryDevtools,
+					]}
+				/>
 				{/* The devtools floating launcher overlaps the mobile bottom
-				    nav and intercepts pointer events during e2e on phone
-				    viewports. Hide it whenever the harness signals e2e mode. */}
-				{import.meta.env.VITE_E2E !== "1" && (
-					<TanStackDevtools
-						config={{
-							position: "bottom-right",
+				    nav during e2e on phone viewports. The @tanstack/devtools-vite
+				    plugin strips the call entirely in production builds, so a
+				    conditional wrapper would confuse it; instead we just hide
+				    the launcher with CSS when the harness signals e2e mode.
+				    The img alt attribute is what the launcher renders. */}
+				{import.meta.env.VITE_E2E === "1" && (
+					<style
+						// biome-ignore lint/security/noDangerouslySetInnerHtml: short inline rule, no user input.
+						dangerouslySetInnerHTML={{
+							__html:
+								'img[alt="TanStack Devtools"]{display:none!important;pointer-events:none!important;}',
 						}}
-						plugins={[
-							{
-								name: "Tanstack Router",
-								render: <TanStackRouterDevtoolsPanel />,
-							},
-							TanStackQueryDevtools,
-						]}
 					/>
 				)}
 				<Scripts />
