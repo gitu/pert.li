@@ -14,6 +14,8 @@
     "format": "biome format",
     "lint": "biome lint",
     "check": "biome check",
+    "secrets:check": "node scripts/check-secret-leak.mjs",
+    "secrets:check:build": "pnpm build && node scripts/check-secret-leak.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
