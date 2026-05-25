@@ -46,6 +46,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "#/components/ui/table";
+import { todayIsoDate } from "#/lib/pert/calendar";
 import { computeSchedule, type ScheduleResult } from "#/lib/pert/schedule";
 import { projectDocStore, selectionStore, selectTask } from "#/lib/pert/store";
 import {
@@ -84,6 +85,10 @@ export type TaskListRow = {
 	taskStatus: TaskStatus;
 	actualStart: string | undefined;
 	actualFinish: string | undefined;
+	// 0-100 from the doc; for the row's display value we follow the same
+	// "completed implies 100, not_started implies 0" semantics the
+	// inspector uses (the column cell does the final clamp).
+	progress: number | undefined;
 };
 
 // Pure derivation of list rows from a doc + already-computed schedule. Lives
@@ -112,6 +117,7 @@ export function buildTaskListRows(
 				taskStatus: t.status ?? "not_started",
 				actualStart: t.actualStart,
 				actualFinish: t.actualFinish,
+				progress: t.progress,
 			};
 		})
 		.sort((a, b) => {
@@ -136,10 +142,11 @@ const COL_VIS_KEYS = {
 // status, dates, etc.).
 const DEFAULT_VIEW_COLUMN_VISIBILITY: VisibilityState = {};
 
-// Edit mode focuses on the cells that are actually editable inline (key,
-// title, estimate). The computed-schedule columns are read-only and would
-// just be noise while tabbing through edits — users can opt them back in
-// via the Columns dropdown and we'll persist that choice.
+// Edit mode focuses on the cells that are actually editable inline — key,
+// title, estimate, started/finished dates, and progress. The computed-
+// schedule columns are read-only and would just be noise while tabbing
+// through edits; users can opt them back in via the Columns dropdown and
+// we'll persist that choice.
 const DEFAULT_EDIT_COLUMN_VISIBILITY: VisibilityState = {
 	kind: false,
 	duration: false,
@@ -147,8 +154,6 @@ const DEFAULT_EDIT_COLUMN_VISIBILITY: VisibilityState = {
 	ef: false,
 	slack: false,
 	status: false,
-	actualStart: false,
-	actualFinish: false,
 };
 
 function readPersistedColumnVisibility(key: string): VisibilityState | null {
@@ -275,6 +280,9 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 		useState<TaskId | null>(null);
 	const [editingActualFinishId, setEditingActualFinishId] =
 		useState<TaskId | null>(null);
+	const [editingProgressId, setEditingProgressId] = useState<TaskId | null>(
+		null,
+	);
 	// Group rows by their dotted `key`. Collapsed group paths live in a
 	// separate set so flipping the toggle off and back on keeps the user's
 	// open/closed state instead of resetting.
@@ -632,6 +640,86 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 				},
 				size: 140,
 			},
+			{
+				accessorKey: "progress",
+				header: () => <div className="text-right">Progress</div>,
+				enableSorting: false,
+				cell: ({ row }) => {
+					const r = row.original;
+					// Editable for tasks (not milestones / containers) regardless of
+					// status — bumping progress from 0 implicitly flips the status to
+					// "in_progress", matching the inspector's logic.
+					const editable = r.kind !== "milestone" && !!changeDoc;
+					const editing = editable && (editAll || editingProgressId === r.id);
+					const displayValue =
+						r.taskStatus === "completed"
+							? 100
+							: r.taskStatus === "not_started"
+								? 0
+								: (r.progress ?? 0);
+					if (editing && changeDoc) {
+						return (
+							<ProgressEdit
+								initial={displayValue}
+								autoFocus={!editAll}
+								onCommit={(next) => {
+									changeDoc((d) => {
+										const t = d.tasksById[r.id];
+										if (!t) return;
+										const clamped = Math.max(
+											0,
+											Math.min(100, Math.round(next)),
+										);
+										t.progress = clamped;
+										// Mirror the inspector's side effects so the status
+										// + dates stay consistent with the percentage.
+										if (
+											t.status !== "in_progress" &&
+											t.status !== "completed" &&
+											clamped > 0
+										) {
+											t.status = "in_progress";
+											if (!t.actualStart) t.actualStart = todayIsoDate();
+										}
+										if (clamped >= 100) {
+											t.status = "completed";
+											if (!t.actualFinish) t.actualFinish = todayIsoDate();
+										} else if (t.status === "completed") {
+											t.status = "in_progress";
+											delete t.actualFinish;
+										}
+									});
+									if (!editAll) setEditingProgressId(null);
+								}}
+								onCancel={() => {
+									if (!editAll) setEditingProgressId(null);
+								}}
+							/>
+						);
+					}
+					if (!editable) {
+						return (
+							<div className="text-right text-xs text-muted-foreground/60">
+								—
+							</div>
+						);
+					}
+					return (
+						<button
+							type="button"
+							className="w-full text-right text-xs text-muted-foreground tabular-nums hover:text-foreground"
+							onDoubleClick={(ev) => {
+								ev.stopPropagation();
+								setEditingProgressId(r.id);
+							}}
+							title="Double-click to edit progress"
+						>
+							{displayValue}%
+						</button>
+					);
+				},
+				size: 100,
+			},
 		],
 		[
 			editingId,
@@ -639,6 +727,7 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 			editingKeyId,
 			editingActualStartId,
 			editingActualFinishId,
+			editingProgressId,
 			editAll,
 			changeDoc,
 		],
@@ -927,6 +1016,71 @@ function renderFlatTaskRow({
 // Recursive group-tree renderer. Emits one full-width header row per group
 // (clickable to collapse) and indented task rows beneath it. Collapsed
 // groups still show the header but skip the contents.
+// Walks a key-group tree and rolls up expected-duration + progress across
+// every descendant row. The aggregates are duration-weighted so a small
+// completed task can't outshout a big unstarted one — matches how a project
+// manager would intuitively summarise a milestone.
+//
+//   • totalDuration  Σ row.duration (expected PERT duration per row)
+//   • doneDuration   Σ row.duration * progressFraction
+//   • remaining      total − done
+//   • progress       weightedProgress / totalDuration  (null when no work)
+//   • ci95           ±1.96σ band around totalDuration, derived from each
+//                    row's (pessimistic − optimistic)/6 standard deviation
+//                    summed in quadrature (independent-tasks assumption).
+//                    null when no task has a usable estimate spread.
+function summarizeGroup(group: KeyGroupNode<TaskListRow>): {
+	totalDuration: number;
+	doneDuration: number;
+	remainingDuration: number;
+	progress: number | null;
+	ci95: number | null;
+} {
+	let totalDuration = 0;
+	let doneDuration = 0;
+	let variance = 0;
+	let hasSpread = false;
+	const walk = (node: KeyGroupNode<TaskListRow>) => {
+		for (const row of node.rows) {
+			if (row.duration <= 0) continue;
+			const pct =
+				row.taskStatus === "completed"
+					? 100
+					: row.taskStatus === "not_started"
+						? 0
+						: (row.progress ?? 0);
+			totalDuration += row.duration;
+			doneDuration += (row.duration * pct) / 100;
+			const est = row.estimate;
+			if (est) {
+				const sigma = (est.pessimistic - est.optimistic) / 6;
+				if (sigma > 0) {
+					variance += sigma * sigma;
+					hasSpread = true;
+				}
+			}
+		}
+		for (const child of node.children) walk(child);
+	};
+	walk(group);
+	if (totalDuration === 0) {
+		return {
+			totalDuration: 0,
+			doneDuration: 0,
+			remainingDuration: 0,
+			progress: null,
+			ci95: null,
+		};
+	}
+	return {
+		totalDuration,
+		doneDuration,
+		remainingDuration: totalDuration - doneDuration,
+		progress: (doneDuration / totalDuration) * 100,
+		ci95: hasSpread ? 1.96 * Math.sqrt(variance) : null,
+	};
+}
+
 function renderGroupedRows({
 	tree,
 	depth,
@@ -950,6 +1104,7 @@ function renderGroupedRows({
 	for (const group of tree) {
 		const collapsed = collapsedGroups.has(group.path);
 		const total = countRowsInGroup(group);
+		const summary = summarizeGroup(group);
 		const indent = depth * 16;
 		nodes.push(
 			<TableRow
@@ -963,7 +1118,7 @@ function renderGroupedRows({
 					style={{ paddingLeft: 12 + indent }}
 					onClick={() => toggleGroup(group.path)}
 				>
-					<div className="flex items-center gap-1.5 text-xs">
+					<div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
 						{collapsed ? (
 							<ChevronRightIcon className="size-3.5 text-muted-foreground" />
 						) : (
@@ -976,6 +1131,50 @@ function renderGroupedRows({
 						<span className="text-muted-foreground">
 							{total} task{total === 1 ? "" : "s"}
 						</span>
+						{summary.totalDuration > 0 && (
+							<>
+								<span className="text-muted-foreground">·</span>
+								<span className="text-muted-foreground">
+									<span className="tabular-nums text-foreground">
+										{fmt(summary.totalDuration)}d
+									</span>
+									{summary.ci95 !== null && summary.ci95 >= 0.05 && (
+										<>
+											{" "}
+											<span
+												className="text-muted-foreground/70"
+												title="95% confidence interval — ±1.96σ from each row's PERT spread, summed in quadrature."
+											>
+												±{fmt(summary.ci95)}d
+											</span>
+										</>
+									)}{" "}
+									est.
+								</span>
+								<span className="text-muted-foreground">·</span>
+								<span className="text-muted-foreground">
+									<span className="tabular-nums text-foreground">
+										{fmt(summary.doneDuration)}d
+									</span>{" "}
+									done /{" "}
+									<span className="tabular-nums text-foreground">
+										{fmt(summary.remainingDuration)}d
+									</span>{" "}
+									left
+								</span>
+							</>
+						)}
+						{summary.progress !== null && (
+							<>
+								<span className="text-muted-foreground">·</span>
+								<span className="text-muted-foreground">
+									<span className="tabular-nums text-foreground">
+										{Math.round(summary.progress)}%
+									</span>{" "}
+									done
+								</span>
+							</>
+						)}
 					</div>
 				</TableCell>
 			</TableRow>,
@@ -1345,5 +1544,62 @@ function DateEdit({
 			data-testid={testId}
 			className="h-7 w-full rounded border bg-background px-1.5 text-xs tabular-nums"
 		/>
+	);
+}
+
+// Small number input + % suffix for inline progress editing. The parent
+// commit handler applies the inspector's status / date side-effects so the
+// row stays consistent with the percentage (0 → not-started, 100 → completed,
+// in-between → in-progress).
+function ProgressEdit({
+	initial,
+	autoFocus = true,
+	onCommit,
+	onCancel,
+}: {
+	initial: number;
+	autoFocus?: boolean;
+	onCommit: (next: number) => void;
+	onCancel: () => void;
+}) {
+	const [value, setValue] = useState(String(initial));
+	const ref = useRef<HTMLInputElement>(null);
+	useEffect(() => {
+		if (autoFocus) ref.current?.focus();
+	}, [autoFocus]);
+	const commit = () => {
+		const parsed = Number.parseFloat(value);
+		onCommit(Number.isFinite(parsed) ? parsed : initial);
+	};
+	return (
+		<form
+			className="flex items-center justify-end gap-1"
+			onSubmit={(e) => {
+				e.preventDefault();
+				commit();
+			}}
+			onClick={(e) => e.stopPropagation()}
+			onKeyDown={(e) => {
+				if (e.key === "Escape") {
+					e.preventDefault();
+					onCancel();
+				}
+			}}
+		>
+			<input
+				ref={ref}
+				type="number"
+				min={0}
+				max={100}
+				step="1"
+				value={value}
+				onChange={(e) => setValue(e.target.value)}
+				onBlur={commit}
+				className="h-7 w-14 rounded border bg-background px-1.5 text-right text-xs tabular-nums focus:outline-none focus:ring-1 focus:ring-ring"
+				aria-label="Progress percentage"
+				data-testid="task-list-progress-input"
+			/>
+			<span className="text-[10px] text-muted-foreground">%</span>
+		</form>
 	);
 }
