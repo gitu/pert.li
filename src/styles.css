@@ -357,3 +357,45 @@ a {
   height: 100vh !important;
   background-color: var(--background);
 }
+
+/* Selected edges in the React Flow canvas — bump the stroke, glow, and
+ * arrowhead so the highlighted dependency is unmistakable. Critical /
+ * cycle / rerouted colors set on the edge's inline style still win
+ * (we only override width + filter), so a selected critical edge stays
+ * red while picking up the glow. */
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke-width: 3.5 !important;
+  filter: drop-shadow(
+    0 0 6px color-mix(in oklab, var(--primary) 70%, transparent)
+  );
+}
+.react-flow__edge.selected .react-flow__edge-interaction {
+  /* The invisible hit-area widens too, so clicking near the highlighted
+   * edge keeps it selected (default is 12-20px; bumping helps after the
+   * visual stroke gets thicker). */
+  stroke-width: 24 !important;
+}
+.react-flow__edge.selected marker path,
+.react-flow__edge.selected .react-flow__arrowclosed,
+.react-flow__edge.selected .react-flow__arrow {
+  stroke-width: 1.6 !important;
+}
+/* Pulse the highlight gently to draw the eye to the selected edge in
+ * busy graphs without being too noisy. Respects reduced-motion. */
+@media (prefers-reduced-motion: no-preference) {
+  .react-flow__edge.selected .react-flow__edge-path {
+    animation: pertli-edge-selected-pulse 1.6s ease-in-out infinite;
+  }
+}
+@keyframes pertli-edge-selected-pulse {
+  0%, 100% {
+    filter: drop-shadow(
+      0 0 6px color-mix(in oklab, var(--primary) 60%, transparent)
+    );
+  }
+  50% {
+    filter: drop-shadow(
+      0 0 10px color-mix(in oklab, var(--primary) 85%, transparent)
+    );
+  }
+}
