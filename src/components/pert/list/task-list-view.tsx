@@ -131,20 +131,25 @@ const COL_VIS_KEYS = {
 	edit: "pertli.taskList.columnVis.edit.v1",
 } as const;
 
-const DEFAULT_VIEW_COLUMN_VISIBILITY: VisibilityState = {
+// View mode shows the full set of columns by default — leaving Edit should
+// drop the user back into a wide informational layout (CPM internals,
+// status, dates, etc.).
+const DEFAULT_VIEW_COLUMN_VISIBILITY: VisibilityState = {};
+
+// Edit mode focuses on the cells that are actually editable inline (key,
+// title, estimate). The computed-schedule columns are read-only and would
+// just be noise while tabbing through edits — users can opt them back in
+// via the Columns dropdown and we'll persist that choice.
+const DEFAULT_EDIT_COLUMN_VISIBILITY: VisibilityState = {
 	kind: false,
 	duration: false,
+	es: false,
 	ef: false,
-	// Started / Finished only matter once a task is in flight. Keep them out
-	// of the default skim layout; users opt in via the Columns menu or by
-	// flipping into "Edit" mode (which shows everything).
+	slack: false,
+	status: false,
 	actualStart: false,
 	actualFinish: false,
 };
-
-// In edit mode the user has explicitly asked to mass-edit; show every
-// editable column by default so they can tab through everything.
-const DEFAULT_EDIT_COLUMN_VISIBILITY: VisibilityState = {};
 
 function readPersistedColumnVisibility(key: string): VisibilityState | null {
 	if (typeof window === "undefined") return null;
@@ -742,14 +747,13 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 					</Button>
 					<DropdownMenu
 						open={columnsOpen}
-						// Open is controlled by the trigger button below. Ignore
-						// onOpenChange's other triggers (selecting an item, outside
-						// click, Escape) so the menu only closes on a second click of
-						// the Columns button — matches the user's "stay open while I
-						// pick what I want" expectation.
-						onOpenChange={(open) => {
-							if (open) setColumnsOpen(true);
-						}}
+						// Outside-click, Escape, and item-select are all preventDefault-ed
+						// on the Content below — so any onOpenChange that fires here can
+						// only be Radix's Trigger detecting a click on the button itself.
+						// Letting it through means both opening AND closing work via the
+						// Columns button without us juggling a second onClick (which
+						// races Radix's via asChild + Slot composition).
+						onOpenChange={setColumnsOpen}
 					>
 						<DropdownMenuTrigger asChild>
 							<Button
@@ -757,7 +761,6 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 								size="sm"
 								className="h-7 gap-1.5 text-xs"
 								data-testid="task-list-columns"
-								onClick={() => setColumnsOpen((v) => !v)}
 							>
 								<SettingsIcon className="size-3.5" />
 								Columns
