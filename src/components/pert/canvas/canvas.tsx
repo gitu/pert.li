@@ -28,6 +28,12 @@ import { toggleCollapse, useCollapsedSet } from "#/lib/pert/collapse";
 import { cycleEdgeSet, cycleTaskSet } from "#/lib/pert/cycle";
 import { computeLayout, fallbackGridLayout } from "#/lib/pert/layout";
 import { type ProjectedNode, projectGraph } from "#/lib/pert/projection";
+import {
+	canReparent,
+	findContainerAtPoint,
+	reparentMutation,
+	shiftDescendantsMutation,
+} from "#/lib/pert/reparent";
 import { computeSchedule } from "#/lib/pert/schedule";
 import { selectionStore, selectTask } from "#/lib/pert/store";
 import type { PertDoc, Task, TaskId } from "#/lib/pert/types";
@@ -176,49 +182,109 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const lastCommittedPosition = useRef<Map<TaskId, { x: number; y: number }>>(
 		new Map(),
 	);
+	// Per-node snapshot at drag-start. Lets us derive the (dx, dy) delta for
+	// container drags (children need to follow) and skip no-op leaf drops.
+	const dragStartPositions = useRef<Map<TaskId, { x: number; y: number }>>(
+		new Map(),
+	);
 
 	const onNodesChange = useCallback(
 		(changes: NodeChange[]) => {
 			setNodes((current) => applyNodeChanges(changes, current));
 			for (const change of changes) {
-				if (
-					change.type === "position" &&
-					change.position &&
-					change.dragging === false
-				) {
-					const seen = lastCommittedPosition.current.get(change.id);
-					if (
-						seen &&
-						seen.x === change.position.x &&
-						seen.y === change.position.y
-					) {
-						continue;
-					}
-					const next = { x: change.position.x, y: change.position.y };
-					lastCommittedPosition.current.set(change.id, next);
-					changeDoc((d) => {
-						const task = d.tasksById[change.id];
-						if (!task) return;
-						task.layout = { ...(task.layout ?? {}), position: next };
-					});
-				} else if (change.type === "remove") {
-					removeTaskFromDoc(changeDoc, change.id);
-				} else if (change.type === "select") {
-					if (change.selected) {
-						selectTask(projectId, change.id);
-					} else {
-						const current = selectionStore.state;
-						if (
-							current.projectId === projectId &&
-							current.taskId === change.id
-						) {
-							selectTask(projectId, null);
+				if (change.type !== "position" || !change.position) {
+					if (change.type === "remove") {
+						removeTaskFromDoc(changeDoc, change.id);
+					} else if (change.type === "select") {
+						if (change.selected) {
+							selectTask(projectId, change.id);
+						} else {
+							const current = selectionStore.state;
+							if (
+								current.projectId === projectId &&
+								current.taskId === change.id
+							) {
+								selectTask(projectId, null);
+							}
 						}
 					}
+					continue;
+				}
+
+				const task = doc.tasksById[change.id];
+				const isContainer = task?.kind === "container";
+
+				if (change.dragging === true) {
+					if (!dragStartPositions.current.has(change.id)) {
+						dragStartPositions.current.set(change.id, {
+							x: change.position.x,
+							y: change.position.y,
+						});
+					}
+					continue;
+				}
+
+				if (change.dragging !== false) continue;
+
+				const seen = lastCommittedPosition.current.get(change.id);
+				if (
+					seen &&
+					seen.x === change.position.x &&
+					seen.y === change.position.y
+				) {
+					dragStartPositions.current.delete(change.id);
+					continue;
+				}
+				const next = { x: change.position.x, y: change.position.y };
+				lastCommittedPosition.current.set(change.id, next);
+
+				const start = dragStartPositions.current.get(change.id);
+				dragStartPositions.current.delete(change.id);
+
+				if (isContainer) {
+					// Drag a container: shift every descendant leaf by the same
+					// delta so the bounds-from-children calc re-anchors the
+					// container at the dropped location next render.
+					if (!start) continue;
+					const dx = next.x - start.x;
+					const dy = next.y - start.y;
+					if (dx === 0 && dy === 0) continue;
+					changeDoc(shiftDescendantsMutation(change.id, dx, dy));
+					continue;
+				}
+
+				// Leaf task: write position, and possibly re-parent if it was
+				// dropped inside a container's bounds.
+				changeDoc((d) => {
+					const draft = d.tasksById[change.id];
+					if (!draft) return;
+					draft.layout = { ...(draft.layout ?? {}), position: next };
+				});
+				const targetContainer = findContainerAtPoint(
+					doc,
+					{
+						x: next.x + TASK_WIDTH / 2,
+						y: next.y + TASK_HEIGHT / 2,
+					},
+					collapsedSet,
+				);
+				if (
+					targetContainer !== null &&
+					canReparent(doc, change.id, targetContainer)
+				) {
+					changeDoc(reparentMutation(change.id, targetContainer));
+				} else if (
+					targetContainer === null &&
+					task?.parentId &&
+					canReparent(doc, change.id, null)
+				) {
+					// Dropped outside any container — promote back to root if it
+					// was previously nested.
+					changeDoc(reparentMutation(change.id, null));
 				}
 			}
 		},
-		[changeDoc, projectId],
+		[changeDoc, doc, projectId, collapsedSet],
 	);
 
 	const onEdgesChange = useCallback(
@@ -449,7 +515,10 @@ function buildNodes(
 				// container body uses pointer-events: none so leaves underneath
 				// still receive clicks normally.
 				zIndex: 10,
-				draggable: false,
+				// Drag is enabled now — the header strip is the drag handle
+				// (canvas's container-node component carries the `nodrag` class
+				// on the body so leaves inside still receive clicks/drags).
+				draggable: true,
 				selectable: true,
 				focusable: true,
 			});

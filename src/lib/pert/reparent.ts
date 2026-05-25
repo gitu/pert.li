@@ -55,10 +55,7 @@ export function containerBoundsFromDescendants(
 	return {
 		x: minX - CONTAINER_PAD_X,
 		y: minY - CONTAINER_PAD_TOP,
-		width: Math.max(
-			maxX - minX + CONTAINER_PAD_X * 2,
-			CONTAINER_MIN_WIDTH,
-		),
+		width: Math.max(maxX - minX + CONTAINER_PAD_X * 2, CONTAINER_MIN_WIDTH),
 		height: Math.max(
 			maxY - minY + CONTAINER_PAD_TOP + CONTAINER_PAD_BOTTOM,
 			CONTAINER_MIN_HEIGHT,
@@ -68,10 +65,7 @@ export function containerBoundsFromDescendants(
 
 function pointInBounds(p: Point, b: Bounds): boolean {
 	return (
-		p.x >= b.x &&
-		p.x <= b.x + b.width &&
-		p.y >= b.y &&
-		p.y <= b.y + b.height
+		p.x >= b.x && p.x <= b.x + b.width && p.y >= b.y && p.y <= b.y + b.height
 	);
 }
 

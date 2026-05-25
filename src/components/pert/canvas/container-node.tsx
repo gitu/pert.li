@@ -113,12 +113,18 @@ function ExpandedImpl(props: NodeProps) {
 			)}
 			style={{ width, height }}
 		>
-			<div className="pointer-events-auto flex items-center gap-1.5 border-b border-dashed bg-card/80 px-2 py-1 text-xs font-medium backdrop-blur-sm">
+			<div
+				data-drag-handle="container-header"
+				className="pointer-events-auto flex cursor-move items-center gap-1.5 border-b border-dashed bg-card/80 px-2 py-1 text-xs font-medium backdrop-blur-sm"
+			>
 				<button
 					type="button"
 					aria-label="Collapse container"
 					data-testid={`container-toggle-${props.id}`}
-					className="grid size-5 place-items-center rounded text-muted-foreground hover:bg-accent"
+					// nodrag tells React Flow not to start a node-drag when the
+					// pointer goes down on this button, so the collapse toggle
+					// still works once the container itself is draggable.
+					className="nodrag grid size-5 place-items-center rounded text-muted-foreground hover:bg-accent"
 					onClick={(e) => {
 						e.stopPropagation();
 						data.onToggle();

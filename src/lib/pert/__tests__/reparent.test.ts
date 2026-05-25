@@ -8,7 +8,12 @@ import {
 } from "#/lib/pert/reparent";
 import { createEmptyPertDoc, type PertDoc, type Task } from "#/lib/pert/types";
 
-const est = { optimistic: 1, mostLikely: 1, pessimistic: 1, unit: "day" as const };
+const est = {
+	optimistic: 1,
+	mostLikely: 1,
+	pessimistic: 1,
+	unit: "day" as const,
+};
 
 function leaf(
 	id: string,
@@ -77,10 +82,7 @@ describe("findContainerAtPoint", () => {
 	});
 
 	it("returns null when the point is outside every container", () => {
-		const doc = build(
-			container("box"),
-			leaf("A", "box", { x: 100, y: 100 }),
-		);
+		const doc = build(container("box"), leaf("A", "box", { x: 100, y: 100 }));
 		expect(findContainerAtPoint(doc, { x: -1000, y: -1000 }, new Set())).toBe(
 			null,
 		);
