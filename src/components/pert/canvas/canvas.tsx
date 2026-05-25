@@ -179,6 +179,12 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	// (selected, dragging) so user interactions don't get squashed.
 	const [nodes, setNodes] = useState<Node[]>(derivedNodes);
 	const [edges, setEdges] = useState<Edge[]>(derivedEdges);
+	// Edge selection is canvas-local — the inspector doesn't surface edges, so
+	// there's no reason to lift it into the cross-component selectionStore.
+	// Tracking it here lets the toolbar's Delete button target the selected
+	// edge (mirroring what the Backspace/Delete key already does via
+	// `onEdgesChange` + `deleteKeyCode`).
+	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
 	useEffect(() => {
 		setNodes((prev) => mergeNodes(prev, derivedNodes));
@@ -210,6 +216,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 						// silently clearing the selection there hides the fullscreen
 						// inspector popup. Explicit deselection lives in onPaneClick.
 						selectTask(projectId, change.id);
+						setSelectedEdgeId(null);
 					}
 					continue;
 				}
@@ -298,10 +305,17 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 					changeDoc((d) => {
 						delete d.dependenciesById[change.id];
 					});
+					setSelectedEdgeId((id) => (id === change.id ? null : id));
+				} else if (change.type === "select" && change.selected) {
+					// Mirror the node-selection pattern: only react to explicit
+					// "selected: true" events. Clear any task selection so the
+					// inspector doesn't fight the edge selection visually.
+					setSelectedEdgeId(change.id);
+					selectTask(projectId, null);
 				}
 			}
 		},
-		[changeDoc],
+		[changeDoc, projectId],
 	);
 
 	const onConnect = useCallback(
@@ -332,6 +346,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const { screenToFlowPosition } = useReactFlow();
 	const onPaneClick = useCallback(() => {
 		selectTask(projectId, null);
+		setSelectedEdgeId(null);
 	}, [projectId]);
 
 	const onPaneDoubleClick = useCallback(
@@ -374,10 +389,21 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	);
 
 	const handleDeleteSelected = useCallback(() => {
+		// Prefer the edge — when both a task and an edge are somehow selected
+		// (transient race after a click), the edge is what the user most
+		// recently interacted with via the toolbar Delete affordance.
+		if (selectedEdgeId) {
+			changeDoc((d) => {
+				delete d.dependenciesById[selectedEdgeId];
+			});
+			setSelectedEdgeId(null);
+			setEdges((current) => current.filter((e) => e.id !== selectedEdgeId));
+			return;
+		}
 		if (!selectedTaskId) return;
 		removeTaskFromDoc(changeDoc, selectedTaskId);
 		selectTask(projectId, null);
-	}, [changeDoc, projectId, selectedTaskId]);
+	}, [changeDoc, projectId, selectedEdgeId, selectedTaskId]);
 
 	useEffect(() => {
 		return () => {
@@ -426,7 +452,11 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 						onAddTask={() => handleAddTask("task")}
 						onAddMilestone={() => handleAddTask("milestone")}
 						onAddContainer={() => handleAddTask("container")}
-						onDeleteSelected={selectedTaskId ? handleDeleteSelected : undefined}
+						onDeleteSelected={
+							selectedTaskId || selectedEdgeId
+								? handleDeleteSelected
+								: undefined
+						}
 						prefs={prefs}
 						onSetEdgeStyle={handleSetEdgeStyle}
 						onSetSpacing={handleSetSpacing}
