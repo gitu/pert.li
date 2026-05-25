@@ -14,12 +14,14 @@ import {
 	ArrowDownIcon,
 	ArrowUpDownIcon,
 	ArrowUpIcon,
+	CheckIcon,
 	CircleDotIcon,
 	FolderIcon,
+	PencilIcon,
 	SettingsIcon,
 	ZapIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PresenceBadge } from "#/components/pert/presence/presence-badge";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
@@ -126,6 +128,11 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 	const [editingEstimateId, setEditingEstimateId] = useState<TaskId | null>(
 		null,
 	);
+	// "Edit all" mode flips every editable cell into its input variant at
+	// once, so the user can tab through and modify the whole table without
+	// double-clicking each cell. Disabled when no changeDoc is available
+	// (read-only context like Storybook).
+	const [editAll, setEditAll] = useState(false);
 
 	const columns = useMemo<ColumnDef<TaskListRow>[]>(
 		() => [
@@ -135,21 +142,26 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 				size: 320,
 				cell: ({ row }) => {
 					const r = row.original;
-					const editing = editingId === r.id;
+					// In "edit all" mode every title is an input by default; in the
+					// normal mode we only swap the cell that was double-clicked.
+					const editing = editAll || editingId === r.id;
 					return (
 						<div className="flex items-center gap-2">
 							<KindIcon kind={r.kind} critical={r.critical} />
 							{editing && changeDoc ? (
 								<TitleEdit
 									initial={r.title}
+									autoFocus={!editAll}
 									onCommit={(value) => {
 										changeDoc((d) => {
 											const t = d.tasksById[r.id];
 											if (t) t.title = value;
 										});
-										setEditingId(null);
+										if (!editAll) setEditingId(null);
 									}}
-									onCancel={() => setEditingId(null)}
+									onCancel={() => {
+										if (!editAll) setEditingId(null);
+									}}
 								/>
 							) : (
 								<button
@@ -200,7 +212,7 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 				enableSorting: false,
 				cell: ({ row }) => {
 					const r = row.original;
-					const editing = editingEstimateId === r.id;
+					const editing = editAll || editingEstimateId === r.id;
 					if (editing && changeDoc && r.kind !== "milestone") {
 						return (
 							<EstimateEdit
@@ -212,15 +224,21 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 										unit: "day",
 									}
 								}
+								// Auto-focus only when the user opted into a specific
+								// cell — in bulk "edit all" mode we'd otherwise yank
+								// focus into the first cell on every render.
+								autoFocus={!editAll}
 								onCommit={(next) => {
 									changeDoc((d) => {
 										const t = d.tasksById[r.id];
 										if (!t) return;
 										t.estimate = next;
 									});
-									setEditingEstimateId(null);
+									if (!editAll) setEditingEstimateId(null);
 								}}
-								onCancel={() => setEditingEstimateId(null)}
+								onCancel={() => {
+									if (!editAll) setEditingEstimateId(null);
+								}}
 							/>
 						);
 					}
@@ -308,7 +326,7 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 				size: 90,
 			},
 		],
-		[editingId, editingEstimateId, changeDoc],
+		[editingId, editingEstimateId, editAll, changeDoc],
 	);
 
 	const table = useReactTable({
@@ -357,6 +375,27 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 						className="h-7 w-44 text-xs"
 						data-testid="task-list-filter"
 					/>
+					<Button
+						variant={editAll ? "default" : "outline"}
+						size="sm"
+						className="h-7 gap-1.5 text-xs"
+						onClick={() => setEditAll((v) => !v)}
+						disabled={!changeDoc}
+						aria-pressed={editAll}
+						data-testid="task-list-edit-all"
+						title={
+							editAll
+								? "Exit edit mode — return to read-only view"
+								: "Edit all rows at once without double-clicking"
+						}
+					>
+						{editAll ? (
+							<CheckIcon className="size-3.5" />
+						) : (
+							<PencilIcon className="size-3.5" />
+						)}
+						{editAll ? "Done" : "Edit"}
+					</Button>
 					<DropdownMenu>
 						<DropdownMenuTrigger asChild>
 							<Button
@@ -506,15 +545,21 @@ function TitleEdit({
 	initial,
 	onCommit,
 	onCancel,
+	autoFocus = true,
 }: {
 	initial: string;
 	onCommit: (value: string) => void;
 	onCancel: () => void;
+	autoFocus?: boolean;
 }) {
 	const [value, setValue] = useState(initial);
+	const ref = useRef<HTMLInputElement>(null);
+	useEffect(() => {
+		if (autoFocus) ref.current?.focus();
+	}, [autoFocus]);
 	return (
 		<Input
-			autoFocus
+			ref={ref}
 			value={value}
 			onChange={(e) => setValue(e.target.value)}
 			onBlur={() => onCommit(value.trim())}
@@ -542,14 +587,22 @@ function EstimateEdit({
 	initial,
 	onCommit,
 	onCancel,
+	autoFocus = true,
 }: {
 	initial: Estimate;
 	onCommit: (next: Estimate) => void;
 	onCancel: () => void;
+	autoFocus?: boolean;
 }) {
 	const [optimistic, setOptimistic] = useState(String(initial.optimistic));
 	const [mostLikely, setMostLikely] = useState(String(initial.mostLikely));
 	const [pessimistic, setPessimistic] = useState(String(initial.pessimistic));
+	// Imperative focus avoids the a11y autoFocus warning; we only fire once
+	// on mount, and only when the caller asked for it.
+	const firstInputRef = useRef<HTMLInputElement>(null);
+	useEffect(() => {
+		if (autoFocus) firstInputRef.current?.focus();
+	}, [autoFocus]);
 
 	const commit = () => {
 		const parse = (s: string, fallback: number) => {
@@ -586,6 +639,7 @@ function EstimateEdit({
 			}}
 		>
 			<input
+				ref={firstInputRef}
 				type="number"
 				min={0}
 				step="0.5"
