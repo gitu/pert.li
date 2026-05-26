@@ -96,7 +96,7 @@ export default defineConfig({
 		// optimizer before the SSR entry can load; on a fresh runner without
 		// a warm `node_modules/.vite` that comfortably exceeds 120s. Cache
 		// hits drop this back to ~10s. Locally it's even quicker.
-		timeout: process.env.CI ? 240_000 : 120_000,
+		timeout: process.env.CI ? 360_000 : 120_000,
 		stdout: "pipe",
 		stderr: "pipe",
 		env: {

@@ -198,28 +198,6 @@ jobs:
         if: steps.pw-cache.outputs.cache-hit == 'true'
         run: pnpm exec playwright install-deps chromium
 
-      # Pre-bundle deps before Playwright launches its server. On a true cold
-      # cache the optimizer takes 1–2 minutes for the better-auth surface; if
-      # that work happens *during* the Playwright webServer wait the URL
-      # probes return 503 ("Vite environment 'nitro' is unavailable") until
-      # the entry can load, and the run times out. Doing it up-front means
-      # `node_modules/.vite` is warm before the dev server starts.
-      #
-      # `vite optimize` is marked deprecated but still functions — it scans
-      # the project, bundles deps into node_modules/.vite/deps, then exits.
-      # On a warm cache restored from a prior run it's a fast no-op. The
-      # outer `timeout` is a belt-and-braces guard against the rare case
-      # where the optimizer hangs at shutdown rather than exiting cleanly.
-      - name: Pre-bundle Vite deps
-        env:
-          # Match the env Playwright will use for the dev server so the
-          # optimizer scans the same module graph.
-          E2E_PGLITE: "1"
-          VITE_E2E: "1"
-          VITE_E2E_DISABLE_SYNC: "1"
-          VITE_NEON_DISABLE: "1"
-        run: timeout 180 pnpm exec vite optimize --force || true
-
       - name: Playwright tests
         run: pnpm e2e
 
