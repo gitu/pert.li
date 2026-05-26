@@ -89,13 +89,13 @@ describe("matchStoriesToFiles", () => {
 
 describe("renderComment", () => {
 	const baseArgs = {
-		repo: "gitu/pert.li",
+		imageBaseUrl: "https://doc.pert.li",
 		prNumber: "42",
 		headSha: "deadbeef1234",
 		hasScreenshot: () => true,
 	};
 
-	it("groups stories by title and links to the raw image URL", () => {
+	it("groups stories by title and links to the Pages-hosted image URL", () => {
 		const out = renderComment({
 			...baseArgs,
 			stories: [
@@ -115,15 +115,24 @@ describe("renderComment", () => {
 		});
 		expect(out).toContain("### Foo/Bar");
 		expect(out).toContain("`src/components/foo/bar.stories.tsx`");
-		expect(out).toContain(
-			"https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--default.png",
-		);
-		expect(out).toContain(
-			"https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--with-icon.png",
-		);
+		// URL includes a `?v=<sha7>` cache-buster to defeat GitHub's
+		// Camo image proxy caching when the screenshot is republished
+		// at the same path.
+		expect(out).toContain("https://doc.pert.li/pr-42/foo-bar--default.png?v=deadbee");
+		expect(out).toContain("https://doc.pert.li/pr-42/foo-bar--with-icon.png?v=deadbee");
 		// The title heading appears only once even though we have two
 		// stories under it.
 		expect(out.match(/### Foo\/Bar/g)).toHaveLength(1);
+	});
+
+	it("strips a trailing slash from imageBaseUrl so URLs don't double up", () => {
+		const out = renderComment({
+			...baseArgs,
+			imageBaseUrl: "https://doc.pert.li/",
+			stories: [{ id: "x--y", title: "X", name: "Y", file: "src/x.stories.tsx" }],
+		});
+		expect(out).toContain("https://doc.pert.li/pr-42/x--y.png");
+		expect(out).not.toContain("//pr-42");
 	});
 
 	it("renders a fallback for stories whose screenshot is missing", () => {
@@ -149,5 +158,15 @@ describe("renderComment", () => {
 			stories: [{ id: "x--y", title: "X", name: "Y", file: "src/x.stories.tsx" }],
 		});
 		expect(out).toContain("updated for deadbee");
+	});
+
+	it("omits the cache-buster when no headSha is provided", () => {
+		const out = renderComment({
+			...baseArgs,
+			headSha: "",
+			stories: [{ id: "x--y", title: "X", name: "Y", file: "src/x.stories.tsx" }],
+		});
+		expect(out).toContain("https://doc.pert.li/pr-42/x--y.png\"");
+		expect(out).not.toMatch(/\?v=/);
 	});
 });

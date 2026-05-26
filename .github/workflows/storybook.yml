@@ -5,18 +5,23 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Serialize gh-pages writes across this workflow AND ci.yml's
+# `pr-screenshots` job — both push to the same branch and would otherwise
+# step on each other's force-push.
 concurrency:
-  group: storybook-pages
-  cancel-in-progress: true
+  group: gh-pages
+  cancel-in-progress: false
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  # peaceiris/actions-gh-pages uses GITHUB_TOKEN to push to the gh-pages
+  # branch; `contents: write` is enough — no Pages-API perms needed
+  # because the site is served from the branch, not from a workflow
+  # artifact.
+  contents: write
 
 jobs:
-  build:
-    name: build storybook
+  publish:
+    name: build + publish storybook
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -45,22 +50,18 @@ jobs:
       - name: Build Storybook
         run: pnpm build-storybook
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Publish to gh-pages
+        # `keep_files: true` preserves the `pr-<n>/` subdirectories that
+        # ci.yml's `pr-screenshots` job writes — without it, every
+        # storybook deploy would wipe the open PRs' screenshot copies.
+        # The CNAME stays pinned so the custom domain (doc.pert.li)
+        # survives both push paths.
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: storybook-static
-
-  deploy:
-    name: deploy to Pages
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./storybook-static
+          keep_files: true
+          cname: doc.pert.li
+          user_name: github-actions[bot]
+          user_email: github-actions[bot]@users.noreply.github.com
+          commit_message: "storybook: deploy ${{ github.sha }}"

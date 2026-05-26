@@ -2,17 +2,20 @@
 // Produce the markdown body for the sticky "PR screenshots" comment.
 //
 // Inputs (env / argv):
-//   $REPO              — "owner/name" (defaults to $GITHUB_REPOSITORY)
-//   $SCREENSHOT_BRANCH — branch where images live (default: "screenshots")
+//   $IMAGE_BASE_URL    — public origin where the PR's screenshots are
+//                        served from (e.g. "https://doc.pert.li"); the
+//                        URL pattern is `${IMAGE_BASE_URL}/pr-${prNumber}/${storyId}.png`
 //   $PR_NUMBER         — PR number
 //   $HEAD_SHA          — head commit SHA (links the comment to the source)
 //   argv[2]            — path to the changed-stories JSON
 //   argv[3]            — directory holding the rendered PNGs
 //   argv[4]            — output markdown file (default: stdout)
 //
-// For each story in the input JSON, we link to the published raw image
-// on the screenshots branch — GitHub renders these inline in PR comments.
-// Stories whose PNG is missing on disk are listed as "(render failed)".
+// For each story in the input JSON, we link to the published image on
+// GitHub Pages. raw.githubusercontent.com URLs would 404 on this repo
+// (private) so the comment uses the Pages site instead, which serves
+// publicly even for private repos. Stories whose PNG is missing on disk
+// are listed as "(render failed)".
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -21,8 +24,9 @@ import path from "node:path";
 // markdown body that the sticky comment action posts. Exported so the
 // unit test can exercise grouping / fallback behavior without touching
 // the filesystem.
-export function renderComment({ stories, repo, prNumber, branch = "screenshots", headSha = "", hasScreenshot }) {
-	const rawBase = `https://raw.githubusercontent.com/${repo}/${branch}/pr-${prNumber}`;
+export function renderComment({ stories, imageBaseUrl, prNumber, headSha = "", hasScreenshot }) {
+	const base = imageBaseUrl.replace(/\/+$/, "");
+	const rawBase = `${base}/pr-${prNumber}`;
 	const lines = ["## 📸 PR screenshots", ""];
 
 	if (!stories || stories.length === 0) {
@@ -45,7 +49,11 @@ export function renderComment({ stories, repo, prNumber, branch = "screenshots",
 				lines.push(`<details open><summary><strong>${story.name}</strong></summary>`);
 				lines.push("");
 				if (hasScreenshot(story)) {
-					const url = `${rawBase}/${story.id}.png`;
+					// Cache-bust via the head SHA — GitHub's Camo image
+					// proxy aggressively caches by URL, so re-pushed
+					// screenshots at the same path wouldn't update in
+					// the comment without this query param.
+					const url = `${rawBase}/${story.id}.png${headSha ? `?v=${headSha.slice(0, 7)}` : ""}`;
 					lines.push(`<img src="${url}" alt="${story.title} — ${story.name}" width="640" />`);
 				} else {
 					lines.push("_render failed — see the storybook job log for details_");
@@ -68,8 +76,7 @@ export function renderComment({ stories, repo, prNumber, branch = "screenshots",
 const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]).endsWith("build-pr-screenshot-comment.mjs");
 
 if (invokedDirectly) {
-	const repo = process.env.REPO || process.env.GITHUB_REPOSITORY;
-	const branch = process.env.SCREENSHOT_BRANCH || "screenshots";
+	const imageBaseUrl = process.env.IMAGE_BASE_URL;
 	const prNumber = process.env.PR_NUMBER;
 	const headSha = process.env.HEAD_SHA || "";
 
@@ -77,9 +84,9 @@ if (invokedDirectly) {
 	const screenshotDir = process.argv[3];
 	const outPath = process.argv[4];
 
-	if (!repo || !prNumber || !changedStoriesPath || !screenshotDir) {
+	if (!imageBaseUrl || !prNumber || !changedStoriesPath || !screenshotDir) {
 		process.stderr.write(
-			"usage: REPO=… PR_NUMBER=… build-pr-screenshot-comment.mjs <changed-stories.json> <screenshot-dir> [out.md]\n",
+			"usage: IMAGE_BASE_URL=… PR_NUMBER=… build-pr-screenshot-comment.mjs <changed-stories.json> <screenshot-dir> [out.md]\n",
 		);
 		process.exit(2);
 	}
@@ -87,9 +94,8 @@ if (invokedDirectly) {
 	const { stories } = JSON.parse(readFileSync(changedStoriesPath, "utf8"));
 	const body = renderComment({
 		stories,
-		repo,
+		imageBaseUrl,
 		prNumber,
-		branch,
 		headSha,
 		hasScreenshot: (story) => existsSync(path.join(screenshotDir, `${story.id}.png`)),
 	});

@@ -368,22 +368,30 @@ jobs:
         run: pnpm storybook:ci
 
   pr-screenshots:
-    # PR-only, informational. Renders every story whose source file changed
-    # on this branch, pushes the PNGs to the `screenshots` orphan branch
-    # under `pr-<num>/`, and posts a sticky PR comment with the images
-    # embedded via raw.githubusercontent.com. Deliberately NOT in the
-    # ci-ready gate — a flake here should never block merge.
+    # PR-only, informational. Renders every story whose source file
+    # changed on this branch and publishes the PNGs to the `gh-pages`
+    # branch under `pr-<num>/`. The PR comment links the images via
+    # the custom Pages domain (https://doc.pert.li/pr-<n>/<id>.png) —
+    # raw.githubusercontent.com URLs don't work because this repo is
+    # private and GitHub's anonymous Camo image proxy can't read them.
+    # Deliberately NOT in the ci-ready gate — a flake here should never
+    # block merge.
     name: PR screenshots
     # Skip on forks: GITHUB_TOKEN on a fork PR is read-only by default,
-    # so the screenshots-branch push would fail and the sticky comment
-    # could not be created. Re-enable for forks later via a
+    # so the gh-pages push would fail. Re-enable for forks later via a
     # pull_request_target variant if we want it.
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Serialize gh-pages writes across this workflow AND storybook.yml —
+    # both push to the same branch and would otherwise race on the
+    # force-push step (peaceiris does a fresh clone + replace + push).
+    concurrency:
+      group: gh-pages
+      cancel-in-progress: false
     permissions:
-      # `contents: write` so we can push to the screenshots branch with
-      # the default GITHUB_TOKEN. `pull-requests: write` for the sticky
+      # `contents: write` so peaceiris can push to gh-pages with the
+      # default GITHUB_TOKEN. `pull-requests: write` for the sticky
       # comment action.
       contents: write
       pull-requests: write
@@ -526,18 +534,33 @@ jobs:
           count=$(jq '.stories | length' changed-stories.json)
           echo "matched=$count" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to screenshots branch
+      - name: Publish to gh-pages
         if: steps.match.outputs.matched != '' && steps.match.outputs.matched != '0'
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/publish-pr-screenshots.sh pr-staging
+        # `destination_dir: pr-<num>` writes the matched PNGs under
+        # https://doc.pert.li/pr-<num>/. `keep_files: true` preserves
+        # storybook at root + sibling pr-N dirs from other open PRs.
+        # `cname:` keeps the custom-domain pin alive across both
+        # workflows that push here.
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./pr-staging
+          destination_dir: pr-${{ github.event.pull_request.number }}
+          keep_files: true
+          cname: doc.pert.li
+          user_name: github-actions[bot]
+          user_email: github-actions[bot]@users.noreply.github.com
+          commit_message: "pr-${{ github.event.pull_request.number }}: screenshots @ ${{ github.event.pull_request.head.sha }}"
 
       - name: Build sticky-comment body
         if: steps.match.outputs.matched != '' && steps.match.outputs.matched != '0'
         env:
-          REPO: ${{ github.repository }}
+          # `IMAGE_BASE_URL` points at the Pages site that the
+          # `Publish to gh-pages` step just wrote to. Self-hosters who
+          # haven't claimed the doc.pert.li custom domain can override
+          # this to their own gitu.github.io/<repo>/ URL — see
+          # SELF_HOSTING.md.
+          IMAGE_BASE_URL: https://doc.pert.li
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/build-pr-screenshot-comment.mjs changed-stories.json pr-staging comment.md
