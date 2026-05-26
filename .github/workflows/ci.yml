@@ -80,6 +80,22 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # The e2e job consumes this artefact instead of running `vite dev`.
+      # `.output/server/` is the Nitro production bundle; we ship the entire
+      # output (server + public assets) so e2e can serve it via
+      # `node .output/server/index.mjs`. ~30 MB; 1-day retention because
+      # nothing outside this run needs it.
+      - name: Upload built server
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: .output
+          retention-days: 1
+          if-no-files-found: error
+          # `.output/` starts with a dot, so upload-artifact@v4 treats the
+          # entire tree as hidden and silently skips it without this flag.
+          include-hidden-files: true
+
   db-back-compat:
     # PR-only: confirm the Drizzle schema in this branch doesn't drop any
     # tables / columns that exist on the merge target. Because Cloud Build
@@ -103,17 +119,52 @@ jobs:
           BASE_REF: origin/${{ github.base_ref }}
         run: node scripts/check-db-back-compat.mjs
 
+  docker-build:
+    # Runs on every push to main + every PR. The intent is just to catch
+    # Dockerfile breakage early — the image is built but NOT pushed; the
+    # docker.yml workflow handles publishing on tags. `cache-from: gha`
+    # reuses the layer cache populated by tag builds so PR runs stay fast.
+    name: docker build (no publish)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: false
+          tags: pert-li:pr-${{ github.event.pull_request.number || github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   e2e:
     name: playwright e2e
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # The verify job builds `.output/` and uploads it as the `build-output`
+    # artefact. Running e2e against that artefact instead of `vite dev`
+    # sidesteps the dev-mode optimizer (which on a cold runner blew past
+    # the 120s webServer timeout) and exercises the actual production
+    # bundle the deploy will ship.
+    needs: verify
     env:
       CI: "true"
-      # The Playwright config seeds the dev server with E2E_PGLITE=1, so an
-      # in-process Postgres handles all DB traffic — no real Postgres needed.
-      # We still set BETTER_AUTH_SECRET to keep auth happy at module load.
-      BETTER_AUTH_SECRET: ci-only-not-secret
+      # Playwright seeds the server with E2E_PGLITE=1 (see playwright.config.ts),
+      # so an in-process Postgres handles all DB traffic — no real Postgres
+      # needed. We still set BETTER_AUTH_SECRET to keep auth happy at load.
+      BETTER_AUTH_SECRET: ci-only-not-secret-long-enough--
       ANTHROPIC_API_KEY: ci-placeholder
+      # Tells playwright.config.ts to launch `node .output/server/index.mjs`
+      # instead of `pnpm exec vite dev`. Without this flag the config falls
+      # back to the dev server (used locally for HMR / fast iteration).
+      E2E_USE_BUILD: "1"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -137,20 +188,14 @@ jobs:
         run: pnpm approve-builds --all
         continue-on-error: true
 
-      # Without this cache the dev server's first run on a fresh node_modules
-      # has to bundle ~50 @better-auth/* sub-packages through Vite's optimizer
-      # before the SSR entry can load. Restoring the prior bundle drops that
-      # from minutes to seconds. Same scheme as the verify job — keyed on the
-      # inputs that invalidate the bundle, with a soft fallback to any prior
-      # cache so the first PR after a lockfile bump still benefits.
-      - name: Cache Vite deps
-        uses: actions/cache@v4
+      # The verify job already ran `pnpm build`; reusing that artefact saves
+      # ~30s and guarantees the e2e suite runs against the same bytes the
+      # deploy will ship.
+      - name: Download built server
+        uses: actions/download-artifact@v4
         with:
-          path: node_modules/.vite
-          key: ${{ runner.os }}-vite-e2e-${{ hashFiles('pnpm-lock.yaml', 'vite.config.ts', 'playwright.config.ts') }}-${{ hashFiles('src/**') }}
-          restore-keys: |
-            ${{ runner.os }}-vite-e2e-${{ hashFiles('pnpm-lock.yaml', 'vite.config.ts', 'playwright.config.ts') }}-
-            ${{ runner.os }}-vite-e2e-
+          name: build-output
+          path: .output
 
       # Cache the Playwright browser binary keyed on the installed version
       # so we only download Chromium when @playwright/test changes.
@@ -173,27 +218,23 @@ jobs:
         if: steps.pw-cache.outputs.cache-hit == 'true'
         run: pnpm exec playwright install-deps chromium
 
-      # Pre-bundle deps before Playwright launches its server. On a true cold
-      # cache the optimizer takes 1–2 minutes for the better-auth surface; if
-      # that work happens *during* the Playwright webServer wait the URL
-      # probes return 503 ("Vite environment 'nitro' is unavailable") until
-      # the entry can load, and the run times out. Doing it up-front means
-      # `node_modules/.vite` is warm before the dev server starts.
-      - name: Pre-bundle Vite deps
-        env:
-          # Match the env Playwright will use for the dev server so the
-          # optimizer scans the same module graph.
-          E2E_PGLITE: "1"
-          VITE_E2E: "1"
-          VITE_E2E_DISABLE_SYNC: "1"
-          VITE_NEON_DISABLE: "1"
-        run: pnpm exec vite optimize --force
-
       - name: Playwright tests
         run: pnpm e2e
 
+      # Walk the JSON reporter output and write a markdown summary into
+      # the job's GITHUB_STEP_SUMMARY. Runs on success AND failure so
+      # passing runs still show per-spec timings + retries in the Actions
+      # UI without downloading the HTML report.
+      - name: E2E summary → job step summary
+        if: always()
+        run: node scripts/playwright-summary.mjs playwright-report/results.json >> "$GITHUB_STEP_SUMMARY"
+        continue-on-error: true
+
       - name: Upload Playwright report
-        if: failure()
+        # Always upload — passing runs are useful for spot-checking
+        # per-test timings and step traces. The HTML report is small
+        # enough that 14-day retention costs nothing meaningful.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
@@ -201,6 +242,9 @@ jobs:
           retention-days: 14
 
       - name: Upload test traces
+        # Traces are large (screenshots + DOM snapshots per step) so
+        # we only keep them when something failed and a human is going
+        # to open them.
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -269,3 +313,21 @@ jobs:
       # runner exits (`-k -s first`).
       - name: Storybook test-runner
         run: pnpm storybook:ci
+
+  # Aggregate gate. Branch protection should require *this* job, not the
+  # individual ones — adding a new job only needs editing one `needs:`
+  # list, not the repo settings, and a job that legitimately skips on the
+  # current event (e.g. db-back-compat on push-to-main) doesn't fail the
+  # gate. Passes when every dependency is `success` or `skipped`.
+  ci-ready:
+    name: CI ready
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [verify, db-back-compat, docker-build, e2e, storybook]
+    steps:
+      - name: Check dependent jobs
+        env:
+          NEEDS: ${{ toJson(needs) }}
+        run: |
+          echo "$NEEDS" | jq .
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")'

@@ -22,6 +22,7 @@ describe("canvasPrefsStore", () => {
 		expect(getCanvasPrefs("p1")).toEqual({
 			edgeStyle: "smoothstep",
 			spacing: "comfortable",
+			continuousLayout: false,
 		});
 	});
 
@@ -34,10 +35,12 @@ describe("canvasPrefsStore", () => {
 		expect(getCanvasPrefs("p1")).toEqual({
 			edgeStyle: "bezier",
 			spacing: "spacious",
+			continuousLayout: false,
 		});
 		expect(getCanvasPrefs("p2")).toEqual({
 			edgeStyle: "smoothstep",
 			spacing: "compact",
+			continuousLayout: false,
 		});
 	});
 
@@ -47,6 +50,7 @@ describe("canvasPrefsStore", () => {
 		expect(getCanvasPrefs("p1")).toEqual({
 			edgeStyle: "bezier",
 			spacing: "compact",
+			continuousLayout: false,
 		});
 	});
 
@@ -95,11 +99,13 @@ describe("EDGE_STYLES + helpers", () => {
 			p1: {
 				edgeStyle: "squiggle" as unknown as "smoothstep",
 				spacing: "compact",
+				continuousLayout: false,
 			},
 		}));
 		expect(getCanvasPrefs("p1")).toEqual({
 			edgeStyle: "smoothstep",
 			spacing: "compact",
+			continuousLayout: false,
 		});
 	});
 });

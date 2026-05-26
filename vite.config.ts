@@ -33,6 +33,7 @@ process.env.PROJECT_ROOT = process.cwd();
 const useNeonProvisioning = process.env.USE_NEON_PROVISION === "1";
 
 const config = defineConfig({
+	build: { target: ["chrome111", "edge111", "firefox114", "safari16.4"] },
 	resolve: { tsconfigPaths: true },
 	optimizeDeps: {
 		// Pulling server-only chains (better-auth, drizzle, jose, kysely) into
@@ -43,15 +44,30 @@ const config = defineConfig({
 	},
 	plugins: [
 		devtools(),
+		wasm(),
 		nitro({
-			// `@automerge/automerge`'s ESM build references CJS-only `__dirname`
-			// when resolving its wasm side-file. Bundling that into the Nitro
-			// node-server output crashes at startup ("__dirname is not defined
-			// in ES module scope"). Keeping it external means Nitro copies the
-			// package — wasm and all — into .output/server/node_modules/ and
-			// the runtime resolves the path via real `node_modules`.
+			// `@electric-sql/pglite` resolves `postgres.wasm` / `initdb.wasm`
+			// relative to `import.meta.url`. Once rollup inlines pglite into
+			// `_libs/_8.mjs` the wasm sidecars are nowhere to be found and
+			// `node .output/server/index.mjs` hangs forever on the PGLite
+			// schema push. Externalizing pulls the package (wasm and all)
+			// through Nitro's node_modules so Node's normal resolution finds
+			// them.
+			//
+			// `@automerge/*` is the same story for a related reason — it ships
+			// a `.wasm` side-file and additionally uses CJS `__dirname` to find
+			// it, which crashes the ESM Nitro output if bundled inline. Letting
+			// Node resolve through `node_modules` keeps the wasm reachable.
+			//
+			// `drizzle-kit/api` re-exports every Drizzle driver (mysql2,
+			// aws-data-api, vercel-postgres, …) — most have optional peer
+			// deps that aren't installed here, so following the chain at
+			// build time trips MISSING_EXPORT errors. The `/* @vite-ignore */`
+			// hint in src/db/index.ts is honored by Vite's client bundler but
+			// not by Rolldown on the server side, so we externalize the whole
+			// package here.
 			rollupConfig: {
-				external: [/^@sentry\//, /^@automerge\//],
+				external: [/^@electric-sql\//, /^@automerge\//, /^drizzle-kit(\/|$)/],
 			},
 			features: { websocket: true },
 			handlers: [{ route: "/sync", handler: "./src/server/sync.ts" }],
@@ -61,7 +77,6 @@ const config = defineConfig({
 		tailwindcss(),
 		tanstackStart(),
 		viteReact(),
-		wasm(),
 		babel({ presets: [reactCompilerPreset()] }),
 	],
 	worker: {

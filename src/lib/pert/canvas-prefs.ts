@@ -70,11 +70,16 @@ export type LayoutSpacing = "compact" | "comfortable" | "spacious";
 export type CanvasPrefs = {
 	edgeStyle: EdgeStyle;
 	spacing: LayoutSpacing;
+	// When on, the canvas re-runs ELK auto-layout after every doc change and
+	// pans the viewport so the currently selected node visually stays put.
+	// Off by default — manual layout is the safer baseline.
+	continuousLayout: boolean;
 };
 
 const DEFAULT_PREFS: CanvasPrefs = {
 	edgeStyle: "smoothstep",
 	spacing: "comfortable",
+	continuousLayout: false,
 };
 
 type PrefsState = Record<string, CanvasPrefs>;
@@ -120,6 +125,7 @@ export function getCanvasPrefs(projectId: string): CanvasPrefs {
 			? stored.edgeStyle
 			: DEFAULT_PREFS.edgeStyle,
 		spacing: stored.spacing ?? DEFAULT_PREFS.spacing,
+		continuousLayout: stored.continuousLayout ?? DEFAULT_PREFS.continuousLayout,
 	};
 }
 
@@ -140,6 +146,16 @@ export function setLayoutSpacing(
 	}));
 }
 
+export function setContinuousLayout(
+	projectId: string,
+	continuousLayout: boolean,
+): void {
+	canvasPrefsStore.setState((s) => ({
+		...s,
+		[projectId]: { ...(s[projectId] ?? DEFAULT_PREFS), continuousLayout },
+	}));
+}
+
 export function useCanvasPrefs(projectId: string): CanvasPrefs {
 	return useStore(canvasPrefsStore, (s) => {
 		const stored = s[projectId];
@@ -149,6 +165,8 @@ export function useCanvasPrefs(projectId: string): CanvasPrefs {
 				? stored.edgeStyle
 				: DEFAULT_PREFS.edgeStyle,
 			spacing: stored.spacing ?? DEFAULT_PREFS.spacing,
+			continuousLayout:
+				stored.continuousLayout ?? DEFAULT_PREFS.continuousLayout,
 		};
 	});
 }

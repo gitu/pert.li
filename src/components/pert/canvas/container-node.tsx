@@ -52,7 +52,9 @@ export type ContainerNodeData = {
 
 const PORT_GAP = 26;
 const PORT_HEADER_OFFSET = 40;
-export const COLLAPSED_CARD_WIDTH = 300;
+// Match the task / milestone card width so a collapsed container reads as
+// a peer of its siblings on the canvas, not an oversized chrome element.
+export const COLLAPSED_CARD_WIDTH = 200;
 
 // Height needed to fit the larger port rail of the two sides. Used by the
 // canvas builder so React Flow allocates enough space, and again here for the

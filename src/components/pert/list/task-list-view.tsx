@@ -22,6 +22,7 @@ import {
 	FolderIcon,
 	LayersIcon,
 	PencilIcon,
+	PlusIcon,
 	SettingsIcon,
 	ZapIcon,
 } from "lucide-react";
@@ -46,6 +47,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "#/components/ui/table";
+import { addTaskMutation } from "#/lib/ai/tool-mutators";
 import { todayIsoDate } from "#/lib/pert/calendar";
 import { computeSchedule, type ScheduleResult } from "#/lib/pert/schedule";
 import { projectDocStore, selectionStore, selectTask } from "#/lib/pert/store";
@@ -298,6 +300,75 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 			return next;
 		});
 	}, []);
+
+	// Quick-add row state. The form sits at the bottom of the table and
+	// commits a new task on Enter — far faster than opening the canvas to
+	// drop one in. cmd/ctrl + Enter focuses the title input from anywhere
+	// in the table, so power users can chain creations without reaching
+	// for the mouse.
+	const [quickAddTitle, setQuickAddTitle] = useState("");
+	const [quickAddEstimate, setQuickAddEstimate] = useState("");
+	const quickAddTitleRef = useRef<HTMLInputElement | null>(null);
+	const focusQuickAdd = useCallback(() => {
+		quickAddTitleRef.current?.focus();
+		quickAddTitleRef.current?.select();
+	}, []);
+	const submitQuickAdd = useCallback(
+		(kind: "task" | "milestone") => {
+			if (!changeDoc) return;
+			const title = quickAddTitle.trim();
+			if (!title) return;
+			let estimate: Estimate | undefined;
+			if (kind === "task") {
+				const m = Number.parseFloat(quickAddEstimate);
+				const mostLikely = Number.isFinite(m) && m > 0 ? m : 2;
+				estimate = {
+					optimistic: Math.max(0.25, mostLikely / 2),
+					mostLikely,
+					pessimistic: mostLikely * 2,
+					unit: "day",
+				};
+			}
+			changeDoc((d) => {
+				const { id } = addTaskMutation(d, {
+					title,
+					estimate,
+					kind,
+				});
+				selectTask(projectId, id);
+			});
+			setQuickAddTitle("");
+			setQuickAddEstimate("");
+			// Re-focus so the user can keep adding without grabbing the
+			// mouse.
+			window.setTimeout(() => focusQuickAdd(), 0);
+		},
+		[changeDoc, focusQuickAdd, projectId, quickAddEstimate, quickAddTitle],
+	);
+
+	// Keyboard shortcut: cmd/ctrl + i jumps focus to the quick-add input
+	// from anywhere in the table view. `n` works too as long as the focus
+	// isn't already inside an input/textarea — mirrors GitHub's `c` for
+	// "create".
+	useEffect(() => {
+		if (!changeDoc) return;
+		const handler = (e: KeyboardEvent) => {
+			if (e.defaultPrevented) return;
+			const isModEnter = (e.metaKey || e.ctrlKey) && e.key === "i";
+			const target = e.target as HTMLElement | null;
+			const inInput =
+				target?.tagName === "INPUT" ||
+				target?.tagName === "TEXTAREA" ||
+				target?.isContentEditable === true;
+			const isPlainN = !inInput && e.key === "n" && !e.metaKey && !e.ctrlKey;
+			if (isModEnter || isPlainN) {
+				e.preventDefault();
+				focusQuickAdd();
+			}
+		};
+		window.addEventListener("keydown", handler);
+		return () => window.removeEventListener("keydown", handler);
+	}, [changeDoc, focusQuickAdd]);
 
 	const columns = useMemo<ColumnDef<TaskListRow>[]>(
 		() => [
@@ -979,6 +1050,83 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 											indent: 0,
 										}),
 									)}
+							{changeDoc && (
+								<TableRow
+									data-testid="task-list-quick-add"
+									className="bg-muted/20 hover:bg-muted/30"
+								>
+									<TableCell colSpan={visibleColumnCount} className="px-3 py-2">
+										<div className="flex flex-wrap items-center gap-2">
+											<PlusIcon className="size-3.5 text-muted-foreground" />
+											<Input
+												ref={quickAddTitleRef}
+												value={quickAddTitle}
+												onChange={(e) => setQuickAddTitle(e.target.value)}
+												placeholder="Add a task… (Enter)"
+												className="h-7 min-w-0 flex-1 text-xs"
+												data-testid="task-list-quick-add-title"
+												onKeyDown={(e) => {
+													if (e.key === "Enter" && !e.shiftKey) {
+														e.preventDefault();
+														submitQuickAdd("task");
+													} else if (e.key === "Escape") {
+														e.preventDefault();
+														setQuickAddTitle("");
+														setQuickAddEstimate("");
+														quickAddTitleRef.current?.blur();
+													}
+												}}
+											/>
+											<Input
+												value={quickAddEstimate}
+												onChange={(e) => setQuickAddEstimate(e.target.value)}
+												placeholder="est. d"
+												inputMode="decimal"
+												className="h-7 w-16 text-xs"
+												data-testid="task-list-quick-add-estimate"
+												onKeyDown={(e) => {
+													if (e.key === "Enter" && !e.shiftKey) {
+														e.preventDefault();
+														submitQuickAdd("task");
+													}
+												}}
+											/>
+											<Button
+												size="sm"
+												variant="outline"
+												className="h-7 gap-1 text-xs"
+												onClick={() => submitQuickAdd("task")}
+												disabled={!quickAddTitle.trim()}
+												data-testid="task-list-quick-add-task"
+											>
+												<PlusIcon className="size-3" />
+												Task
+											</Button>
+											<Button
+												size="sm"
+												variant="ghost"
+												className="h-7 gap-1 text-xs"
+												onClick={() => submitQuickAdd("milestone")}
+												disabled={!quickAddTitle.trim()}
+												data-testid="task-list-quick-add-milestone"
+											>
+												<CircleDotIcon className="size-3" />
+												Milestone
+											</Button>
+											<span className="ml-auto text-[10px] text-muted-foreground">
+												<kbd className="rounded border bg-background px-1 py-0.5 font-mono">
+													n
+												</kbd>{" "}
+												or{" "}
+												<kbd className="rounded border bg-background px-1 py-0.5 font-mono">
+													⌘ I
+												</kbd>{" "}
+												to jump here
+											</span>
+										</div>
+									</TableCell>
+								</TableRow>
+							)}
 						</TableBody>
 					</Table>
 				)}
