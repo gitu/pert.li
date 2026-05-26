@@ -1609,9 +1609,7 @@ function EmptyList() {
 		<div className="grid h-full place-items-center p-6 text-center text-sm text-muted-foreground">
 			<div className="max-w-sm space-y-1">
 				<p className="font-medium text-foreground">No tasks yet.</p>
-				<p>
-					Switch to the Network view and double-click the canvas to add one.
-				</p>
+				<p>Use the quick-add row below, or the toolbar in the Network view.</p>
 			</div>
 		</div>
 	);
