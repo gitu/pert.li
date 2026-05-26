@@ -3,11 +3,17 @@ import {
 	AlertOctagonIcon,
 	CheckCircle2Icon,
 	CircleDotIcon,
+	FlagIcon,
 	PlusIcon,
 	ZapIcon,
 } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import { PresenceBadge } from "#/components/pert/presence/presence-badge";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "#/components/ui/tooltip";
 import { cn } from "#/lib/utils";
 import { NodeDeleteButton } from "./node-delete-button";
 
@@ -45,12 +51,14 @@ export type TaskNodeData = {
 	onCommitEdit?: (next: { title: string; mostLikelyDays?: number }) => void;
 	onCancelEdit?: () => void;
 	// Radial quick-add: paired with the source/target handles on the right and
-	// left edges. When the user hovers (or selects) a node, small "+" buttons
-	// appear centred on each connector. Clicking spawns a new task and a
-	// dependency wiring it to this node (predecessor on the left, successor on
-	// the right). The canvas owns the actual mutation + selection follow-up.
-	onAddPredecessor?: () => void;
-	onAddSuccessor?: () => void;
+	// left edges. When the user hovers (or selects) a node, a stack of buttons
+	// — one for a follow-up task, one for a milestone — appears centred on each
+	// connector. Clicking spawns the new node + dependency wiring it to this
+	// task (predecessor on the left, successor on the right). The canvas owns
+	// the mutation + selection follow-up; the same actions are bound to
+	// ⌘← / ⌘→ at the canvas level.
+	onAddPredecessor?: (kind: "task" | "milestone") => void;
+	onAddSuccessor?: (kind: "task" | "milestone") => void;
 };
 
 // Custom React Flow node rendering a single task. Slack and critical state
@@ -91,21 +99,19 @@ function TaskNodeImpl(props: NodeProps) {
 				className="!h-3 !w-3 !rounded-full !border-2 !border-background !bg-muted-foreground"
 			/>
 			{data.onAddPredecessor && (
-				<QuickAddHandleButton
+				<QuickAddCluster
 					side="left"
-					onClick={data.onAddPredecessor}
+					onAdd={data.onAddPredecessor}
 					alwaysVisible={props.selected}
-					testId={`task-add-predecessor-${props.id}`}
-					label="Add predecessor task"
+					nodeId={props.id}
 				/>
 			)}
 			{data.onAddSuccessor && (
-				<QuickAddHandleButton
+				<QuickAddCluster
 					side="right"
-					onClick={data.onAddSuccessor}
+					onAdd={data.onAddSuccessor}
 					alwaysVisible={props.selected}
-					testId={`task-add-successor-${props.id}`}
-					label="Add dependent task"
+					nodeId={props.id}
 				/>
 			)}
 			{data.onDelete && (
@@ -214,44 +220,92 @@ function fmt(n: number): string {
 	return n.toFixed(1);
 }
 
-// Radial "+" affordance pinned to the source/target connector on a leaf
-// node. Stays hidden until the parent card is hovered or selected, so the
-// canvas stays quiet at rest. Pushed half its width outside the card so it
-// sits centred on the existing handle dot rather than overlapping the
-// title; `nodrag` + stopPropagation keep React Flow from reading the click
-// as a node drag.
-function QuickAddHandleButton({
+// Radial quick-add cluster: a vertical pair of buttons (task + milestone)
+// flanking a source/target connector. Stays hidden until the parent card is
+// hovered or selected so the canvas reads quiet at rest. Pushed further
+// outside the card than a single-button would be so the two buttons clear
+// the connector dot symmetrically and tooltips don't crowd the node label.
+function QuickAddCluster({
 	side,
-	onClick,
 	alwaysVisible,
+	onAdd,
+	nodeId,
+}: {
+	side: "left" | "right";
+	alwaysVisible?: boolean;
+	onAdd: (kind: "task" | "milestone") => void;
+	nodeId: string;
+}) {
+	const isLeft = side === "left";
+	const directionWord = isLeft ? "predecessor" : "successor";
+	const shortcut = isLeft ? "⌘←" : "⌘→";
+	return (
+		<div
+			className={cn(
+				"absolute top-1/2 z-20 flex -translate-y-1/2 flex-col gap-1 transition-opacity",
+				isLeft ? "-left-12" : "-right-12",
+				alwaysVisible ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+			)}
+		>
+			<QuickAddButton
+				side={side}
+				kind="task"
+				onClick={() => onAdd("task")}
+				testId={`task-add-${directionWord}-task-${nodeId}`}
+				label={
+					isLeft
+						? `Add predecessor task (${shortcut})`
+						: `Add dependent task (${shortcut})`
+				}
+			/>
+			<QuickAddButton
+				side={side}
+				kind="milestone"
+				onClick={() => onAdd("milestone")}
+				testId={`task-add-${directionWord}-milestone-${nodeId}`}
+				label={isLeft ? "Add predecessor milestone" : "Add dependent milestone"}
+			/>
+		</div>
+	);
+}
+
+function QuickAddButton({
+	side,
+	kind,
+	onClick,
 	testId,
 	label,
 }: {
 	side: "left" | "right";
+	kind: "task" | "milestone";
 	onClick: () => void;
-	alwaysVisible?: boolean;
 	testId: string;
 	label: string;
 }) {
+	const Icon = kind === "milestone" ? FlagIcon : PlusIcon;
 	return (
-		<button
-			type="button"
-			data-testid={testId}
-			aria-label={label}
-			title={label}
-			className={cn(
-				"nodrag absolute top-1/2 z-20 grid size-6 -translate-y-1/2 place-items-center rounded-full border border-border bg-background/95 text-muted-foreground shadow-sm transition-opacity hover:border-primary hover:text-primary",
-				side === "left" ? "-left-7" : "-right-7",
-				alwaysVisible ? "opacity-100" : "opacity-0 group-hover:opacity-100",
-			)}
-			onPointerDown={(e) => e.stopPropagation()}
-			onClick={(e) => {
-				e.stopPropagation();
-				onClick();
-			}}
-		>
-			<PlusIcon className="size-3.5" />
-		</button>
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<button
+					type="button"
+					data-testid={testId}
+					aria-label={label}
+					className={cn(
+						"nodrag grid size-6 place-items-center rounded-full border border-border bg-background/95 text-muted-foreground shadow-sm hover:border-primary hover:text-primary",
+					)}
+					onPointerDown={(e) => e.stopPropagation()}
+					onClick={(e) => {
+						e.stopPropagation();
+						onClick();
+					}}
+				>
+					<Icon className="size-3.5" />
+				</button>
+			</TooltipTrigger>
+			<TooltipContent side={side === "left" ? "left" : "right"}>
+				{label}
+			</TooltipContent>
+		</Tooltip>
 	);
 }
 

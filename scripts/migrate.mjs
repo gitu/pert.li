@@ -9,28 +9,110 @@
 // migrate` so prod images don't need to ship `tsx`, `dotenv`, or the TS
 // `drizzle.config.ts` source. Everything below runs against the bundled JS
 // in production node_modules.
+//
+// Baselining: when migrating an existing database from `drizzle-kit push`
+// to this migrator (or restoring a schema dump that already contains
+// every object), the schema is present but `drizzle.__drizzle_migrations`
+// is empty — so drizzle would try to apply 0000 from scratch and crash
+// with `42710 type "<...>" already exists`. Set `BASELINE_MIGRATIONS=1`
+// on a single boot to mark every journal entry as applied without running
+// its SQL, then clear the flag.
 
-import { Pool } from "pg";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { Pool } from "pg";
 
-const url = process.env.DATABASE_URL;
-if (!url) {
-	console.error("[migrate] DATABASE_URL is not set");
-	process.exit(1);
+export function readJournal(migrationsFolder) {
+	const journalPath = path.join(migrationsFolder, "meta", "_journal.json");
+	const journal = JSON.parse(fs.readFileSync(journalPath, "utf-8"));
+	return journal.entries.map((entry) => {
+		const sql = fs.readFileSync(path.join(migrationsFolder, `${entry.tag}.sql`), "utf-8");
+		return {
+			tag: entry.tag,
+			folderMillis: entry.when,
+			hash: crypto.createHash("sha256").update(sql).digest("hex"),
+		};
+	});
 }
 
-const pool = new Pool({ connectionString: url, max: 1 });
-const db = drizzle(pool);
+async function baseline(pool, migrationsFolder) {
+	const entries = readJournal(migrationsFolder);
+	const client = await pool.connect();
+	try {
+		const { rows } = await client.query(
+			"SELECT COUNT(*)::int AS n FROM information_schema.tables WHERE table_schema = 'public'",
+		);
+		if (rows[0].n === 0) {
+			throw new Error(
+				"BASELINE_MIGRATIONS=1 but the `public` schema is empty — refusing to mark migrations applied against a blank database. Unset the flag and let migrations run normally.",
+			);
+		}
+		await client.query("CREATE SCHEMA IF NOT EXISTS drizzle");
+		await client.query(
+			"CREATE TABLE IF NOT EXISTS drizzle.__drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at bigint)",
+		);
+		for (const entry of entries) {
+			const res = await client.query(
+				`INSERT INTO drizzle.__drizzle_migrations (hash, created_at)
+				 SELECT $1, $2
+				 WHERE NOT EXISTS (SELECT 1 FROM drizzle.__drizzle_migrations WHERE hash = $1)`,
+				[entry.hash, entry.folderMillis],
+			);
+			if (res.rowCount > 0) {
+				console.log(`[migrate] Baselined ${entry.tag}`);
+			} else {
+				console.log(`[migrate] Skipped ${entry.tag} (already recorded)`);
+			}
+		}
+	} finally {
+		client.release();
+	}
+}
 
-try {
+function isAlreadyExistsError(err) {
+	const code = err?.cause?.code ?? err?.code;
+	return code === "42710" || code === "42P07";
+}
+
+const HINT_ALREADY_EXISTS = [
+	"",
+	"[migrate] Hint: the schema already contains the objects this migration creates, but `drizzle.__drizzle_migrations` does not record it as applied.",
+	"[migrate] This is the expected state when switching an existing database from `drizzle-kit push` to migrations.",
+	"[migrate] Recover by booting once with `BASELINE_MIGRATIONS=1` to mark current journal entries as applied without re-running their SQL, then clear the flag.",
+].join("\n");
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+	const url = process.env.DATABASE_URL;
+	if (!url) {
+		console.error("[migrate] DATABASE_URL is not set");
+		process.exit(1);
+	}
+
 	const migrationsFolder = process.env.DRIZZLE_MIGRATIONS_FOLDER ?? "./drizzle";
-	console.log(`[migrate] Applying migrations from ${migrationsFolder}`);
-	await migrate(db, { migrationsFolder });
-	console.log("[migrate] Done");
-} catch (err) {
-	console.error("[migrate] Failed:", err);
-	process.exitCode = 1;
-} finally {
-	await pool.end();
+	const pool = new Pool({ connectionString: url, max: 1 });
+	const db = drizzle(pool);
+
+	try {
+		if (process.env.BASELINE_MIGRATIONS === "1") {
+			console.log(`[migrate] BASELINE_MIGRATIONS=1 — marking ${migrationsFolder} entries as applied (no SQL run)`);
+			await baseline(pool, migrationsFolder);
+			console.log("[migrate] Baseline complete");
+		} else {
+			console.log(`[migrate] Applying migrations from ${migrationsFolder}`);
+			await migrate(db, { migrationsFolder });
+			console.log("[migrate] Done");
+		}
+	} catch (err) {
+		console.error("[migrate] Failed:", err);
+		if (isAlreadyExistsError(err)) {
+			console.error(HINT_ALREADY_EXISTS);
+		}
+		process.exitCode = 1;
+	} finally {
+		await pool.end();
+	}
 }
