@@ -47,6 +47,7 @@ import { useMonteCarlo } from "#/lib/pert/use-monte-carlo";
 import { useResolvedTheme } from "#/lib/theme";
 import { useIsMobile } from "#/lib/use-media-query";
 import {
+	COLLAPSED_CARD_WIDTH,
 	ContainerCollapsedNode,
 	ContainerExpandedNode,
 	type ContainerNodeData,
@@ -84,7 +85,6 @@ const CONTAINER_PADDING_TOP = 44; // header height
 const CONTAINER_PADDING_BOTTOM = 36;
 const CONTAINER_MIN_WIDTH = 440;
 const CONTAINER_MIN_HEIGHT = 280;
-const COLLAPSED_CARD_WIDTH = 300;
 
 function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const scheduleResult = useMemo(() => computeSchedule(doc), [doc]);
