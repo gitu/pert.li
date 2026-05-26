@@ -13,8 +13,20 @@ set -euo pipefail
 : "${GITHUB_TOKEN:?GITHUB_TOKEN not set}"
 : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY not set}"
 
-SRC_DIR="${1:?usage: publish-pr-screenshots.sh <src-dir>}"
+SRC_DIR_RAW="${1:?usage: publish-pr-screenshots.sh <src-dir>}"
 BRANCH="${SCREENSHOT_BRANCH:-screenshots}"
+
+# Resolve the source directory to an absolute path BEFORE we `cd` into
+# the work directory below. The previous version of this script kept
+# `$SRC_DIR` as the relative path the workflow passed in (`pr-staging`),
+# then walked into `$WORK` and tried to read it — `cp` errored with
+# "cannot stat 'pr-staging/.': No such file or directory" because the
+# relative lookup was happening from /tmp instead of $GITHUB_WORKSPACE.
+if [ ! -d "$SRC_DIR_RAW" ]; then
+  echo "publish-pr-screenshots: source directory '$SRC_DIR_RAW' does not exist" >&2
+  exit 1
+fi
+SRC_DIR="$(cd "$SRC_DIR_RAW" && pwd)"
 
 # Use a sibling workdir so we never disturb the PR checkout. `mktemp -d`
 # is portable across the runner's Ubuntu image and macOS-style local runs.
@@ -32,9 +44,16 @@ git remote add origin "$REMOTE"
 git config user.email "github-actions[bot]@users.noreply.github.com"
 git config user.name "github-actions[bot]"
 
-# Try to fetch an existing screenshots branch; if it does not exist on the
-# remote, bootstrap it as an orphan branch instead.
-if git fetch --depth=1 origin "$BRANCH" 2>/dev/null; then
+# Probe the remote for the screenshots branch before deciding whether to
+# fetch it or bootstrap. The previous version used
+# `git fetch ... 2>/dev/null` and treated any non-zero exit as "branch
+# missing", which would silently route a transient network blip through
+# the bootstrap path and clobber the existing branch on push. `ls-remote`
+# is cheap, exits 0 with an empty result for a missing branch, and
+# surfaces real failures (auth, DNS) on stderr.
+remote_ref="$(git ls-remote --heads origin "$BRANCH")"
+if [ -n "$remote_ref" ]; then
+  git fetch -q --depth=1 origin "$BRANCH"
   git checkout -q -b "$BRANCH" FETCH_HEAD
 else
   echo "screenshots branch does not exist on remote — bootstrapping"
@@ -55,7 +74,11 @@ fi
 # Replace the PR's directory wholesale so deleted stories disappear.
 rm -rf "pr-${PR_NUMBER}"
 mkdir -p "pr-${PR_NUMBER}"
-cp -R "${SRC_DIR}"/. "pr-${PR_NUMBER}/"
+# `$SRC_DIR` is now absolute; the `/.` suffix copies the directory's
+# *contents* (so an empty source still copies cleanly — nothing happens —
+# and the post-stage `git diff --cached --quiet` handles the
+# "no screenshots to publish" outcome below).
+cp -R "$SRC_DIR"/. "pr-${PR_NUMBER}/"
 git add "pr-${PR_NUMBER}"
 
 # Empty PR directory (no matching screenshots) → nothing to commit. Exit
