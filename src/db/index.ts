@@ -41,7 +41,14 @@ async function initPglite(dataDir?: string): Promise<AppDatabase> {
 	]);
 	const client = dataDir ? new PGlite(dataDir) : new PGlite();
 	const drizzleDb = pgliteDriver.drizzle(client, { schema });
-	const { apply } = await pushSchema(schema, drizzleDb);
+	// pushSchema's signature requires a PgDatabase whose schema generic erases
+	// to `Record<string, never>`; our schema is well-typed which means TS sees
+	// a structural mismatch on a field that's only ever read by pushSchema
+	// itself. Cast through unknown — runtime behaviour is unaffected.
+	const { apply } = await pushSchema(
+		schema,
+		drizzleDb as unknown as Parameters<typeof pushSchema>[1],
+	);
 	await apply();
 	return drizzleDb as unknown as AppDatabase;
 }

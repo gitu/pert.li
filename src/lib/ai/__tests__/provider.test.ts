@@ -128,7 +128,7 @@ describe("createTextAdapter — OpenAI base URL override", () => {
 		const adapter = createTextAdapter(
 			{ provider: "openai", model: "gpt-4o" },
 			{ OPENAI_API_KEY: "sk" },
-		) as { config: unknown };
+		) as unknown as { config: unknown };
 		expect(adapter.config).toBeUndefined();
 	});
 
@@ -139,7 +139,7 @@ describe("createTextAdapter — OpenAI base URL override", () => {
 				OPENAI_API_KEY: "sk",
 				OPENAI_BASE_URL: "https://my-openrouter-proxy.example.com/v1",
 			},
-		) as { config: { baseURL: string } };
+		) as unknown as { config: { baseURL: string } };
 		expect(adapter.config).toEqual({
 			baseURL: "https://my-openrouter-proxy.example.com/v1",
 		});
@@ -152,7 +152,7 @@ describe("createTextAdapter — OpenAI base URL override", () => {
 				OPENAI_API_KEY: "sk",
 				OPENAI_BASE_URL: "  https://idp.example.com/v1  ",
 			},
-		) as { config: { baseURL: string } };
+		) as unknown as { config: { baseURL: string } };
 		expect(adapter.config?.baseURL).toBe("https://idp.example.com/v1");
 	});
 
@@ -160,7 +160,7 @@ describe("createTextAdapter — OpenAI base URL override", () => {
 		const adapter = createTextAdapter(
 			{ provider: "openai", model: "gpt-4o" },
 			{ OPENAI_API_KEY: "sk", OPENAI_BASE_URL: "   " },
-		) as { config: unknown };
+		) as unknown as { config: unknown };
 		expect(adapter.config).toBeUndefined();
 	});
 });

@@ -20,9 +20,9 @@ function Seed({
 	}>;
 }) {
 	useEffect(() => {
-		presenceStore.setState({ projectId, peers });
+		presenceStore.setState(() => ({ projectId, peers }));
 		return () => {
-			presenceStore.setState({ projectId: null, peers: [] });
+			presenceStore.setState(() => ({ projectId: null, peers: [] }));
 		};
 	}, [projectId, peers]);
 	return null;

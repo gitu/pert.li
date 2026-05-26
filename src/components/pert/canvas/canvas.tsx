@@ -39,7 +39,7 @@ import {
 	reparentMutation,
 	shiftDescendantsMutation,
 } from "#/lib/pert/reparent";
-import { computeSchedule } from "#/lib/pert/schedule";
+import { computeSchedule, type Schedule } from "#/lib/pert/schedule";
 import { selectionStore, selectTask } from "#/lib/pert/store";
 import type { PertDoc, Task, TaskId } from "#/lib/pert/types";
 import { useMonteCarlo } from "#/lib/pert/use-monte-carlo";
@@ -711,12 +711,7 @@ function pushLeafNode(
 	projected: Extract<ProjectedNode, { kind: "leaf" }>,
 	_doc: PertDoc,
 	fallback: ReturnType<typeof fallbackGridLayout>,
-	schedule: ReturnType<typeof computeSchedule> extends {
-		ok: true;
-		schedule: infer S;
-	}
-		? S | null
-		: never,
+	schedule: Schedule | null,
 	cycleTaskIds: ReadonlySet<TaskId>,
 	mcResult: MonteCarloResult | null,
 	recentlyCreated: ReadonlySet<TaskId>,

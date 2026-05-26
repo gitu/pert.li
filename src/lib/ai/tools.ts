@@ -39,49 +39,57 @@ const isoDateSchema = z
 	.string()
 	.regex(/^\d{4}-\d{2}-\d{2}$/, "expected ISO yyyy-mm-dd date");
 
+const projectSummarySchema = z.object({
+	title: z.string(),
+	tasks: z.array(
+		z.object({
+			id: z.string(),
+			title: z.string(),
+			kind: taskKindSchema,
+			parentId: z.string().nullable(),
+			key: z.string().optional(),
+			estimate: estimateSchema.optional(),
+			status: taskStatusSchema.optional(),
+			progress: z.number().optional(),
+			notes: z.string().optional(),
+			actualStart: z.string().optional(),
+			actualFinish: z.string().optional(),
+		}),
+	),
+	dependencies: z.array(
+		z.object({
+			id: z.string(),
+			fromTaskId: z.string().nullable(),
+			toTaskId: z.string().nullable(),
+			type: dependencyTypeSchema,
+			lagDays: z.number().optional(),
+			fromInterfaceId: z.string().optional(),
+			toInterfaceId: z.string().optional(),
+		}),
+	),
+	interfaces: z.array(
+		z.object({
+			id: z.string(),
+			containerId: z.string(),
+			kind: interfaceKindSchema,
+			label: z.string(),
+			taskRef: z.string().optional(),
+		}),
+	),
+});
+
 export const readProjectTool = toolDefinition({
 	name: "read_project",
 	description:
 		"Read the active project: title, all tasks (id, title, kind, parentId, key, three-point estimate, status, progress, notes, actualStart/Finish), and dependencies (with type and optional lagDays). Call this BEFORE proposing changes so you reference existing task ids instead of inventing new ones.",
 	inputSchema: z.object({}),
-	outputSchema: z.object({
-		title: z.string(),
-		tasks: z.array(
-			z.object({
-				id: z.string(),
-				title: z.string(),
-				kind: taskKindSchema,
-				parentId: z.string().nullable(),
-				key: z.string().optional(),
-				estimate: estimateSchema.optional(),
-				status: taskStatusSchema.optional(),
-				progress: z.number().optional(),
-				notes: z.string().optional(),
-				actualStart: z.string().optional(),
-				actualFinish: z.string().optional(),
-			}),
-		),
-		dependencies: z.array(
-			z.object({
-				id: z.string(),
-				fromTaskId: z.string().nullable(),
-				toTaskId: z.string().nullable(),
-				type: dependencyTypeSchema,
-				lagDays: z.number().optional(),
-				fromInterfaceId: z.string().optional(),
-				toInterfaceId: z.string().optional(),
-			}),
-		),
-		interfaces: z.array(
-			z.object({
-				id: z.string(),
-				containerId: z.string(),
-				kind: interfaceKindSchema,
-				label: z.string(),
-				taskRef: z.string().optional(),
-			}),
-		),
-	}),
+	// Returns the project summary OR the "no active project" error shape the
+	// client emits when the user hasn't opened a project. The model treats it
+	// the same way as any other ok:false response — surface and stop.
+	outputSchema: z.union([
+		projectSummarySchema,
+		z.object({ ok: z.literal(false), error: z.string() }),
+	]),
 });
 
 export const addTaskTool = toolDefinition({
@@ -94,7 +102,10 @@ export const addTaskTool = toolDefinition({
 		parentId: z.string().nullable().optional(),
 		estimate: estimateSchema.optional(),
 	}),
-	outputSchema: z.object({ id: z.string() }),
+	outputSchema: z.union([
+		z.object({ id: z.string() }),
+		z.object({ ok: z.literal(false), error: z.string() }),
+	]),
 });
 
 export const setEstimateTool = toolDefinition({

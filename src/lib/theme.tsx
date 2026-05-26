@@ -69,7 +69,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 		// Reconcile on mount in case SSR resolved differently than the client OS.
 		const stored = readStoredMode();
 		const resolved = resolve(stored);
-		themeStore.setState({ mode: stored, resolved });
+		themeStore.setState(() => ({ mode: stored, resolved }));
 		applyClass(resolved);
 
 		const media = window.matchMedia("(prefers-color-scheme: dark)");

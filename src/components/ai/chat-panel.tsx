@@ -468,7 +468,7 @@ export function ChatPanel({
 							}}
 						/>
 					)}
-					{messages.map((m) => (
+					{(messages as unknown as ChatMessage[]).map((m) => (
 						<MessageRow key={m.id} message={m} />
 					))}
 					{error && (

@@ -16,7 +16,12 @@ export async function createTestDb(): Promise<{
 }> {
 	const client = new PGlite();
 	const db = drizzle(client, { schema });
-	const { apply } = await pushSchema(schema, db);
+	// See note in src/db/index.ts — pushSchema's parameter type erases the
+	// schema generic, so cast through unknown.
+	const { apply } = await pushSchema(
+		schema,
+		db as unknown as Parameters<typeof pushSchema>[1],
+	);
 	await apply();
 	return {
 		db,

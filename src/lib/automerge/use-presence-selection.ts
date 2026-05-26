@@ -66,8 +66,15 @@ export function usePresenceSelection({
 	// userId is stable across reloads, peer id isn't).
 	useEffect(() => {
 		const next: PeerRecord[] = [];
-		for (const peerId of Object.keys(peerStates)) {
-			const sel = peerStates[peerId]?.selection;
+		// usePresence's peerStates is typed as a PeerStateView, which doesn't
+		// expose an index signature — fall back through `unknown` to peek at
+		// each peer's selection field.
+		const states = peerStates as unknown as Record<
+			string,
+			{ selection?: PresenceSelectionState } | undefined
+		>;
+		for (const peerId of Object.keys(states)) {
+			const sel = states[peerId]?.selection;
 			if (!sel) continue;
 			if (sel.userId === userId) continue;
 			next.push({
@@ -77,7 +84,7 @@ export function usePresenceSelection({
 				selectedTaskId: sel.selectedTaskId ?? null,
 			});
 		}
-		presenceStore.setState({ projectId, peers: next });
+		presenceStore.setState(() => ({ projectId, peers: next }));
 	}, [peerStates, projectId, userId]);
 
 	// Clear the cross-view store when the active project changes or the

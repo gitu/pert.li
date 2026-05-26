@@ -35,7 +35,10 @@ export const test = base.extend<ConsoleFixtures>({
 		async ({ page, allowedConsoleMessages }, use, testInfo) => {
 			const captured: CapturedMessage[] = [];
 			attachConsoleListeners(page, captured, allowedConsoleMessages);
-			await use();
+			// Fixture value isn't consumed by callers — it's auto-attached for
+			// the side effect of capturing console messages — so pass `undefined`
+			// to satisfy Playwright's typed `use()` signature.
+			await use(undefined);
 			if (captured.length === 0) return;
 			const summary = captured
 				.map(

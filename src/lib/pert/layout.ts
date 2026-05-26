@@ -255,7 +255,7 @@ function nearestCollapsedOrSelf(
 		if (seen.has(current)) break;
 		seen.add(current);
 		if (collapsed.has(current)) return current;
-		const t = doc.tasksById[current];
+		const t: Task | undefined = doc.tasksById[current];
 		current = t?.parentId ?? null;
 	}
 	return taskId;

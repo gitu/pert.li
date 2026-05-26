@@ -11,7 +11,7 @@ import {
 } from "#/lib/pert/canvas-prefs";
 
 beforeEach(() => {
-	canvasPrefsStore.setState({});
+	canvasPrefsStore.setState(() => ({}));
 	if (typeof window !== "undefined") {
 		window.localStorage.removeItem("pertli.canvas-prefs");
 	}
@@ -91,12 +91,12 @@ describe("EDGE_STYLES + helpers", () => {
 
 	it("getCanvasPrefs sanitises an unknown stored edgeStyle to default", () => {
 		// Simulate a forward-compat / hand-edited localStorage value.
-		canvasPrefsStore.setState({
+		canvasPrefsStore.setState(() => ({
 			p1: {
 				edgeStyle: "squiggle" as unknown as "smoothstep",
 				spacing: "compact",
 			},
-		});
+		}));
 		expect(getCanvasPrefs("p1")).toEqual({
 			edgeStyle: "smoothstep",
 			spacing: "compact",
