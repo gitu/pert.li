@@ -315,3 +315,21 @@ jobs:
       # runner exits (`-k -s first`).
       - name: Storybook test-runner
         run: pnpm storybook:ci
+
+  # Aggregate gate. Branch protection should require *this* job, not the
+  # individual ones — adding a new job only needs editing one `needs:`
+  # list, not the repo settings, and a job that legitimately skips on the
+  # current event (e.g. db-back-compat on push-to-main) doesn't fail the
+  # gate. Passes when every dependency is `success` or `skipped`.
+  ci-ready:
+    name: CI ready
+    if: always()
+    runs-on: ubuntu-latest
+    needs: [verify, db-back-compat, docker-build, e2e, storybook]
+    steps:
+      - name: Check dependent jobs
+        env:
+          NEEDS: ${{ toJson(needs) }}
+        run: |
+          echo "$NEEDS" | jq .
+          echo "$NEEDS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")'
