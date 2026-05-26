@@ -116,19 +116,28 @@ function CollapsedImpl(props: NodeProps) {
 			)}
 			<InterfaceRail ports={data.entries} side="left" />
 			<InterfaceRail ports={data.exits} side="right" />
+			{/* Expand affordance mirrors NodeDeleteButton: absolute top-left,
+			    hidden until hover (or always visible when the node is selected
+			    so touch users can still reach it). Single click expands —
+			    no double-click required. */}
+			<button
+				type="button"
+				aria-label="Expand container"
+				data-testid={`container-toggle-${props.id}`}
+				className={cn(
+					"nodrag absolute top-1 left-1 z-20 grid size-6 place-items-center rounded-md border border-border bg-background/90 text-muted-foreground shadow-sm transition-opacity hover:text-foreground",
+					props.selected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+				)}
+				title="Expand"
+				onPointerDown={(e) => e.stopPropagation()}
+				onClick={(e) => {
+					e.stopPropagation();
+					data.onToggle();
+				}}
+			>
+				<ChevronRightIcon className="size-3.5" />
+			</button>
 			<div className="flex items-start gap-2">
-				<button
-					type="button"
-					aria-label="Expand container"
-					data-testid={`container-toggle-${props.id}`}
-					className="mt-0.5 grid size-5 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent"
-					onClick={(e) => {
-						e.stopPropagation();
-						data.onToggle();
-					}}
-				>
-					<ChevronRightIcon className="size-3.5" />
-				</button>
 				<FolderIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 				<div className="min-w-0 flex-1">
 					<div className="truncate text-sm font-semibold">
