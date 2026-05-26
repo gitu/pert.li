@@ -7,6 +7,7 @@ import {
 	LogOutIcon,
 	MenuIcon,
 	PencilIcon,
+	ShieldIcon,
 	UserCogIcon,
 } from "lucide-react";
 import { useRef } from "react";
@@ -31,7 +32,12 @@ import { useViewMode } from "#/lib/view-mode";
 // to a left Sheet; Phase 5 adds the edit-mode pencil between Chat and Menu.
 
 type Props = {
-	user: { name?: string | null; email: string; image?: string | null };
+	user: {
+		name?: string | null;
+		email: string;
+		image?: string | null;
+		isAdmin: boolean;
+	};
 	onOpenProjects: () => void;
 	onOpenHistory: () => void;
 	onEditProfile: () => void;
@@ -107,6 +113,14 @@ export function MobileTopBar({
 						<UserCogIcon className="size-4" />
 						Edit profile
 					</DropdownMenuItem>
+					{user.isAdmin && (
+						<DropdownMenuItem asChild>
+							<Link to="/admin" data-testid="mobile-nav-admin">
+								<ShieldIcon className="size-4" />
+								Admin
+							</Link>
+						</DropdownMenuItem>
+					)}
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onClick={() => void authClient.signOut()}>
 						<LogOutIcon className="size-4" />
