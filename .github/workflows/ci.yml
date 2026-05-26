@@ -92,6 +92,9 @@ jobs:
           path: .output
           retention-days: 1
           if-no-files-found: error
+          # `.output/` starts with a dot, so upload-artifact@v4 treats the
+          # entire tree as hidden and silently skips it without this flag.
+          include-hidden-files: true
 
   db-back-compat:
     # PR-only: confirm the Drizzle schema in this branch doesn't drop any
