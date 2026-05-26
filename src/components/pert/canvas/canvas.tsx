@@ -479,19 +479,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		setSelectedEdgeId(null);
 	}, [projectId]);
 
-	const onPaneDoubleClick = useCallback(
-		(event: React.MouseEvent) => {
-			const position = screenToFlowPosition({
-				x: event.clientX,
-				y: event.clientY,
-			});
-			createTask(changeDoc, "task", position, null, (id) =>
-				selectTask(projectId, id),
-			);
-		},
-		[changeDoc, projectId, screenToFlowPosition],
-	);
-
 	const selectedTaskId = useStore(selectionStore, (s) =>
 		s.projectId === projectId ? s.taskId : null,
 	);
@@ -538,7 +525,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				onConnect={onConnect}
 				onPaneClick={onPaneClick}
 				onPaneContextMenu={(e) => e.preventDefault()}
-				onDoubleClick={onPaneDoubleClick}
 				onNodeDoubleClick={(_event, node) => {
 					// Containers handle expand/collapse via the chevron button —
 					// don't grab their double-click. Only leaf nodes get inline
