@@ -234,6 +234,58 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		},
 		[changeDoc],
 	);
+
+	// Radial quick-add: spawn a new task linked by a dependency to the source
+	// task. The new task lands one column to the side at the source's y so the
+	// auto-layout (when enabled) only needs to nudge, and the user sees it
+	// without panning. Inherits the source's container parent so quick-adds
+	// inside a container stay inside it. Selecting + entering inline-edit on
+	// the new task lets the user immediately rename it without a second click.
+	const onAddLinkedTask = useCallback(
+		(sourceId: TaskId, direction: "successor" | "predecessor") => {
+			const source = doc.tasksById[sourceId];
+			if (!source) return;
+			const sourcePos = source.layout?.position ?? { x: 0, y: 0 };
+			const offsetX = TASK_WIDTH + 80;
+			const position = {
+				x:
+					direction === "successor"
+						? sourcePos.x + offsetX
+						: sourcePos.x - offsetX,
+				y: sourcePos.y,
+			};
+			const newTaskId = newId("task");
+			const newDepId = newId("dep");
+			changeDoc((d) => {
+				const draftSource = d.tasksById[sourceId];
+				if (!draftSource) return;
+				d.tasksById[newTaskId] = {
+					id: newTaskId,
+					kind: "task",
+					title: "New task",
+					parentId: draftSource.parentId ?? null,
+					layout: { position },
+					estimate: {
+						optimistic: 1,
+						mostLikely: 2,
+						pessimistic: 4,
+						unit: "day",
+					},
+				};
+				const fromId = direction === "successor" ? sourceId : newTaskId;
+				const toId = direction === "successor" ? newTaskId : sourceId;
+				d.dependenciesById[newDepId] = {
+					id: newDepId,
+					from: { taskId: fromId },
+					to: { taskId: toId },
+					type: "finish_to_start",
+				};
+			});
+			selectTask(projectId, newTaskId);
+			setEditingNodeId(newTaskId);
+		},
+		[changeDoc, doc.tasksById, projectId],
+	);
 	const reactFlow = useReactFlow();
 	const { screenToFlowPosition, setCenter, getZoom } = reactFlow;
 	const recentlyCreated = useRecentlyCreatedHighlight(doc, setCenter, getZoom);
@@ -254,6 +306,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				editingNodeId,
 				onCommitInlineEdit,
 				onCancelInlineEdit,
+				onAddLinkedTask,
 			),
 		[
 			doc,
@@ -269,6 +322,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			editingNodeId,
 			onCommitInlineEdit,
 			onCancelInlineEdit,
+			onAddLinkedTask,
 		],
 	);
 	const derivedEdges = useMemo(
@@ -654,6 +708,10 @@ function buildNodes(
 		next: { title: string; mostLikelyDays?: number },
 	) => void,
 	onCancelInlineEdit: () => void,
+	onAddLinkedTask: (
+		sourceId: TaskId,
+		direction: "successor" | "predecessor",
+	) => void,
 ): Node[] {
 	const fallback = fallbackGridLayout(doc);
 	const schedule = scheduleResult.ok ? scheduleResult.schedule : null;
@@ -755,6 +813,7 @@ function buildNodes(
 				editingNodeId,
 				onCommitInlineEdit,
 				onCancelInlineEdit,
+				onAddLinkedTask,
 			);
 		}
 	}
@@ -778,6 +837,10 @@ function pushLeafNode(
 		next: { title: string; mostLikelyDays?: number },
 	) => void,
 	onCancelInlineEdit: () => void,
+	onAddLinkedTask: (
+		sourceId: TaskId,
+		direction: "successor" | "predecessor",
+	) => void,
 ) {
 	const task = projected.task;
 	const pos = task.layout?.position ?? fallback[task.id] ?? { x: 0, y: 0 };
@@ -803,6 +866,8 @@ function pushLeafNode(
 			? (next) => onCommitInlineEdit(task.id, next)
 			: undefined,
 		onCancelEdit: editing ? onCancelInlineEdit : undefined,
+		onAddPredecessor: () => onAddLinkedTask(task.id, "predecessor"),
+		onAddSuccessor: () => onAddLinkedTask(task.id, "successor"),
 	};
 	nodes.push({
 		id: task.id,
