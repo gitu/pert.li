@@ -13,6 +13,7 @@ __unconfig*
 todos.json
 mcp-todos.json
 .data
+storybook-static
 
 # IDE
 .idea/
