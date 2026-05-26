@@ -50,8 +50,16 @@ const config = defineConfig({
 			// in ES module scope"). Keeping it external means Nitro copies the
 			// package — wasm and all — into .output/server/node_modules/ and
 			// the runtime resolves the path via real `node_modules`.
+			//
+			// `@electric-sql/pglite` is the same story for a different reason:
+			// PGLite's bundled JS resolves `postgres.wasm` / `initdb.wasm`
+			// relative to `import.meta.url`, so once Vite inlines pglite into
+			// `_libs/_8.mjs` the wasm sidecars are nowhere to be found and the
+			// e2e `node .output/server/index.mjs` server hangs forever on the
+			// schema push. Externalizing pulls the package (wasm and all)
+			// through Nitro's node_modules copy instead.
 			rollupConfig: {
-				external: [/^@sentry\//, /^@automerge\//],
+				external: [/^@sentry\//, /^@automerge\//, /^@electric-sql\//],
 			},
 			features: { websocket: true },
 			handlers: [{ route: "/sync", handler: "./src/server/sync.ts" }],

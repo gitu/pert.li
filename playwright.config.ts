@@ -87,16 +87,24 @@ export default defineConfig({
 		},
 	],
 	webServer: {
-		command: `pnpm exec vite dev --port ${E2E_PORT}`,
+		// E2E_USE_BUILD=1 swaps the dev server for `node .output/server/index.mjs`
+		// — the prod-built Nitro server. Used in CI: build once in the `verify`
+		// job, restore `.output/` in `e2e`, run against the built artefact. That
+		// sidesteps the cold-cache Vite optimizer + dev-worker hang that made
+		// the e2e webServer time out in CI.
+		//
+		// Local default is still `vite dev` for fast iteration / HMR.
+		command: process.env.E2E_USE_BUILD
+			? `node .output/server/index.mjs`
+			: `pnpm exec vite dev --port ${E2E_PORT}`,
 		url: `http://localhost:${E2E_PORT}`,
 		// Always start fresh — sidesteps port contention with a developer's
 		// running dev server and gives the test run a known-clean env.
 		reuseExistingServer: false,
-		// CI cold-start has to bundle ~50 @better-auth/* deps through Vite's
-		// optimizer before the SSR entry can load; on a fresh runner without
-		// a warm `node_modules/.vite` that comfortably exceeds 120s. Cache
-		// hits drop this back to ~10s. Locally it's even quicker.
-		timeout: process.env.CI ? 360_000 : 120_000,
+		// 60s covers PGLite schema push + Nitro listen on the built server.
+		// In dev mode (no E2E_USE_BUILD) the Vite optimizer takes longer, so
+		// keep more headroom there.
+		timeout: process.env.E2E_USE_BUILD ? 60_000 : 120_000,
 		stdout: "pipe",
 		stderr: "pipe",
 		env: {
