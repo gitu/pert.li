@@ -62,7 +62,10 @@ export function TutorialCard({ className, onStart }: TutorialCardProps) {
 							size="sm"
 							className="gap-1.5"
 							onClick={() => start(seed.prompt, seed.label)}
-							data-testid={`tutorial-seed-${seed.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+							data-testid={`tutorial-seed-${seed.label
+								.toLowerCase()
+								.replace(/[^a-z0-9]+/g, "-")
+								.replace(/^-+|-+$/g, "")}`}
 						>
 							{seed.label}
 						</Button>

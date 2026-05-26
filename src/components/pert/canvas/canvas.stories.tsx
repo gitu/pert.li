@@ -345,8 +345,10 @@ export const ContainerCollapsedMultiInterface: Story = {
 		const canvas = within(canvasElement);
 		const card = await canvas.findByTestId("container-collapsed-box");
 		await expect(card).toBeInTheDocument();
-		await expect(within(card).getByText("Design")).toBeInTheDocument();
-		await expect(within(card).getByText("API ready")).toBeInTheDocument();
+		// Port labels surface as the handle's `title` attribute (tooltip);
+		// they don't render as visible text on the rail.
+		await expect(within(card).getByTitle("Design")).toBeInTheDocument();
+		await expect(within(card).getByTitle("API ready")).toBeInTheDocument();
 	},
 };
 

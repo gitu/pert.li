@@ -120,6 +120,17 @@ export const Empty: Story = {
 
 function keyedDoc(): PertDoc {
 	const d = createEmptyPertDoc("Keyed phases");
+	// One task keyed directly to the milestone (M1 / M2) so the grouping
+	// helper's "collapse single-child intermediates" simplification doesn't
+	// hoist API/UI up into M1/M2's slot.
+	d.tasksById.m1 = {
+		id: "m1",
+		kind: "task",
+		title: "M1 kickoff",
+		parentId: null,
+		key: "M1",
+		estimate: est(1, 1, 1),
+	};
 	d.tasksById.a1 = {
 		id: "a1",
 		kind: "task",
@@ -135,6 +146,14 @@ function keyedDoc(): PertDoc {
 		parentId: null,
 		key: "M1.API",
 		estimate: est(2, 3, 5),
+	};
+	d.tasksById.m2 = {
+		id: "m2",
+		kind: "task",
+		title: "M2 kickoff",
+		parentId: null,
+		key: "M2",
+		estimate: est(1, 1, 1),
 	};
 	d.tasksById.b1 = {
 		id: "b1",

@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect } from "react";
 import { expect, waitFor, within } from "storybook/test";
+import { TooltipProvider } from "#/components/ui/tooltip";
 import {
 	clearActiveProjectDoc,
 	selectTask,
@@ -38,10 +39,12 @@ function StoryHarness({ selectedTaskId }: { selectedTaskId: string | null }) {
 		};
 	}, [selectedTaskId]);
 	return (
-		<div className="grid h-[600px] w-[390px] place-items-center bg-background text-sm text-muted-foreground">
-			Underlying view (canvas, list, etc.)
-			<MobileInspectorSheet projectId={PROJECT_ID} />
-		</div>
+		<TooltipProvider delayDuration={150}>
+			<div className="grid h-[600px] w-[390px] place-items-center bg-background text-sm text-muted-foreground">
+				Underlying view (canvas, list, etc.)
+				<MobileInspectorSheet projectId={PROJECT_ID} />
+			</div>
+		</TooltipProvider>
 	);
 }
 
