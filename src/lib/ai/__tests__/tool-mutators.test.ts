@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	addDependencyMutation,
+	addInterfaceMutation,
 	addTaskMutation,
 	moveTaskMutation,
 	newId,
+	pinDependencyMutation,
 	removeDependencyMutation,
+	removeInterfaceMutation,
 	removeTaskMutation,
 	setActualDatesMutation,
 	setDependencyMutation,
 	setEstimateMutation,
+	setInterfaceMutation,
 	setKeyMutation,
 	setKindMutation,
 	setNotesMutation,
@@ -69,6 +73,19 @@ describe("addTaskMutation", () => {
 			"task_x",
 		);
 		expect(d.tasksById.task_x.estimate?.unit).toBe("hour");
+	});
+
+	it("auto-creates default Entry + Exit interfaces for new containers", () => {
+		const d = createEmptyPertDoc("p");
+		addTaskMutation(d, { title: "Workstream", kind: "container" }, "c1");
+		const ifs = Object.values(d.interfacesByContainerId.c1 ?? {});
+		expect(ifs.map((i) => i.kind).sort()).toEqual(["entry", "exit"]);
+	});
+
+	it("does not auto-create interfaces for non-container kinds", () => {
+		const d = createEmptyPertDoc("p");
+		addTaskMutation(d, { title: "Leaf" }, "t1");
+		expect(d.interfacesByContainerId.t1).toBeUndefined();
 	});
 });
 
@@ -172,6 +189,23 @@ describe("addDependencyMutation", () => {
 			addDependencyMutation(d, { fromTaskId: "ghost", toTaskId: "task_a" }),
 		).toEqual({ ok: false, error: "task ghost not found" });
 	});
+
+	it("rejects container endpoints with a helpful error", () => {
+		const d = seed();
+		addTaskMutation(d, { title: "Box", kind: "container" }, "c1");
+		expect(
+			addDependencyMutation(d, { fromTaskId: "c1", toTaskId: "task_a" }),
+		).toEqual({
+			ok: false,
+			error: "cannot depend from container c1 — pick a specific leaf inside it",
+		});
+		expect(
+			addDependencyMutation(d, { fromTaskId: "task_a", toTaskId: "c1" }),
+		).toEqual({
+			ok: false,
+			error: "cannot depend on container c1 — pick a specific leaf inside it",
+		});
+	});
 });
 
 describe("removeTaskMutation", () => {
@@ -192,6 +226,14 @@ describe("removeTaskMutation", () => {
 		addTaskMutation(d, { title: "Child", parentId: "task_a" }, "task_child");
 		removeTaskMutation(d, { taskId: "task_a" });
 		expect(d.tasksById.task_child.parentId).toBeNull();
+	});
+
+	it("drops the interface bucket when a container is removed", () => {
+		const d = seed();
+		addTaskMutation(d, { title: "Workstream", kind: "container" }, "c1");
+		expect(d.interfacesByContainerId.c1).toBeDefined();
+		removeTaskMutation(d, { taskId: "c1" });
+		expect(d.interfacesByContainerId.c1).toBeUndefined();
 	});
 });
 
@@ -262,6 +304,20 @@ describe("setKindMutation", () => {
 			ok: false,
 			error: "task ghost not found",
 		});
+	});
+
+	it("auto-creates default interfaces when converting to a container", () => {
+		const d = seed();
+		setKindMutation(d, { taskId: "task_a", kind: "container" });
+		const ifs = Object.values(d.interfacesByContainerId.task_a ?? {});
+		expect(ifs.map((i) => i.kind).sort()).toEqual(["entry", "exit"]);
+	});
+
+	it("drops the interface bucket when converting away from container", () => {
+		const d = seed();
+		setKindMutation(d, { taskId: "task_a", kind: "container" });
+		setKindMutation(d, { taskId: "task_a", kind: "task" });
+		expect(d.interfacesByContainerId.task_a).toBeUndefined();
 	});
 });
 
@@ -584,5 +640,206 @@ describe("summarizeProject (extended fields)", () => {
 		expect(a?.notes).toBe("watch out for X");
 		expect(a?.actualStart).toBe("2026-04-01");
 		expect(summary.dependencies[0].lagDays).toBe(5);
+	});
+});
+
+function seedWithContainer(): PertDoc {
+	const d = createEmptyPertDoc("p");
+	addTaskMutation(d, { title: "Workstream", kind: "container" }, "c1");
+	addTaskMutation(d, { title: "Inside", parentId: "c1" }, "leaf");
+	return d;
+}
+
+describe("addInterfaceMutation", () => {
+	it("creates an interface bound to a descendant", () => {
+		const d = seedWithContainer();
+		const res = addInterfaceMutation(
+			d,
+			{
+				containerId: "c1",
+				kind: "entry",
+				label: "Begin",
+				taskRef: "leaf",
+			},
+			"if_x",
+		);
+		expect(res).toEqual({ id: "if_x" });
+		expect(d.interfacesByContainerId.c1.if_x).toEqual({
+			id: "if_x",
+			containerId: "c1",
+			kind: "entry",
+			label: "Begin",
+			taskRef: "leaf",
+		});
+	});
+
+	it("rejects unknown containers and non-container targets", () => {
+		const d = seedWithContainer();
+		expect(
+			addInterfaceMutation(d, { containerId: "leaf", kind: "entry" }),
+		).toEqual({ ok: false, error: "task leaf is not a container" });
+		expect(
+			addInterfaceMutation(d, { containerId: "ghost", kind: "entry" }),
+		).toEqual({ ok: false, error: "task ghost not found" });
+	});
+
+	it("rejects an unknown taskRef", () => {
+		const d = seedWithContainer();
+		expect(
+			addInterfaceMutation(d, {
+				containerId: "c1",
+				kind: "entry",
+				taskRef: "ghost",
+			}),
+		).toEqual({ ok: false, error: "task ghost not found" });
+	});
+});
+
+describe("setInterfaceMutation", () => {
+	it("renames an interface", () => {
+		const d = seedWithContainer();
+		const created = addInterfaceMutation(d, {
+			containerId: "c1",
+			kind: "entry",
+		});
+		if ("ok" in created) throw new Error("expected success");
+		setInterfaceMutation(d, {
+			containerId: "c1",
+			interfaceId: created.id,
+			label: "Renamed",
+		});
+		expect(d.interfacesByContainerId.c1[created.id].label).toBe("Renamed");
+	});
+
+	it("unbinds taskRef when passed null", () => {
+		const d = seedWithContainer();
+		const created = addInterfaceMutation(d, {
+			containerId: "c1",
+			kind: "exit",
+			taskRef: "leaf",
+		});
+		if ("ok" in created) throw new Error("expected success");
+		setInterfaceMutation(d, {
+			containerId: "c1",
+			interfaceId: created.id,
+			taskRef: null,
+		});
+		expect(d.interfacesByContainerId.c1[created.id].taskRef).toBeUndefined();
+	});
+});
+
+describe("removeInterfaceMutation", () => {
+	it("removes an interface and is noisy when absent", () => {
+		const d = seedWithContainer();
+		const created = addInterfaceMutation(d, {
+			containerId: "c1",
+			kind: "exit",
+		});
+		if ("ok" in created) throw new Error("expected success");
+		removeInterfaceMutation(d, {
+			containerId: "c1",
+			interfaceId: created.id,
+		});
+		expect(d.interfacesByContainerId.c1[created.id]).toBeUndefined();
+		expect(
+			removeInterfaceMutation(d, {
+				containerId: "c1",
+				interfaceId: "ghost",
+			}),
+		).toEqual({ ok: false, error: "interface ghost not found on c1" });
+	});
+});
+
+describe("pinDependencyMutation", () => {
+	function seedWithDep(): { doc: PertDoc; depId: string; ifaceId: string } {
+		const d = seedWithContainer();
+		addTaskMutation(d, { title: "Outside" }, "out");
+		const dep = addDependencyMutation(
+			d,
+			{ fromTaskId: "out", toTaskId: "leaf" },
+			"dep_1",
+		);
+		if ("ok" in dep && !dep.ok) throw new Error("dep failed");
+		const iface = addInterfaceMutation(
+			d,
+			{ containerId: "c1", kind: "entry", taskRef: "leaf" },
+			"if_e",
+		);
+		if ("ok" in iface) throw new Error("expected success");
+		return { doc: d, depId: "dep_1", ifaceId: "if_e" };
+	}
+
+	it("pins the to-side interfaceId without changing taskId", () => {
+		const { doc, depId, ifaceId } = seedWithDep();
+		pinDependencyMutation(doc, {
+			dependencyId: depId,
+			side: "to",
+			interfaceId: ifaceId,
+		});
+		expect(doc.dependenciesById[depId].to.interfaceId).toBe(ifaceId);
+		expect(doc.dependenciesById[depId].to.taskId).toBe("leaf");
+	});
+
+	it("clears the hint when interfaceId is null", () => {
+		const { doc, depId, ifaceId } = seedWithDep();
+		pinDependencyMutation(doc, {
+			dependencyId: depId,
+			side: "to",
+			interfaceId: ifaceId,
+		});
+		pinDependencyMutation(doc, {
+			dependencyId: depId,
+			side: "to",
+			interfaceId: null,
+		});
+		expect(doc.dependenciesById[depId].to.interfaceId).toBeUndefined();
+	});
+
+	it("rejects an unknown interfaceId", () => {
+		const { doc, depId } = seedWithDep();
+		expect(
+			pinDependencyMutation(doc, {
+				dependencyId: depId,
+				side: "to",
+				interfaceId: "ghost",
+			}),
+		).toEqual({ ok: false, error: "interface ghost not found" });
+	});
+});
+
+describe("summarizeProject — interfaces", () => {
+	it("includes interfaces and dependency hints", () => {
+		const d = seedWithContainer();
+		const iface = addInterfaceMutation(
+			d,
+			{
+				containerId: "c1",
+				kind: "entry",
+				label: "Begin",
+				taskRef: "leaf",
+			},
+			"if_e",
+		);
+		if ("ok" in iface) throw new Error("expected success");
+		addTaskMutation(d, { title: "Outside" }, "out");
+		addDependencyMutation(d, { fromTaskId: "out", toTaskId: "leaf" }, "dep_1");
+		pinDependencyMutation(d, {
+			dependencyId: "dep_1",
+			side: "to",
+			interfaceId: "if_e",
+		});
+		const summary = summarizeProject(d);
+		expect(summary.interfaces).toHaveLength(3);
+		expect(summary.interfaces).toContainEqual({
+			id: "if_e",
+			containerId: "c1",
+			kind: "entry",
+			label: "Begin",
+			taskRef: "leaf",
+		});
+		expect(summary.interfaces).toContainEqual(
+			expect.objectContaining({ kind: "exit", label: "Exit" }),
+		);
+		expect(summary.dependencies[0].toInterfaceId).toBe("if_e");
 	});
 });

@@ -49,18 +49,18 @@ describe("containerBoundsFromDescendants", () => {
 		);
 		const b = containerBoundsFromDescendants(doc, "box");
 		expect(b).not.toBeNull();
-		// minX = 0 - padX (24), minY = 0 - padTop (36).
-		expect(b?.x).toBe(-24);
-		expect(b?.y).toBe(-36);
-		// width >= max(maxX - minX + 2*padX, MIN_WIDTH=280)
-		// = max(400 + 200 + 48, 280) = 648.
-		expect(b?.width).toBe(648);
+		// minX = 0 - padX (36), minY = 0 - padTop (44).
+		expect(b?.x).toBe(-36);
+		expect(b?.y).toBe(-44);
+		// width >= max(maxX - minX + 2*padX, MIN_WIDTH=440)
+		// = max(400 + 200 + 72, 440) = 672.
+		expect(b?.width).toBe(672);
 	});
 
 	it("returns minimum size when there are no positioned descendants", () => {
 		const doc = build(container("box"));
 		const b = containerBoundsFromDescendants(doc, "box");
-		expect(b).toEqual({ x: 0, y: 0, width: 280, height: 160 });
+		expect(b).toEqual({ x: 0, y: 0, width: 440, height: 280 });
 	});
 
 	it("returns null for a non-container id", () => {

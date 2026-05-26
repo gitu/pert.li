@@ -49,6 +49,8 @@ import {
 	ContainerCollapsedNode,
 	ContainerExpandedNode,
 	type ContainerNodeData,
+	type ContainerPort,
+	containerCollapsedHeight,
 } from "./container-node";
 import { CycleBanner } from "./cycle-banner";
 import { TaskNode, type TaskNodeData } from "./task-node";
@@ -76,11 +78,12 @@ const nodeTypes = {
 
 const TASK_WIDTH = 200;
 const TASK_HEIGHT = 80;
-const CONTAINER_PADDING_X = 24;
-const CONTAINER_PADDING_TOP = 36; // header height
-const CONTAINER_PADDING_BOTTOM = 24;
-const CONTAINER_MIN_WIDTH = 280;
-const CONTAINER_MIN_HEIGHT = 160;
+const CONTAINER_PADDING_X = 36;
+const CONTAINER_PADDING_TOP = 44; // header height
+const CONTAINER_PADDING_BOTTOM = 36;
+const CONTAINER_MIN_WIDTH = 440;
+const CONTAINER_MIN_HEIGHT = 280;
+const COLLAPSED_CARD_WIDTH = 300;
 
 function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const scheduleResult = useMemo(() => computeSchedule(doc), [doc]);
@@ -131,6 +134,21 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		[doc, cycle],
 	);
 
+	const onContainerResize = useCallback(
+		(taskId: TaskId, size: { width: number; height: number }) => {
+			changeDoc((d) => {
+				const t = d.tasksById[taskId];
+				if (!t) return;
+				t.layout = {
+					...(t.layout ?? {}),
+					width: Math.round(size.width),
+					height: Math.round(size.height),
+				};
+			});
+		},
+		[changeDoc],
+	);
+
 	const onContainerToggle = useCallback(
 		(taskId: TaskId) => {
 			// Capture the expanded bounds-position into the doc before collapsing
@@ -154,6 +172,22 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	);
 
 	const mc = useMonteCarlo(doc, { trials: 1500 });
+
+	// Edge selection is canvas-local — the inspector doesn't surface edges, so
+	// there's no reason to lift it into the cross-component selectionStore.
+	// Tracking it here lets the toolbar's Delete button target the selected
+	// edge (mirroring what the Backspace/Delete key already does via
+	// `onEdgesChange` + `deleteKeyCode`).
+	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+	// Container that the user is currently hovering a dragged leaf over. Set
+	// while a drag is in progress; nulled when the drag ends or the leaf
+	// leaves all container bounds. Drives the drop-target ring on the
+	// container node.
+	const [dragHoverContainerId, setDragHoverContainerId] =
+		useState<TaskId | null>(null);
+	const { screenToFlowPosition, setCenter, getZoom } = useReactFlow();
+	const recentlyCreated = useRecentlyCreatedHighlight(doc, setCenter, getZoom);
+
 	const derivedNodes = useMemo(
 		() =>
 			buildNodes(
@@ -161,16 +195,22 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				projection,
 				scheduleResult,
 				onContainerToggle,
+				onContainerResize,
 				cycleTaskIds,
 				mc.result,
+				dragHoverContainerId,
+				recentlyCreated,
 			),
 		[
 			doc,
 			projection,
 			scheduleResult,
 			onContainerToggle,
+			onContainerResize,
 			cycleTaskIds,
 			mc.result,
+			dragHoverContainerId,
+			recentlyCreated,
 		],
 	);
 	const derivedEdges = useMemo(
@@ -183,12 +223,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	// (selected, dragging) so user interactions don't get squashed.
 	const [nodes, setNodes] = useState<Node[]>(derivedNodes);
 	const [edges, setEdges] = useState<Edge[]>(derivedEdges);
-	// Edge selection is canvas-local — the inspector doesn't surface edges, so
-	// there's no reason to lift it into the cross-component selectionStore.
-	// Tracking it here lets the toolbar's Delete button target the selected
-	// edge (mirroring what the Backspace/Delete key already does via
-	// `onEdgesChange` + `deleteKeyCode`).
-	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
 	useEffect(() => {
 		setNodes((prev) => mergeNodes(prev, derivedNodes));
@@ -235,10 +269,37 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 							y: change.position.y,
 						});
 					}
+					// Live drop-target preview: while a leaf is dragging, check
+					// which container its centre is over and mirror that into
+					// state so the container node can render a ring. Skip while
+					// dragging a container itself (you can't drop a container
+					// onto another in the current model).
+					if (!isContainer) {
+						const center = {
+							x: change.position.x + TASK_WIDTH / 2,
+							y: change.position.y + TASK_HEIGHT / 2,
+						};
+						// Exclude the dragged leaf from each container's bounding
+						// box so the container snaps back as the leaf is pulled
+						// outside its siblings — enabling drag-out.
+						const exclude = new Set<TaskId>([change.id]);
+						const hover = findContainerAtPoint(
+							doc,
+							center,
+							collapsedSet,
+							exclude,
+						);
+						const valid =
+							hover !== null && canReparent(doc, change.id, hover)
+								? hover
+								: null;
+						setDragHoverContainerId((prev) => (prev === valid ? prev : valid));
+					}
 					continue;
 				}
 
 				if (change.dragging !== false) continue;
+				setDragHoverContainerId(null);
 
 				const seen = lastCommittedPosition.current.get(change.id);
 				if (
@@ -281,6 +342,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 						y: next.y + TASK_HEIGHT / 2,
 					},
 					collapsedSet,
+					new Set<TaskId>([change.id]),
 				);
 				if (
 					targetContainer !== null &&
@@ -329,7 +391,14 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			const fromId = connection.source;
 			const toId = connection.target;
 			changeDoc((d) => {
-				if (!d.tasksById[fromId] || !d.tasksById[toId]) return;
+				const fromTask = d.tasksById[fromId];
+				const toTask = d.tasksById[toId];
+				if (!fromTask || !toTask) return;
+				// Containers can't be edge endpoints — collapsed-edge routing is
+				// derived from leaf-to-leaf edges by the projection.
+				if (fromTask.kind === "container" || toTask.kind === "container") {
+					return;
+				}
 				for (const existing of Object.values(d.dependenciesById)) {
 					if (existing.from.taskId === fromId && existing.to.taskId === toId) {
 						return;
@@ -347,7 +416,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		[changeDoc],
 	);
 
-	const { screenToFlowPosition } = useReactFlow();
 	const onPaneClick = useCallback(() => {
 		selectTask(projectId, null);
 		setSelectedEdgeId(null);
@@ -528,8 +596,14 @@ function buildNodes(
 	projection: ReturnType<typeof projectGraph>,
 	scheduleResult: ReturnType<typeof computeSchedule>,
 	onToggleContainer: (taskId: TaskId) => void,
+	onResizeContainer: (
+		taskId: TaskId,
+		size: { width: number; height: number },
+	) => void,
 	cycleTaskIds: ReadonlySet<TaskId>,
 	mcResult: MonteCarloResult | null,
+	dragHoverContainerId: TaskId | null,
+	recentlyCreated: ReadonlySet<TaskId>,
 ): Node[] {
 	const fallback = fallbackGridLayout(doc);
 	const schedule = scheduleResult.ok ? scheduleResult.schedule : null;
@@ -547,26 +621,40 @@ function buildNodes(
 				width: CONTAINER_MIN_WIDTH,
 				height: CONTAINER_MIN_HEIGHT,
 			};
+			// Stored manual size acts as a minimum — descendants can still
+			// grow the box, but the user can claim extra room.
+			const storedWidth = projected.task.layout?.width ?? 0;
+			const storedHeight = projected.task.layout?.height ?? 0;
+			const finalWidth = Math.max(bounds.width, storedWidth);
+			const finalHeight = Math.max(bounds.height, storedHeight);
+			const containerId = projected.task.id;
 			const data: ContainerNodeData = {
 				title: projected.task.title,
 				rollup: null,
 				collapsed: false,
-				onToggle: () => onToggleContainer(projected.task.id),
+				onToggle: () => onToggleContainer(containerId),
+				entries: [],
+				exits: [],
+				dropTarget: dragHoverContainerId === containerId,
+				justCreated: recentlyCreated.has(containerId),
+				onResizeEnd: (size) => onResizeContainer(containerId, size),
+				minWidth: bounds.width,
+				minHeight: bounds.height,
 			};
 			nodes.push({
 				id: projected.task.id,
 				type: "containerExpanded",
 				position: { x: bounds.x, y: bounds.y },
 				data: data as unknown as Record<string, unknown>,
-				width: bounds.width,
-				height: bounds.height,
-				// Sit above leaves so the header strip is always clickable; the
-				// container body uses pointer-events: none so leaves underneath
-				// still receive clicks normally.
-				zIndex: 10,
-				// Drag is enabled now — the header strip is the drag handle
-				// (canvas's container-node component carries the `nodrag` class
-				// on the body so leaves inside still receive clicks/drags).
+				width: finalWidth,
+				height: finalHeight,
+				// Sit BELOW descendant leaves so children remain fully selectable
+				// (the previous "container above with pointer-events: none body"
+				// trick was fragile for nested cases). The header strip is
+				// outside the leaf area, so it's still clickable for collapse +
+				// drag. Selection on the container itself works via React Flow's
+				// hit-testing of the bordered frame around the children.
+				zIndex: 1,
 				draggable: true,
 				selectable: true,
 				focusable: true,
@@ -574,19 +662,31 @@ function buildNodes(
 		} else if (projected.kind === "container-collapsed") {
 			const pos = projected.task.layout?.position ??
 				fallback[projected.task.id] ?? { x: 0, y: 0 };
-			const data: ContainerNodeData = {
+			const ports = portsFor(doc, projected.task.id);
+			const containerId = projected.task.id;
+			const baseData: ContainerNodeData = {
 				title: projected.task.title,
 				rollup: projected.rollup,
 				collapsed: true,
-				onToggle: () => onToggleContainer(projected.task.id),
+				onToggle: () => onToggleContainer(containerId),
+				entries: ports.entries,
+				exits: ports.exits,
+				dropTarget: dragHoverContainerId === containerId,
+				justCreated: recentlyCreated.has(containerId),
+				onResizeEnd: (size) => onResizeContainer(containerId, size),
+				minWidth: COLLAPSED_CARD_WIDTH,
 			};
+			const autoHeight = containerCollapsedHeight(baseData);
+			const data: ContainerNodeData = { ...baseData, minHeight: autoHeight };
+			const storedWidth = projected.task.layout?.width ?? 0;
+			const storedHeight = projected.task.layout?.height ?? 0;
 			nodes.push({
-				id: projected.task.id,
+				id: containerId,
 				type: "containerCollapsed",
 				position: pos,
 				data: data as unknown as Record<string, unknown>,
-				width: 220,
-				height: 80,
+				width: Math.max(COLLAPSED_CARD_WIDTH, storedWidth),
+				height: Math.max(autoHeight, storedHeight),
 				zIndex: 1,
 			});
 		} else {
@@ -598,6 +698,7 @@ function buildNodes(
 				schedule,
 				cycleTaskIds,
 				mcResult,
+				recentlyCreated,
 			);
 		}
 	}
@@ -618,6 +719,7 @@ function pushLeafNode(
 		: never,
 	cycleTaskIds: ReadonlySet<TaskId>,
 	mcResult: MonteCarloResult | null,
+	recentlyCreated: ReadonlySet<TaskId>,
 ) {
 	const task = projected.task;
 	const pos = task.layout?.position ?? fallback[task.id] ?? { x: 0, y: 0 };
@@ -634,6 +736,7 @@ function pushLeafNode(
 		status: sched?.status ?? task.status ?? "not_started",
 		progress: sched?.progress ?? task.progress ?? 0,
 		criticality: mcTask?.criticality,
+		justCreated: recentlyCreated.has(task.id),
 	};
 	nodes.push({
 		id: task.id,
@@ -642,7 +745,8 @@ function pushLeafNode(
 		data: data as unknown as Record<string, unknown>,
 		width: TASK_WIDTH,
 		height: TASK_HEIGHT,
-		zIndex: 1,
+		// Leaves sit above container backgrounds so they remain interactive.
+		zIndex: 10,
 	});
 }
 
@@ -676,12 +780,33 @@ function buildEdges(
 			id: edge.id,
 			source: edge.source,
 			target: edge.target,
+			sourceHandle: edge.sourceInterfaceId,
+			targetHandle: edge.targetInterfaceId,
 			type: reactFlowType,
 			animated: edge.critical || onCycle,
 			style,
 			data: { onCycle },
 		};
 	});
+}
+
+// Project doc → ports for the collapsed container node, sorted by id so the
+// rendered order is stable across re-renders.
+function portsFor(
+	doc: PertDoc,
+	containerId: TaskId,
+): { entries: ContainerPort[]; exits: ContainerPort[] } {
+	const bucket = doc.interfacesByContainerId[containerId] ?? {};
+	const entries: ContainerPort[] = [];
+	const exits: ContainerPort[] = [];
+	for (const iface of Object.values(bucket)) {
+		const port: ContainerPort = { id: iface.id, label: iface.label };
+		if (iface.kind === "entry") entries.push(port);
+		else exits.push(port);
+	}
+	entries.sort((a, b) => a.id.localeCompare(b.id));
+	exits.sort((a, b) => a.id.localeCompare(b.id));
+	return { entries, exits };
 }
 
 // Bounding box around every visible leaf descendant of a container, in flow
@@ -756,6 +881,75 @@ function computeExpandedContainerBounds(
 	);
 	if (!bounds) return null;
 	return { x: bounds.x, y: bounds.y };
+}
+
+// Detects tasks that have just appeared in the doc since the previous render
+// and pans the camera onto them while also tagging them so the node renderer
+// can flash a brief highlight ring. First-mount tasks are NOT counted as
+// "new" — only additions made while the canvas is mounted.
+function useRecentlyCreatedHighlight(
+	doc: PertDoc,
+	setCenter: (
+		x: number,
+		y: number,
+		options?: { zoom?: number; duration?: number },
+	) => void,
+	getZoom: () => number,
+): Set<TaskId> {
+	const lastSeen = useRef<Set<TaskId> | null>(null);
+	const [recent, setRecent] = useState<Set<TaskId>>(() => new Set());
+	useEffect(() => {
+		const current = new Set(Object.keys(doc.tasksById));
+		if (lastSeen.current === null) {
+			lastSeen.current = current;
+			return;
+		}
+		const additions: TaskId[] = [];
+		for (const id of current) {
+			if (!lastSeen.current.has(id)) additions.push(id);
+		}
+		lastSeen.current = current;
+		if (additions.length === 0) return;
+		setRecent((prev) => {
+			const next = new Set(prev);
+			for (const id of additions) next.add(id);
+			return next;
+		});
+		// Pan to the first new task. For multi-task batches (e.g. AI tool
+		// loops), pan to the first; the rest pulse in place. The position may
+		// still be undefined on the doc — fall back to the next animation
+		// frame so ELK/auto-layout has a chance to assign positions first.
+		const targetId = additions[0];
+		const tryPan = (attempt: number) => {
+			const t = doc.tasksById[targetId];
+			const pos = t?.layout?.position;
+			if (pos) {
+				const cx = pos.x + TASK_WIDTH / 2;
+				const cy = pos.y + TASK_HEIGHT / 2;
+				setCenter(cx, cy, { zoom: getZoom(), duration: 350 });
+				return;
+			}
+			if (attempt > 30) return;
+			window.requestAnimationFrame(() => tryPan(attempt + 1));
+		};
+		window.requestAnimationFrame(() => tryPan(0));
+		// Clear the highlight after the pulse animation has played a couple
+		// of times. Keep this in sync with the CSS animation duration.
+		const timers = additions.map((id) =>
+			window.setTimeout(() => {
+				setRecent((prev) => {
+					if (!prev.has(id)) return prev;
+					const out = new Set(prev);
+					out.delete(id);
+					return out;
+				});
+			}, 2400),
+		);
+		return () => {
+			for (const t of timers) window.clearTimeout(t);
+		};
+	}, [doc, setCenter, getZoom]);
+	return recent;
 }
 
 function useAutoLayout(

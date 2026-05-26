@@ -25,6 +25,8 @@ const dependencyTypeSchema = z.enum([
 	"finish_to_finish",
 	"start_to_finish",
 ]);
+const interfaceKindSchema = z.enum(["entry", "exit"]);
+const dependencySideSchema = z.enum(["from", "to"]);
 
 const estimateSchema = z.object({
 	optimistic: z.number().nonnegative(),
@@ -66,6 +68,17 @@ export const readProjectTool = toolDefinition({
 				toTaskId: z.string().nullable(),
 				type: dependencyTypeSchema,
 				lagDays: z.number().optional(),
+				fromInterfaceId: z.string().optional(),
+				toInterfaceId: z.string().optional(),
+			}),
+		),
+		interfaces: z.array(
+			z.object({
+				id: z.string(),
+				containerId: z.string(),
+				kind: interfaceKindSchema,
+				label: z.string(),
+				taskRef: z.string().optional(),
 			}),
 		),
 	}),
@@ -239,6 +252,58 @@ export const setDependencyTool = toolDefinition({
 	outputSchema: okOrErrorSchema,
 });
 
+export const addInterfaceTool = toolDefinition({
+	name: "add_interface",
+	description:
+		"Add a named entry or exit port to a container. Use this when an external caller needs to depend on a specific milestone inside the container rather than the container as a whole. Optionally pin the interface to a descendant via taskRef so the projection can route collapsed edges precisely.",
+	inputSchema: z.object({
+		containerId: z.string(),
+		kind: interfaceKindSchema,
+		label: z.string().optional(),
+		taskRef: z.string().nullable().optional(),
+	}),
+	outputSchema: z.union([
+		z.object({ id: z.string() }),
+		z.object({ ok: z.literal(false), error: z.string() }),
+	]),
+});
+
+export const removeInterfaceTool = toolDefinition({
+	name: "remove_interface",
+	description:
+		"Delete a container interface. Existing dependencies that hint at this interface keep their canonical taskId endpoint; the orphaned hint is ignored by the projection.",
+	inputSchema: z.object({
+		containerId: z.string(),
+		interfaceId: z.string(),
+	}),
+	outputSchema: okOrErrorSchema,
+});
+
+export const setInterfaceTool = toolDefinition({
+	name: "set_interface",
+	description:
+		"Edit an existing container interface: rename it and/or rebind it to a descendant task. Omit a field to leave it unchanged. Pass taskRef=null to unbind.",
+	inputSchema: z.object({
+		containerId: z.string(),
+		interfaceId: z.string(),
+		label: z.string().optional(),
+		taskRef: z.string().nullable().optional(),
+	}),
+	outputSchema: okOrErrorSchema,
+});
+
+export const pinDependencyTool = toolDefinition({
+	name: "pin_dependency",
+	description:
+		"Pin one side of a dependency to a specific container interface. The dep's canonical taskId stays the same — the interface is the port the edge attaches to when the container is collapsed. Pass interfaceId=null to clear the pin.",
+	inputSchema: z.object({
+		dependencyId: z.string(),
+		side: dependencySideSchema,
+		interfaceId: z.string().nullable(),
+	}),
+	outputSchema: okOrErrorSchema,
+});
+
 // Presents a multiple-choice question to the user. The tool itself just
 // acknowledges immediately; the UI surfaces the question + clickable chips
 // above the chat input. Clicking a chip sends `value` (falling back to
@@ -295,5 +360,9 @@ export const CHAT_TOOL_DEFINITIONS = [
 	setDependencyTool,
 	removeDependencyTool,
 	removeTaskTool,
+	addInterfaceTool,
+	removeInterfaceTool,
+	setInterfaceTool,
+	pinDependencyTool,
 	askChoiceTool,
 ] as const;

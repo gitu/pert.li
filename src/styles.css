@@ -399,3 +399,31 @@ a {
     );
   }
 }
+
+/* Brief pulse applied to a task or container right after it's created so
+ * the user notices it appearing on the canvas. Auto-removed by the canvas
+ * after 2.4s (see useRecentlyCreatedHighlight). */
+@media (prefers-reduced-motion: no-preference) {
+  .pert-just-created {
+    animation: pertli-just-created 1.2s ease-out 2;
+    box-shadow:
+      0 0 0 0 color-mix(in oklab, var(--primary) 70%, transparent);
+  }
+}
+@keyframes pertli-just-created {
+  0% {
+    box-shadow:
+      0 0 0 0 color-mix(in oklab, var(--primary) 80%, transparent),
+      0 0 0 0 color-mix(in oklab, var(--primary) 60%, transparent);
+  }
+  60% {
+    box-shadow:
+      0 0 0 6px color-mix(in oklab, var(--primary) 0%, transparent),
+      0 0 18px 6px color-mix(in oklab, var(--primary) 35%, transparent);
+  }
+  100% {
+    box-shadow:
+      0 0 0 0 transparent,
+      0 0 0 0 transparent;
+  }
+}

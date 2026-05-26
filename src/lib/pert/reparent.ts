@@ -14,15 +14,16 @@ export type Bounds = { x: number; y: number; width: number; height: number };
 
 const TASK_WIDTH = 200;
 const TASK_HEIGHT = 80;
-const CONTAINER_PAD_X = 24;
-const CONTAINER_PAD_TOP = 36;
-const CONTAINER_PAD_BOTTOM = 24;
-const CONTAINER_MIN_WIDTH = 280;
-const CONTAINER_MIN_HEIGHT = 160;
+const CONTAINER_PAD_X = 36;
+const CONTAINER_PAD_TOP = 44;
+const CONTAINER_PAD_BOTTOM = 36;
+const CONTAINER_MIN_WIDTH = 440;
+const CONTAINER_MIN_HEIGHT = 280;
 
 export function containerBoundsFromDescendants(
 	doc: PertDoc,
 	containerId: TaskId,
+	excludeIds?: ReadonlySet<TaskId>,
 ): Bounds | null {
 	const container = doc.tasksById[containerId];
 	if (!container || container.kind !== "container") return null;
@@ -33,6 +34,7 @@ export function containerBoundsFromDescendants(
 	let maxY = Number.NEGATIVE_INFINITY;
 	let any = false;
 	for (const id of descendants) {
+		if (excludeIds?.has(id)) continue;
 		const t = doc.tasksById[id];
 		if (!t || t.kind === "container") continue;
 		const pos = t.layout?.position;
@@ -72,17 +74,24 @@ function pointInBounds(p: Point, b: Bounds): boolean {
 // Returns the deepest container whose bounds contain `point`. Skips
 // collapsed containers (they render as a single card and shouldn't accept
 // drop-into; user collapses to hide, not to nest into).
+//
+// `excludeIds` lets the caller exclude the currently-dragged task (and its
+// descendants) from each container's bounding-box computation. Without that,
+// dragging a leaf around inside its own container keeps the container's
+// bounds growing with the cursor and the leaf can never escape.
 export function findContainerAtPoint(
 	doc: PertDoc,
 	point: Point,
 	collapsed: ReadonlySet<TaskId>,
+	excludeIds?: ReadonlySet<TaskId>,
 ): TaskId | null {
 	let best: TaskId | null = null;
 	let bestDepth = -1;
 	for (const t of Object.values(doc.tasksById)) {
 		if (t.kind !== "container") continue;
 		if (collapsed.has(t.id)) continue;
-		const bounds = containerBoundsFromDescendants(doc, t.id);
+		if (excludeIds?.has(t.id)) continue;
+		const bounds = containerBoundsFromDescendants(doc, t.id, excludeIds);
 		if (!bounds || !pointInBounds(point, bounds)) continue;
 		const depth = ancestorDepth(doc, t.id);
 		if (depth > bestDepth) {

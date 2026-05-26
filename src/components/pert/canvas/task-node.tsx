@@ -23,6 +23,9 @@ export type TaskNodeData = {
 	// so users see "this task is critical 80% of trials" without opening the
 	// inspector.
 	criticality?: number;
+	// True for ~2.4s right after the task is added to the doc. Drives a
+	// brief CSS pulse so the user notices the new node.
+	justCreated?: boolean;
 };
 
 // Custom React Flow node rendering a single task. Slack and critical state
@@ -41,6 +44,7 @@ function TaskNodeImpl(props: NodeProps) {
 			data-critical={data.critical}
 			data-status={data.status}
 			data-cycle={data.cycle ? "true" : undefined}
+			data-just-created={data.justCreated || undefined}
 			className={cn(
 				"group relative min-h-[80px] w-[200px] rounded-lg border bg-card px-3 py-2 text-card-foreground shadow-sm transition-colors",
 				data.cycle
@@ -53,6 +57,7 @@ function TaskNodeImpl(props: NodeProps) {
 								? "border-amber-500/60"
 								: "border-border",
 				props.selected && "ring-2 ring-primary",
+				data.justCreated && "pert-just-created",
 			)}
 		>
 			<Handle

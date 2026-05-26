@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect, useState } from "react";
 import { expect, within } from "storybook/test";
 import { clearProjectCollapse, setCollapsed } from "#/lib/pert/collapse";
+import { ensureContainerInterfaces } from "#/lib/pert/interfaces";
 import {
 	createEmptyPertDoc,
 	type Estimate,
@@ -189,6 +190,7 @@ function containerDoc(): PertDoc {
 		to: { taskId: "ship" },
 		type: "finish_to_start",
 	};
+	ensureContainerInterfaces(d, "box");
 	return d;
 }
 
@@ -294,6 +296,80 @@ export const ContainerCollapsed: Story = {
 		).toBeInTheDocument();
 		// Descendants hidden, rollup card visible instead.
 		await expect(canvas.queryByTestId("task-node-box-api")).toBeNull();
+	},
+};
+
+function multiInterfaceContainerDoc(): PertDoc {
+	const d = containerDoc();
+	// Replace the default Entry/Exit pair with named fan-in/fan-out ports so
+	// the port rail visibly stretches the card and labels show in the canvas.
+	d.interfacesByContainerId.box = {
+		if_design: {
+			id: "if_design",
+			containerId: "box",
+			kind: "entry",
+			label: "Design",
+			taskRef: "box-api",
+		},
+		if_data: {
+			id: "if_data",
+			containerId: "box",
+			kind: "entry",
+			label: "Data",
+			taskRef: "box-db",
+		},
+		if_api: {
+			id: "if_api",
+			containerId: "box",
+			kind: "exit",
+			label: "API ready",
+			taskRef: "box-api",
+		},
+		if_runtime: {
+			id: "if_runtime",
+			containerId: "box",
+			kind: "exit",
+			label: "Runtime ready",
+		},
+	};
+	return d;
+}
+
+export const ContainerCollapsedMultiInterface: Story = {
+	args: {
+		seed: multiInterfaceContainerDoc(),
+		projectId: "story-canvas-container-multi-interface",
+		collapseOnMount: ["box"],
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const card = await canvas.findByTestId("container-collapsed-box");
+		await expect(card).toBeInTheDocument();
+		await expect(within(card).getByText("Design")).toBeInTheDocument();
+		await expect(within(card).getByText("API ready")).toBeInTheDocument();
+	},
+};
+
+function legacyContainerDoc(): PertDoc {
+	const d = containerDoc();
+	// Simulate a pre-rework doc that never went through `ensureContainerInterfaces`.
+	// The collapsed-card should still render with a single default handle per
+	// side instead of failing to attach the rerouted edges.
+	delete d.interfacesByContainerId.box;
+	return d;
+}
+
+export const ContainerCollapsedLegacy: Story = {
+	args: {
+		seed: legacyContainerDoc(),
+		projectId: "story-canvas-container-legacy",
+		collapseOnMount: ["box"],
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(
+			canvas.getByTestId("container-collapsed-box"),
+		).toBeInTheDocument();
 	},
 };
 

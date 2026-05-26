@@ -1,10 +1,19 @@
 import { todayIsoDate } from "#/lib/pert/calendar";
+import {
+	createDefaultInterface,
+	ensureContainerInterfaces,
+	newInterfaceId,
+	removeContainerInterfaces,
+} from "#/lib/pert/interfaces";
 import { canReparent } from "#/lib/pert/reparent";
 import type {
+	ContainerInterface,
 	Dependency,
 	DependencyType,
 	Estimate,
 	EstimateUnit,
+	InterfaceId,
+	InterfaceKind,
 	PertDoc,
 	Task,
 	TaskId,
@@ -58,6 +67,7 @@ export function addTaskMutation(
 		base.estimate = args.estimate;
 	}
 	d.tasksById[id] = base;
+	if (kind === "container") ensureContainerInterfaces(d, id);
 	return { id };
 }
 
@@ -111,12 +121,27 @@ export function addDependencyMutation(
 	args: AddDependencyArgs,
 	id = newId("dep"),
 ): { id: string } | { ok: false; error: string } {
-	if (!d.tasksById[args.fromTaskId])
+	const fromTask = d.tasksById[args.fromTaskId];
+	const toTask = d.tasksById[args.toTaskId];
+	if (!fromTask)
 		return { ok: false, error: `task ${args.fromTaskId} not found` };
-	if (!d.tasksById[args.toTaskId])
-		return { ok: false, error: `task ${args.toTaskId} not found` };
+	if (!toTask) return { ok: false, error: `task ${args.toTaskId} not found` };
 	if (args.fromTaskId === args.toTaskId)
 		return { ok: false, error: "self-dependency is not allowed" };
+	// Dependencies must reference leaf tasks/milestones, not containers.
+	// Container-to-container edges are inferred by the projection from
+	// leaf-to-leaf edges, so storing a direct container endpoint would
+	// duplicate intent and confuse the projection's rerouting logic.
+	if (fromTask.kind === "container")
+		return {
+			ok: false,
+			error: `cannot depend from container ${args.fromTaskId} — pick a specific leaf inside it`,
+		};
+	if (toTask.kind === "container")
+		return {
+			ok: false,
+			error: `cannot depend on container ${args.toTaskId} — pick a specific leaf inside it`,
+		};
 	for (const dep of Object.values(d.dependenciesById)) {
 		if (
 			dep.from.taskId === args.fromTaskId &&
@@ -153,8 +178,9 @@ export function removeTaskMutation(
 	d: PertDoc,
 	args: RemoveTaskArgs,
 ): { ok: true } | { ok: false; error: string } {
-	if (!d.tasksById[args.taskId])
-		return { ok: false, error: `task ${args.taskId} not found` };
+	const task = d.tasksById[args.taskId];
+	if (!task) return { ok: false, error: `task ${args.taskId} not found` };
+	const wasContainer = task.kind === "container";
 	delete d.tasksById[args.taskId];
 	for (const [depId, dep] of Object.entries(d.dependenciesById)) {
 		if (dep.from.taskId === args.taskId || dep.to.taskId === args.taskId) {
@@ -164,6 +190,7 @@ export function removeTaskMutation(
 	for (const t of Object.values(d.tasksById)) {
 		if (t.parentId === args.taskId) t.parentId = null;
 	}
+	if (wasContainer) removeContainerInterfaces(d, args.taskId);
 	return { ok: true };
 }
 
@@ -181,6 +208,7 @@ export function setKindMutation(
 ): { ok: true } | { ok: false; error: string } {
 	const task = d.tasksById[args.taskId];
 	if (!task) return { ok: false, error: `task ${args.taskId} not found` };
+	const previousKind = task.kind;
 	task.kind = args.kind;
 	if (args.kind === "milestone") delete task.estimate;
 	if (args.kind === "task" && !task.estimate) {
@@ -190,6 +218,11 @@ export function setKindMutation(
 			pessimistic: 4,
 			unit: "day",
 		};
+	}
+	if (args.kind === "container" && previousKind !== "container") {
+		ensureContainerInterfaces(d, args.taskId);
+	} else if (args.kind !== "container" && previousKind === "container") {
+		removeContainerInterfaces(d, args.taskId);
 	}
 	return { ok: true };
 }
@@ -345,6 +378,128 @@ export function setActualDatesMutation(
 	return { ok: true };
 }
 
+export type AddInterfaceArgs = {
+	containerId: TaskId;
+	kind: InterfaceKind;
+	label?: string;
+	taskRef?: TaskId | null;
+};
+
+export function addInterfaceMutation(
+	d: PertDoc,
+	args: AddInterfaceArgs,
+	id: InterfaceId = newInterfaceId(),
+): { id: InterfaceId } | { ok: false; error: string } {
+	const container = d.tasksById[args.containerId];
+	if (!container)
+		return { ok: false, error: `task ${args.containerId} not found` };
+	if (container.kind !== "container")
+		return {
+			ok: false,
+			error: `task ${args.containerId} is not a container`,
+		};
+	if (args.taskRef && !d.tasksById[args.taskRef])
+		return { ok: false, error: `task ${args.taskRef} not found` };
+	if (!d.interfacesByContainerId[args.containerId]) {
+		d.interfacesByContainerId[args.containerId] = {};
+	}
+	const iface: ContainerInterface = {
+		...createDefaultInterface(args.containerId, args.kind, id),
+	};
+	if (args.label) iface.label = args.label;
+	if (args.taskRef) iface.taskRef = args.taskRef;
+	d.interfacesByContainerId[args.containerId][id] = iface;
+	return { id };
+}
+
+export type RemoveInterfaceArgs = {
+	containerId: TaskId;
+	interfaceId: InterfaceId;
+};
+
+export function removeInterfaceMutation(
+	d: PertDoc,
+	args: RemoveInterfaceArgs,
+): { ok: true } | { ok: false; error: string } {
+	const bucket = d.interfacesByContainerId[args.containerId];
+	if (!bucket?.[args.interfaceId])
+		return {
+			ok: false,
+			error: `interface ${args.interfaceId} not found on ${args.containerId}`,
+		};
+	delete bucket[args.interfaceId];
+	return { ok: true };
+}
+
+export type SetInterfaceArgs = {
+	containerId: TaskId;
+	interfaceId: InterfaceId;
+	label?: string;
+	taskRef?: TaskId | null;
+};
+
+export function setInterfaceMutation(
+	d: PertDoc,
+	args: SetInterfaceArgs,
+): { ok: true } | { ok: false; error: string } {
+	const iface = d.interfacesByContainerId[args.containerId]?.[args.interfaceId];
+	if (!iface)
+		return {
+			ok: false,
+			error: `interface ${args.interfaceId} not found on ${args.containerId}`,
+		};
+	if (args.label !== undefined) iface.label = args.label;
+	if (args.taskRef !== undefined) {
+		if (args.taskRef === null) {
+			delete iface.taskRef;
+		} else {
+			if (!d.tasksById[args.taskRef])
+				return { ok: false, error: `task ${args.taskRef} not found` };
+			iface.taskRef = args.taskRef;
+		}
+	}
+	return { ok: true };
+}
+
+export type PinDependencyArgs = {
+	dependencyId: string;
+	side: "from" | "to";
+	interfaceId: InterfaceId | null;
+};
+
+// Sets or clears the `interfaceId` hint on one side of an existing dependency.
+// The dep's canonical `taskId` endpoint is unchanged — the interfaceId is the
+// hint the projection uses to decide which port handle a collapsed edge
+// attaches to. Passing null clears the hint.
+export function pinDependencyMutation(
+	d: PertDoc,
+	args: PinDependencyArgs,
+): { ok: true } | { ok: false; error: string } {
+	const dep = d.dependenciesById[args.dependencyId];
+	if (!dep)
+		return { ok: false, error: `dependency ${args.dependencyId} not found` };
+	const endpoint = args.side === "from" ? dep.from : dep.to;
+	if (args.interfaceId === null) {
+		delete endpoint.interfaceId;
+		return { ok: true };
+	}
+	// Verify the interface exists somewhere in the doc before pinning.
+	let found = false;
+	for (const bucket of Object.values(d.interfacesByContainerId)) {
+		if (bucket[args.interfaceId]) {
+			found = true;
+			break;
+		}
+	}
+	if (!found)
+		return {
+			ok: false,
+			error: `interface ${args.interfaceId} not found`,
+		};
+	endpoint.interfaceId = args.interfaceId;
+	return { ok: true };
+}
+
 export type SetDependencyArgs = {
 	dependencyId: string;
 	type?: DependencyType;
@@ -390,10 +545,31 @@ export type ProjectSummary = {
 		toTaskId: TaskId | null;
 		type: DependencyType;
 		lagDays?: number;
+		fromInterfaceId?: InterfaceId;
+		toInterfaceId?: InterfaceId;
+	}>;
+	interfaces: Array<{
+		id: InterfaceId;
+		containerId: TaskId;
+		kind: InterfaceKind;
+		label: string;
+		taskRef?: TaskId;
 	}>;
 };
 
 export function summarizeProject(doc: PertDoc): ProjectSummary {
+	const interfaces: ProjectSummary["interfaces"] = [];
+	for (const bucket of Object.values(doc.interfacesByContainerId)) {
+		for (const iface of Object.values(bucket)) {
+			interfaces.push({
+				id: iface.id,
+				containerId: iface.containerId,
+				kind: iface.kind,
+				label: iface.label,
+				taskRef: iface.taskRef,
+			});
+		}
+	}
 	return {
 		title: doc.title,
 		tasks: Object.values(doc.tasksById).map((t) => ({
@@ -422,6 +598,9 @@ export function summarizeProject(doc: PertDoc): ProjectSummary {
 			toTaskId: d.to.taskId ?? null,
 			type: d.type,
 			lagDays: d.lagDays,
+			fromInterfaceId: d.from.interfaceId,
+			toInterfaceId: d.to.interfaceId,
 		})),
+		interfaces,
 	};
 }

@@ -280,23 +280,94 @@ type ElkOutputNode = {
 // Synchronous fallback used when ELK hasn't resolved yet (first paint). Lays
 // nodes out in a coarse grid based on insertion order so the canvas never
 // flashes with overlapping nodes at (0,0).
+//
+// Groups children by their parent container so siblings stay clustered. Each
+// container gets its own region in the root grid; its descendants fill that
+// region as a sub-grid. The expanded-container bounds calc downstream then
+// sizes the container around the cluster instead of growing to wrap scattered
+// leaves.
 export function fallbackGridLayout(doc: PertDoc): LayoutResult {
-	const cols = 4;
+	const positions: LayoutResult = {};
+	const tasksByParent = new Map<TaskId | null, Task[]>();
+	for (const t of Object.values(doc.tasksById)) {
+		const key = t.parentId ?? null;
+		const bucket = tasksByParent.get(key);
+		if (bucket) bucket.push(t);
+		else tasksByParent.set(key, [t]);
+	}
+
 	const colStep = NODE_WIDTH + 80;
 	const rowStep = NODE_HEIGHT + 40;
-	const positions: LayoutResult = {};
-	let i = 0;
-	for (const t of Object.values(doc.tasksById)) {
-		if (t.kind === "container") continue;
-		if (t.layout?.position) {
-			positions[t.id] = t.layout.position;
-		} else {
+	const REGION_GAP = 60;
+
+	type Region = { width: number; height: number };
+
+	// Lay a single parent's leaf children out as a compact grid, returning
+	// the region size. Containers are skipped here — they get their own
+	// region; we just leave a sized hole for them by treating them as units.
+	function placeLeaves(
+		parentId: TaskId | null,
+		originX: number,
+		originY: number,
+	): Region {
+		const leaves = (tasksByParent.get(parentId) ?? []).filter(
+			(t) => t.kind !== "container",
+		);
+		if (leaves.length === 0) return { width: 0, height: 0 };
+		const cols = Math.max(1, Math.ceil(Math.sqrt(leaves.length)));
+		leaves.forEach((t, i) => {
+			if (t.layout?.position) {
+				positions[t.id] = t.layout.position;
+				return;
+			}
 			positions[t.id] = {
-				x: (i % cols) * colStep,
-				y: Math.floor(i / cols) * rowStep,
+				x: originX + (i % cols) * colStep,
+				y: originY + Math.floor(i / cols) * rowStep,
 			};
+		});
+		const rows = Math.ceil(leaves.length / cols);
+		return {
+			width: cols * colStep,
+			height: rows * rowStep,
+		};
+	}
+
+	// Place every container as its own region under the root grid. Sub-
+	// containers within a container nest recursively. Returns the region
+	// the container occupies (so callers can grid containers themselves).
+	function placeContainerRegion(
+		container: Task,
+		originX: number,
+		originY: number,
+	): Region {
+		const innerOriginX = originX + NODE_WIDTH / 2;
+		const innerOriginY = originY + rowStep / 2;
+		const leafRegion = placeLeaves(container.id, innerOriginX, innerOriginY);
+		let cursorY = innerOriginY + leafRegion.height + REGION_GAP;
+		let maxWidth = leafRegion.width;
+		const childContainers = (tasksByParent.get(container.id) ?? []).filter(
+			(t) => t.kind === "container",
+		);
+		for (const child of childContainers) {
+			const childRegion = placeContainerRegion(child, innerOriginX, cursorY);
+			cursorY += childRegion.height + REGION_GAP;
+			if (childRegion.width > maxWidth) maxWidth = childRegion.width;
 		}
-		i += 1;
+		return {
+			width: maxWidth + NODE_WIDTH,
+			height: cursorY - originY + REGION_GAP,
+		};
+	}
+
+	// Root layout: place root leaves first in the upper-left, then stack
+	// each top-level container as its own region to the right of them.
+	const rootLeafRegion = placeLeaves(null, 0, 0);
+	let cursorX = rootLeafRegion.width + REGION_GAP;
+	for (const container of (tasksByParent.get(null) ?? []).filter(
+		(t) => t.kind === "container",
+	)) {
+		const region = placeContainerRegion(container, cursorX, 0);
+		cursorX += region.width + REGION_GAP;
 	}
 	return positions;
 }

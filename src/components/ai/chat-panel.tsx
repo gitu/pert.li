@@ -19,13 +19,17 @@ import { ScrollArea } from "#/components/ui/scroll-area";
 import { Textarea } from "#/components/ui/textarea";
 import {
 	addDependencyMutation,
+	addInterfaceMutation,
 	addTaskMutation,
 	moveTaskMutation,
+	pinDependencyMutation,
 	removeDependencyMutation,
+	removeInterfaceMutation,
 	removeTaskMutation,
 	setActualDatesMutation,
 	setDependencyMutation,
 	setEstimateMutation,
+	setInterfaceMutation,
 	setKeyMutation,
 	setKindMutation,
 	setNotesMutation,
@@ -36,15 +40,19 @@ import {
 } from "#/lib/ai/tool-mutators";
 import {
 	addDependencyTool,
+	addInterfaceTool,
 	addTaskTool,
 	askChoiceTool,
 	moveTaskTool,
+	pinDependencyTool,
 	readProjectTool,
 	removeDependencyTool,
+	removeInterfaceTool,
 	removeTaskTool,
 	setActualDatesTool,
 	setDependencyTool,
 	setEstimateTool,
+	setInterfaceTool,
 	setKeyTool,
 	setKindTool,
 	setNotesTool,
@@ -249,6 +257,42 @@ export function ChatPanel({
 					let result: ReturnType<typeof setDependencyMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = setDependencyMutation(d, args);
+					});
+					return result;
+				}),
+				addInterfaceTool.client((args) => {
+					const active = getActiveDoc();
+					if (!active) return noActiveProject;
+					let result: ReturnType<typeof addInterfaceMutation> = { id: "" };
+					active.changeDoc((d) => {
+						result = addInterfaceMutation(d, args);
+					});
+					return result;
+				}),
+				removeInterfaceTool.client((args) => {
+					const active = getActiveDoc();
+					if (!active) return noActiveProject;
+					let result: ReturnType<typeof removeInterfaceMutation> = { ok: true };
+					active.changeDoc((d) => {
+						result = removeInterfaceMutation(d, args);
+					});
+					return result;
+				}),
+				setInterfaceTool.client((args) => {
+					const active = getActiveDoc();
+					if (!active) return noActiveProject;
+					let result: ReturnType<typeof setInterfaceMutation> = { ok: true };
+					active.changeDoc((d) => {
+						result = setInterfaceMutation(d, args);
+					});
+					return result;
+				}),
+				pinDependencyTool.client((args) => {
+					const active = getActiveDoc();
+					if (!active) return noActiveProject;
+					let result: ReturnType<typeof pinDependencyMutation> = { ok: true };
+					active.changeDoc((d) => {
+						result = pinDependencyMutation(d, args);
 					});
 					return result;
 				}),

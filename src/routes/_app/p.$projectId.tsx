@@ -324,7 +324,7 @@ function PertProjectPanel({
 	// route through when the container collapses. Idempotent — re-runs only
 	// touch containers that are still missing a default.
 	const containersMissingInterfaces =
-		doc && doc.tasksById && doc.interfacesByContainerId
+		doc?.tasksById && doc.interfacesByContainerId
 			? Object.values(doc.tasksById).filter((t) => {
 					if (t.kind !== "container") return false;
 					const bucket = doc.interfacesByContainerId[t.id];

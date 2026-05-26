@@ -1,4 +1,4 @@
-import { Handle, type NodeProps, Position } from "@xyflow/react";
+import { Handle, type NodeProps, NodeResizer, Position } from "@xyflow/react";
 import {
 	ChevronDownIcon,
 	ChevronRightIcon,
@@ -10,17 +10,55 @@ import type { ContainerRollup } from "#/lib/pert/projection";
 import { cn } from "#/lib/utils";
 
 // Two related node renderings for a container task:
-//  - "container-collapsed" — single card showing aggregate stats.
+//  - "container-collapsed" — single card with a port rail down each side
+//    (entries on the left, exits on the right). Cross-boundary edges attach
+//    to specific ports by id so the user can see *which* interface a
+//    collapsed edge is using.
 //  - "container-expanded" — translucent labelled panel that sits behind its
 //    descendants on the canvas so they read as a group. Descendants are
 //    still ordinary React Flow nodes; the panel is just a visual wrapper.
+
+export type ContainerPort = { id: string; label: string };
 
 export type ContainerNodeData = {
 	title: string;
 	rollup: ContainerRollup | null;
 	collapsed: boolean;
 	onToggle: () => void;
+	// Sorted by interface id so the rendered order is stable across renders.
+	// Empty array means the container has no interfaces of that side yet —
+	// the node still renders one unlabeled handle so edges can attach.
+	entries: ContainerPort[];
+	exits: ContainerPort[];
+	// True while the user is dragging a leaf over this container. Renders
+	// a drop-target ring + glow.
+	dropTarget?: boolean;
+	// True for ~2.4s right after the task is added to the doc. Drives a
+	// brief CSS pulse so the user notices the new node.
+	justCreated?: boolean;
+	// Fires when the user finishes a resize drag. The canvas persists the
+	// stored size to Task.layout.width/height; subsequent renders honour it
+	// as a minimum (descendants can still grow the box larger).
+	onResizeEnd?: (size: { width: number; height: number }) => void;
+	// Minimum size the resizer should enforce. Defaults are computed by the
+	// canvas based on the auto-fit bounds + port rail.
+	minWidth?: number;
+	minHeight?: number;
 };
+
+const PORT_GAP = 26;
+const PORT_HEADER_OFFSET = 40;
+export const COLLAPSED_CARD_WIDTH = 300;
+
+// Height needed to fit the larger port rail of the two sides. Used by the
+// canvas builder so React Flow allocates enough space, and again here for the
+// inline style on the card container.
+export function containerCollapsedHeight(data: ContainerNodeData): number {
+	const sides = Math.max(data.entries.length || 1, data.exits.length || 1);
+	const base = 96; // header + meta + progress
+	const extra = Math.max(0, sides - 1) * PORT_GAP;
+	return base + extra;
+}
 
 function CollapsedImpl(props: NodeProps) {
 	const data = props.data as unknown as ContainerNodeData;
@@ -33,12 +71,15 @@ function CollapsedImpl(props: NodeProps) {
 		(rollup?.inProgressCount ?? 0) > 0 ||
 		((rollup?.completedCount ?? 0) > 0 && !allDone);
 	const progress = Math.round(rollup?.progress ?? 0);
+	const minHeight = containerCollapsedHeight(data);
 	return (
 		<div
 			data-testid={`container-collapsed-${props.id}`}
 			data-critical={critical}
+			style={{ minHeight, width: "100%" }}
+			data-just-created={data.justCreated || undefined}
 			className={cn(
-				"min-h-[80px] w-[220px] rounded-lg border bg-card px-3 py-2 text-card-foreground shadow-sm",
+				"relative rounded-lg border bg-card px-3 py-2 text-card-foreground shadow-sm transition-shadow",
 				allDone
 					? "border-sky-500/60 bg-sky-500/[0.04]"
 					: critical
@@ -47,13 +88,23 @@ function CollapsedImpl(props: NodeProps) {
 							? "border-amber-500/60"
 							: "border-border",
 				props.selected && "ring-2 ring-primary",
+				data.dropTarget &&
+					"ring-2 ring-primary shadow-[0_0_0_3px_var(--primary)/30] !border-primary",
+				data.justCreated && "pert-just-created",
 			)}
 		>
-			<Handle
-				type="target"
-				position={Position.Left}
-				className="!h-3 !w-3 !rounded-full !border-2 !border-background !bg-muted-foreground"
+			<NodeResizer
+				minWidth={data.minWidth ?? COLLAPSED_CARD_WIDTH}
+				minHeight={data.minHeight ?? minHeight}
+				isVisible={props.selected}
+				onResizeEnd={(_, p) =>
+					data.onResizeEnd?.({ width: p.width, height: p.height })
+				}
+				lineClassName="!border-primary/30"
+				handleClassName="!bg-primary !border-background"
 			/>
+			<InterfaceRail ports={data.entries} side="left" />
+			<InterfaceRail ports={data.exits} side="right" />
 			<div className="flex items-start gap-2">
 				<button
 					type="button"
@@ -119,12 +170,39 @@ function CollapsedImpl(props: NodeProps) {
 					/>
 				</div>
 			)}
-			<Handle
-				type="source"
-				position={Position.Right}
-				className="!h-3 !w-3 !rounded-full !border-2 !border-background !bg-muted-foreground"
-			/>
 		</div>
+	);
+}
+
+// Render one column of handles, evenly spaced down the side of the card. Each
+// handle gets its `interfaceId` as the React Flow handle id so collapsed edges
+// can attach to the correct port. When the container has no interfaces on this
+// side yet (legacy data the backfill missed), still render a single unlabeled
+// handle so edges have something to attach to.
+function InterfaceRail({
+	ports,
+	side,
+}: {
+	ports: ContainerPort[];
+	side: "left" | "right";
+}) {
+	const handleType = side === "left" ? "target" : "source";
+	const position = side === "left" ? Position.Left : Position.Right;
+	const list = ports.length > 0 ? ports : [{ id: "__default__", label: "" }];
+	return (
+		<>
+			{list.map((port, i) => (
+				<Handle
+					key={port.id}
+					id={port.id === "__default__" ? undefined : port.id}
+					type={handleType}
+					position={position}
+					style={{ top: PORT_HEADER_OFFSET + i * PORT_GAP }}
+					className="!h-2.5 !w-2.5 !rounded-full !border-2 !border-background !bg-muted-foreground"
+					title={port.label || undefined}
+				/>
+			))}
+		</>
 	);
 }
 
@@ -132,22 +210,35 @@ function ExpandedImpl(props: NodeProps) {
 	const data = props.data as unknown as ContainerNodeData;
 	const width = props.width ?? 320;
 	const height = props.height ?? 200;
-	// Body uses pointer-events: none so leaves rendered underneath inside the
-	// container's bounds still receive their own clicks; only the header strip
-	// re-enables pointer events so its collapse button stays interactive even
-	// when a leaf happens to overlap the container.
+	// Children now sit at a higher zIndex (canvas buildNodes), so the
+	// container body can take pointer events normally for selection + resize.
+	// The header strip is the drag handle.
 	return (
 		<div
 			data-testid={`container-expanded-${props.id}`}
+			data-just-created={data.justCreated || undefined}
 			className={cn(
-				"pointer-events-none rounded-lg border border-dashed bg-muted/20",
+				"rounded-lg border border-dashed bg-muted/20 transition-colors",
 				props.selected && "ring-2 ring-primary",
+				data.dropTarget &&
+					"ring-2 ring-primary !border-primary !border-solid bg-primary/[0.06]",
+				data.justCreated && "pert-just-created",
 			)}
-			style={{ width, height }}
+			style={{ width: "100%", height: "100%" }}
 		>
+			<NodeResizer
+				minWidth={data.minWidth ?? width}
+				minHeight={data.minHeight ?? height}
+				isVisible={props.selected}
+				onResizeEnd={(_, p) =>
+					data.onResizeEnd?.({ width: p.width, height: p.height })
+				}
+				lineClassName="!border-primary/30"
+				handleClassName="!bg-primary !border-background"
+			/>
 			<div
 				data-drag-handle="container-header"
-				className="pointer-events-auto flex cursor-move items-center gap-1.5 border-b border-dashed bg-card/80 px-2 py-1 text-xs font-medium backdrop-blur-sm"
+				className="flex cursor-move items-center gap-1.5 border-b border-dashed bg-card/80 px-2 py-1 text-xs font-medium backdrop-blur-sm"
 			>
 				<button
 					type="button"

@@ -22,11 +22,26 @@ export type Estimate = {
 	unit: EstimateUnit;
 };
 
+// A "container" is a task that owns three orthogonal concerns:
+//   1. HIERARCHY — it can have children (other tasks point to it via parentId).
+//   2. BOUNDARY  — it exposes named interface ports (see ContainerInterface),
+//                  which cross-boundary edges may route through when the
+//                  container is collapsed.
+//   3. COLLAPSE  — its visual projection can be folded into a single card.
+// The model keeps all three under one `kind` because they almost always
+// travel together; the inspector surfaces each concern as a separate section.
 export type TaskKind = "task" | "milestone" | "container";
 
 export type Layout = {
 	position?: { x: number; y: number };
 	collapsed?: boolean;
+	// Manual size override. When unset, container nodes auto-fit to their
+	// descendants' bounding box (expanded) or to the port rail height
+	// (collapsed). When set, the stored value becomes the minimum the
+	// container is rendered at — descendants can still grow it if they
+	// overflow.
+	width?: number;
+	height?: number;
 };
 
 // "not_started" is the default for any task without an explicit status. We do
@@ -71,6 +86,12 @@ export type Task = {
 
 export type DependencyPort = "start" | "finish";
 
+// A dependency endpoint always identifies a canonical descendant task by
+// `taskId`. `interfaceId` is an *optional hint* used by the projection layer
+// when the endpoint sits inside a collapsed container — it pins the edge to
+// the named interface handle on the container card instead of routing to the
+// container as a whole. Hint-only means the graph stays sound if an interface
+// is renamed or removed: the canonical `taskId` is still the truth.
 export type DependencyEndpoint = {
 	taskId?: TaskId;
 	interfaceId?: InterfaceId;
@@ -94,13 +115,20 @@ export type Dependency = {
 
 export type InterfaceKind = "entry" | "exit";
 
+// A named port on a container's boundary. `taskRef` optionally pins the
+// interface to a specific descendant — when set, the projection can use the
+// (interface, taskRef) pairing to disambiguate which descendant a collapsed
+// edge represents. When `taskRef` is unset, the interface is a generic port
+// the user has authored but not bound yet.
+//
+// Every container gets a default Entry and a default Exit at creation; these
+// have no `taskRef` and serve as the fall-through routing target for
+// cross-boundary edges that don't pin an interface explicitly.
 export type ContainerInterface = {
 	id: InterfaceId;
 	containerId: TaskId;
 	kind: InterfaceKind;
 	label: string;
-	// The descendant task this interface routes to/from. May be unset while
-	// the user is still wiring things up.
 	taskRef?: TaskId;
 };
 

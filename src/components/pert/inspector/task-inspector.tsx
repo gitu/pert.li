@@ -7,6 +7,7 @@ import {
 	RotateCcwIcon,
 	Trash2Icon,
 } from "lucide-react";
+import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConflictPill } from "#/components/pert/inspector/conflict-pill";
 import { Button } from "#/components/ui/button";
@@ -32,7 +33,7 @@ import { removeTaskMutation } from "#/lib/ai/tool-mutators";
 import { todayIsoDate } from "#/lib/pert/calendar";
 import { getDescendants } from "#/lib/pert/hierarchy";
 import type { MonteCarloResult } from "#/lib/pert/montecarlo";
-import { rollupContainer } from "#/lib/pert/projection";
+import { rollupContainer, rollupContainerPaths } from "#/lib/pert/projection";
 import { readTaskConflicts } from "#/lib/pert/read-conflicts";
 import { computeSchedule, type TaskSchedule } from "#/lib/pert/schedule";
 import { projectDocStore, selectionStore } from "#/lib/pert/store";
@@ -965,6 +966,10 @@ function ContainerForm({
 		}
 		return count > 0 ? { p50, p90, maxCriticality: maxCrit } : null;
 	}, [mcResult, descendantIds]);
+	const pathRollups = useMemo(
+		() => rollupContainerPaths(doc, schedule, mcResult, task.id),
+		[doc, schedule, mcResult, task.id],
+	);
 	const leafDescendants = useMemo(
 		() =>
 			descendantIds
@@ -1028,7 +1033,11 @@ function ContainerForm({
 				<ContainerSummary rollup={rollup} />
 
 				<div className="mt-4 grid grid-cols-1 gap-4 @4xl:grid-cols-2 @4xl:gap-6">
-					<div className="space-y-4">
+					<div className="space-y-5">
+						<SectionHeading
+							label="Hierarchy"
+							hint="What this container holds and how to identify it."
+						/>
 						<div className="space-y-1.5">
 							<Label htmlFor="ci-title">Title</Label>
 							<Input
@@ -1080,39 +1089,39 @@ function ContainerForm({
 								rows={3}
 							/>
 						</div>
-						<div>
-							<div className="mb-2 flex items-center justify-between">
-								<h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-									Interfaces
-								</h3>
-								<div className="flex items-center gap-1">
-									<Button
-										type="button"
-										size="sm"
-										variant="outline"
-										className="h-7 gap-1 text-xs"
-										onClick={() => addInterface("entry")}
-										data-testid="container-add-entry"
-									>
-										<PlusIcon className="size-3" /> Entry
-									</Button>
-									<Button
-										type="button"
-										size="sm"
-										variant="outline"
-										className="h-7 gap-1 text-xs"
-										onClick={() => addInterface("exit")}
-										data-testid="container-add-exit"
-									>
-										<PlusIcon className="size-3" /> Exit
-									</Button>
-								</div>
-							</div>
+						<div className="pt-2">
+							<SectionHeading
+								label="Boundary"
+								hint="Named ports on the container card. When the container is collapsed, cross-boundary edges route through whichever port a dependency pins (or the default port for that side)."
+								trailing={
+									<div className="flex items-center gap-1">
+										<Button
+											type="button"
+											size="sm"
+											variant="outline"
+											className="h-7 gap-1 text-xs"
+											onClick={() => addInterface("entry")}
+											data-testid="container-add-entry"
+										>
+											<PlusIcon className="size-3" /> Entry
+										</Button>
+										<Button
+											type="button"
+											size="sm"
+											variant="outline"
+											className="h-7 gap-1 text-xs"
+											onClick={() => addInterface("exit")}
+											data-testid="container-add-exit"
+										>
+											<PlusIcon className="size-3" /> Exit
+										</Button>
+									</div>
+								}
+							/>
 							{interfaceList.length === 0 ? (
 								<p className="text-xs text-muted-foreground">
-									No interfaces yet. Add entry/exit handles to give external
-									edges specific routing targets when this container is
-									collapsed.
+									No interfaces yet. Add entry/exit ports so collapsed edges
+									have a labelled handle to attach to.
 								</p>
 							) : (
 								<ul className="space-y-2">
@@ -1130,7 +1139,11 @@ function ContainerForm({
 						</div>
 					</div>
 
-					<div className="space-y-4">
+					<div className="space-y-5">
+						<SectionHeading
+							label="Schedule"
+							hint="Rolled-up scheduling stats across every descendant. When the container is collapsed, these are the numbers shown on the card."
+						/>
 						<div>
 							<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 								Rollup
@@ -1180,12 +1193,84 @@ function ContainerForm({
 								</dl>
 							</div>
 						)}
+						{pathRollups.length > 0 && (
+							<div data-testid="container-path-rollups">
+								<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+									Per-interface paths
+								</h3>
+								<table className="w-full text-xs">
+									<thead className="text-[10px] uppercase tracking-wide text-muted-foreground">
+										<tr>
+											<th className="py-1 text-left font-medium">
+												Entry → Exit
+											</th>
+											<th className="py-1 text-right font-medium">Expected</th>
+											{pathRollups.some((p) => p.p90 !== undefined) && (
+												<th className="py-1 text-right font-medium">P90</th>
+											)}
+										</tr>
+									</thead>
+									<tbody>
+										{pathRollups.map((p) => (
+											<tr
+												key={`${p.entryId}-${p.exitId}`}
+												className="border-t"
+												data-testid={`path-${p.entryId}-${p.exitId}`}
+											>
+												<td className="py-1">
+													<span className="font-medium">{p.entryLabel}</span>
+													<span className="mx-1 text-muted-foreground">→</span>
+													<span className="font-medium">{p.exitLabel}</span>
+												</td>
+												<td className="py-1 text-right tabular-nums">
+													{fmt(p.expected)}d
+												</td>
+												{p.p90 !== undefined && (
+													<td className="py-1 text-right tabular-nums">
+														{fmt(p.p90)}d
+													</td>
+												)}
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+						)}
 					</div>
 				</div>
 
 				<Separator className="my-6" />
 				<DangerZone onDelete={onDelete} label="Delete container" />
 			</div>
+		</div>
+	);
+}
+
+// Compact heading + tooltip used to label the three conceptual sections of
+// the container inspector (Hierarchy / Boundary / Schedule). The hint comes
+// from a hover tooltip so the headings stay scannable on narrow widths.
+function SectionHeading({
+	label,
+	hint,
+	trailing,
+}: {
+	label: string;
+	hint: string;
+	trailing?: React.ReactNode;
+}) {
+	return (
+		<div className="flex items-center justify-between gap-2 border-b pb-1.5">
+			<Tooltip>
+				<TooltipTrigger asChild>
+					<h3 className="cursor-help text-[11px] font-semibold uppercase tracking-wider text-foreground/80">
+						{label}
+					</h3>
+				</TooltipTrigger>
+				<TooltipContent side="top" className="max-w-xs text-xs">
+					{hint}
+				</TooltipContent>
+			</Tooltip>
+			{trailing}
 		</div>
 	);
 }
