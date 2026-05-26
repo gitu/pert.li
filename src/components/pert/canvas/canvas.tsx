@@ -56,7 +56,7 @@ import {
 } from "./container-node";
 import { CycleBanner } from "./cycle-banner";
 import { TaskNode, type TaskNodeData } from "./task-node";
-import { CanvasToolbar } from "./toolbar";
+import { CanvasAddToolbar, CanvasViewToolbar } from "./toolbar";
 
 export type CanvasProps = {
 	projectId: string;
@@ -627,18 +627,30 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				className="pointer-events-none absolute top-3 left-1/2 z-10 max-w-[calc(100%-1.5rem)] -translate-x-1/2"
 			>
 				<div className="pointer-events-auto">
-					<CanvasToolbar
+					<CanvasAddToolbar
 						onAddTask={() => handleAddTask("task")}
 						onAddMilestone={() => handleAddTask("milestone")}
 						onAddContainer={() => handleAddTask("container")}
-						prefs={prefs}
-						onSetEdgeStyle={handleSetEdgeStyle}
-						onSetSpacing={handleSetSpacing}
-						onRelayout={handleRelayout}
-						onToggleContinuous={handleToggleContinuous}
 					/>
 				</div>
 			</div>
+			{!isMobile && (
+				// Sit just above the React Flow Controls (bottom-left), so the
+				// re-layout / auto-layout / display controls live next to the
+				// pan/zoom navigation utilities. Hidden on mobile to match the
+				// Controls panel which is also hidden on touch.
+				<div className="pointer-events-none absolute bottom-28 left-3 z-10">
+					<div className="pointer-events-auto">
+						<CanvasViewToolbar
+							prefs={prefs}
+							onSetEdgeStyle={handleSetEdgeStyle}
+							onSetSpacing={handleSetSpacing}
+							onRelayout={handleRelayout}
+							onToggleContinuous={handleToggleContinuous}
+						/>
+					</div>
+				</div>
+			)}
 			{cycle && (
 				<div className="pointer-events-none absolute left-1/2 top-14 z-10 -translate-x-1/2">
 					<CycleBanner
