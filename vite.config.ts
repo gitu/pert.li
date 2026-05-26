@@ -33,7 +33,7 @@ process.env.PROJECT_ROOT = process.cwd();
 const useNeonProvisioning = process.env.USE_NEON_PROVISION === "1";
 
 const config = defineConfig({
-	build: { target: ['chrome111', 'edge111', 'firefox114', 'safari16.4'] },
+	build: { target: ["chrome111", "edge111", "firefox114", "safari16.4"] },
 	resolve: { tsconfigPaths: true },
 	optimizeDeps: {
 		// Pulling server-only chains (better-auth, drizzle, jose, kysely) into
@@ -67,11 +67,7 @@ const config = defineConfig({
 			// not by Rolldown on the server side, so we externalize the whole
 			// package here.
 			rollupConfig: {
-				external: [
-					/^@electric-sql\//,
-					/^@automerge\//,
-					/^drizzle-kit(\/|$)/,
-				],
+				external: [/^@electric-sql\//, /^@automerge\//, /^drizzle-kit(\/|$)/],
 			},
 			features: { websocket: true },
 			handlers: [{ route: "/sync", handler: "./src/server/sync.ts" }],
