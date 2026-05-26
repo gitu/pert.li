@@ -137,6 +137,21 @@ jobs:
         run: pnpm approve-builds --all
         continue-on-error: true
 
+      # Without this cache the dev server's first run on a fresh node_modules
+      # has to bundle ~50 @better-auth/* sub-packages through Vite's optimizer
+      # before the SSR entry can load. Restoring the prior bundle drops that
+      # from minutes to seconds. Same scheme as the verify job — keyed on the
+      # inputs that invalidate the bundle, with a soft fallback to any prior
+      # cache so the first PR after a lockfile bump still benefits.
+      - name: Cache Vite deps
+        uses: actions/cache@v4
+        with:
+          path: node_modules/.vite
+          key: ${{ runner.os }}-vite-e2e-${{ hashFiles('pnpm-lock.yaml', 'vite.config.ts', 'playwright.config.ts') }}-${{ hashFiles('src/**') }}
+          restore-keys: |
+            ${{ runner.os }}-vite-e2e-${{ hashFiles('pnpm-lock.yaml', 'vite.config.ts', 'playwright.config.ts') }}-
+            ${{ runner.os }}-vite-e2e-
+
       # Cache the Playwright browser binary keyed on the installed version
       # so we only download Chromium when @playwright/test changes.
       - name: Resolve Playwright version
@@ -158,6 +173,22 @@ jobs:
         if: steps.pw-cache.outputs.cache-hit == 'true'
         run: pnpm exec playwright install-deps chromium
 
+      # Pre-bundle deps before Playwright launches its server. On a true cold
+      # cache the optimizer takes 1–2 minutes for the better-auth surface; if
+      # that work happens *during* the Playwright webServer wait the URL
+      # probes return 503 ("Vite environment 'nitro' is unavailable") until
+      # the entry can load, and the run times out. Doing it up-front means
+      # `node_modules/.vite` is warm before the dev server starts.
+      - name: Pre-bundle Vite deps
+        env:
+          # Match the env Playwright will use for the dev server so the
+          # optimizer scans the same module graph.
+          E2E_PGLITE: "1"
+          VITE_E2E: "1"
+          VITE_E2E_DISABLE_SYNC: "1"
+          VITE_NEON_DISABLE: "1"
+        run: pnpm exec vite optimize --force
+
       - name: Playwright tests
         run: pnpm e2e
 
@@ -176,3 +207,65 @@ jobs:
           name: playwright-traces
           path: test-results
           retention-days: 14
+
+  storybook:
+    name: storybook test-runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # @storybook/test-runner drives stories through Playwright; the
+      # individual play functions don't hit the DB or auth, but importing
+      # stories transitively pulls modules that read these at load time.
+      BETTER_AUTH_SECRET: ci-only-not-secret
+      ANTHROPIC_API_KEY: ci-placeholder
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.3.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Approve build scripts
+        run: pnpm approve-builds --all
+        continue-on-error: true
+
+      # Same Playwright browser caching strategy as the e2e job — the
+      # test-runner uses Playwright under the hood, so we only need
+      # Chromium and key the cache on the installed @playwright/test
+      # version.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
+
+      - name: Install Chromium (+ system deps)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Chromium system deps only
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+
+      # `storybook:ci` boots `storybook dev` on :6006 and runs the test
+      # runner against it; concurrently kills the dev server when the
+      # runner exits (`-k -s first`).
+      - name: Storybook test-runner
+        run: pnpm storybook:ci

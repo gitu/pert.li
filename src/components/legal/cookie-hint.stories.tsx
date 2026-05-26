@@ -1,11 +1,41 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import {
+	createMemoryHistory,
+	createRootRoute,
+	createRoute,
+	createRouter,
+	Outlet,
+	RouterProvider,
+} from "@tanstack/react-router";
 import { useEffect } from "react";
 import { CookieHint } from "./cookie-hint";
+
+// CookieHint renders a <Link to="/privacy">; stories need a router context
+// or useLinkProps crashes on `null.isServer`.
+function withRouter(children: React.ReactNode) {
+	const rootRoute = createRootRoute({ component: () => <Outlet /> });
+	const indexRoute = createRoute({
+		getParentRoute: () => rootRoute,
+		path: "/",
+		component: () => <>{children}</>,
+	});
+	const privacyRoute = createRoute({
+		getParentRoute: () => rootRoute,
+		path: "/privacy",
+		component: () => <>{children}</>,
+	});
+	const router = createRouter({
+		routeTree: rootRoute.addChildren([indexRoute, privacyRoute]),
+		history: createMemoryHistory({ initialEntries: ["/"] }),
+	});
+	return <RouterProvider router={router} />;
+}
 
 const meta: Meta<typeof CookieHint> = {
 	title: "Legal/CookieHint",
 	component: CookieHint,
 	parameters: { layout: "fullscreen" },
+	decorators: [(Story) => withRouter(<Story />)],
 };
 export default meta;
 type Story = StoryObj<typeof CookieHint>;

@@ -22,7 +22,15 @@ export function readTaskConflicts(
 	if (!task) return null;
 	const fields: TaskFieldConflict[] = [];
 	for (const field of PROBED_FIELDS) {
-		const conflicts = Automerge.getConflicts(task, field);
+		let conflicts: ReturnType<typeof Automerge.getConflicts> | undefined;
+		try {
+			conflicts = Automerge.getConflicts(task, field);
+		} catch {
+			// Story/test fixtures pass plain PertDoc objects (not Automerge
+			// proxies); getConflicts throws "must be the document root" on those.
+			// Treat that as "no conflicts to report" rather than propagating.
+			return null;
+		}
 		if (!conflicts) continue;
 		const entries = Object.entries(conflicts);
 		if (entries.length < 2) continue;
