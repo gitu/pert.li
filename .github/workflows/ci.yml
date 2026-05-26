@@ -1,8 +1,10 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
+  # PR-only. Every commit on `main` got here via a merged PR that already
+  # ran this workflow, so re-running on the merge commit just burns Actions
+  # minutes without catching anything new. `docker.yml` still fires on
+  # tags, and `storybook.yml` still deploys Pages on main.
   pull_request:
     branches: [main]
 
