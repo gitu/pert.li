@@ -10,6 +10,8 @@ import {
 	BotIcon,
 	CheckIcon,
 	ChevronsUpDownIcon,
+	CircleDotIcon,
+	EyeIcon,
 	FolderTreeIcon,
 	HistoryIcon,
 	LaptopIcon,
@@ -20,8 +22,8 @@ import {
 	PanelBottomIcon,
 	PanelLeftCloseIcon,
 	PanelLeftIcon,
+	PencilIcon,
 	PlusIcon,
-	SettingsIcon,
 	ShieldIcon,
 	SunIcon,
 	UserCogIcon,
@@ -716,13 +718,15 @@ function LeftNav({ onNewProject }: { onNewProject: () => void }) {
 	);
 }
 
-// Right-rail panel: a single tabbed surface that combines task editing with
-// project history. Defaults to Details so opening a project lands the user on
-// the most-edited tab; switching to History is one click away.
+// Right-rail panel: four sibling tabs across the inspector + history. The
+// inspector's old "All details / Edit · Calc · Progress" split lives here as
+// three top-level tabs: Details (read-only summary), Plan (create + estimate),
+// Track (mark started/finished). Defaults to Plan so opening a project lands
+// on the most-edited surface.
 function RightTabs() {
 	return (
 		<Tabs
-			defaultValue="details"
+			defaultValue="plan"
 			className="flex h-full min-h-0 flex-col gap-0"
 			data-testid="right-tabs"
 		>
@@ -733,8 +737,24 @@ function RightTabs() {
 						className="gap-1.5 text-xs"
 						data-testid="right-tab-details"
 					>
-						<SettingsIcon className="size-3.5" />
+						<EyeIcon className="size-3.5" />
 						Details
+					</TabsTrigger>
+					<TabsTrigger
+						value="plan"
+						className="gap-1.5 text-xs"
+						data-testid="right-tab-plan"
+					>
+						<PencilIcon className="size-3.5" />
+						Plan
+					</TabsTrigger>
+					<TabsTrigger
+						value="track"
+						className="gap-1.5 text-xs"
+						data-testid="right-tab-track"
+					>
+						<CircleDotIcon className="size-3.5" />
+						Track
 					</TabsTrigger>
 					<TabsTrigger
 						value="history"
@@ -752,7 +772,16 @@ function RightTabs() {
 				// doesn't want — the tab strip already has its own bottom border.
 				className="mt-0 min-h-0 flex-1 overflow-hidden"
 			>
-				<TaskInspector />
+				<TaskInspector pane="details" />
+			</TabsContent>
+			<TabsContent value="plan" className="mt-0 min-h-0 flex-1 overflow-hidden">
+				<TaskInspector pane="plan" />
+			</TabsContent>
+			<TabsContent
+				value="track"
+				className="mt-0 min-h-0 flex-1 overflow-hidden"
+			>
+				<TaskInspector pane="track" />
 			</TabsContent>
 			<TabsContent
 				value="history"

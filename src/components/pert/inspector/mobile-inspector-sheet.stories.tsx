@@ -83,5 +83,12 @@ export const OpenForSelectedTask: Story = {
 		await expect(
 			await root.findByRole("heading", { name: "Task details" }),
 		).toBeVisible();
+		// The mobile sheet doesn't add its own tabs — it renders TaskInspector
+		// with no `pane`, which mounts the internal Details/Plan/Track strip.
+		await expect(
+			await root.findByTestId("inspector-tab-details"),
+		).toBeVisible();
+		await expect(await root.findByTestId("inspector-tab-plan")).toBeVisible();
+		await expect(await root.findByTestId("inspector-tab-track")).toBeVisible();
 	},
 };
