@@ -22,6 +22,7 @@ import {
 } from "#/components/ui/select";
 import { Separator } from "#/components/ui/separator";
 import { Slider } from "#/components/ui/slider";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs";
 import { Textarea } from "#/components/ui/textarea";
 import {
 	Tooltip,
@@ -312,200 +313,519 @@ function TaskForm({
 				? (task.progress ?? 0)
 				: 0;
 
+	const editView = (
+		<div className="@container p-4">
+			{conflictPill && <div className="mb-4">{conflictPill}</div>}
+			<TaskSummary task={task} sched={sched} mcTask={mcTask} />
+
+			{task.kind === "task" && (
+				<StatusRow
+					status={status}
+					progress={progressValue}
+					onStatusChange={setStatus}
+					onProgressChange={setProgress}
+					actualStart={task.actualStart}
+					actualFinish={task.actualFinish}
+					onActualStartChange={setActualStart}
+					onActualFinishChange={setActualFinish}
+				/>
+			)}
+
+			{/* Two-column layout above lg (1024px); single column below so the
+			    inspector stays usable inside the narrow bottom panel on small
+			    screens. The right column is purely informational, so it can
+			    safely sit lower in the source order on mobile. */}
+			<div className="mt-4 grid grid-cols-1 gap-4 @4xl:grid-cols-2 @4xl:gap-6">
+				<div className="space-y-4">
+					<div className="space-y-1.5">
+						<Label htmlFor="ti-title">Title</Label>
+						<Input
+							id="ti-title"
+							data-testid="inspector-title"
+							value={task.title}
+							onChange={(e) => setTitle(e.target.value)}
+						/>
+					</div>
+
+					<div className="space-y-1.5">
+						<Label htmlFor="ti-key">
+							Key{" "}
+							<span className="text-muted-foreground/70">
+								— dotted group, e.g. M1.A
+							</span>
+						</Label>
+						<Input
+							id="ti-key"
+							data-testid="inspector-key"
+							value={task.key ?? ""}
+							onChange={(e) => setKey(e.target.value)}
+							placeholder="ungrouped"
+							className="font-mono text-xs"
+						/>
+					</div>
+
+					<div className="space-y-1.5">
+						<Label htmlFor="ti-kind">Kind</Label>
+						<Select
+							value={task.kind}
+							onValueChange={(v) => setKind(v as TaskKind)}
+						>
+							<SelectTrigger id="ti-kind">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="task">Task</SelectItem>
+								<SelectItem value="milestone">Milestone</SelectItem>
+							</SelectContent>
+						</Select>
+					</div>
+
+					{task.kind !== "milestone" && (
+						<div className="space-y-2">
+							<Label className="block text-xs">PERT estimate</Label>
+							<div className="grid grid-cols-3 gap-2">
+								<EstimateField
+									label="Optimistic"
+									id="ti-o"
+									value={task.estimate?.optimistic ?? 0}
+									onChange={(v) => setEstimateField("optimistic", v)}
+								/>
+								<EstimateField
+									label="Most likely"
+									id="ti-m"
+									value={task.estimate?.mostLikely ?? 0}
+									onChange={(v) => setEstimateField("mostLikely", v)}
+								/>
+								<EstimateField
+									label="Pessimistic"
+									id="ti-p"
+									value={task.estimate?.pessimistic ?? 0}
+									onChange={(v) => setEstimateField("pessimistic", v)}
+								/>
+							</div>
+							<div className="space-y-1.5">
+								<Label htmlFor="ti-unit" className="text-xs">
+									Unit
+								</Label>
+								<Select
+									value={task.estimate?.unit ?? "day"}
+									onValueChange={(v) => setEstimateUnit(v as Estimate["unit"])}
+								>
+									<SelectTrigger id="ti-unit">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="hour">Hours</SelectItem>
+										<SelectItem value="day">Days</SelectItem>
+										<SelectItem value="week">Weeks</SelectItem>
+									</SelectContent>
+								</Select>
+							</div>
+						</div>
+					)}
+
+					<div className="space-y-1.5">
+						<Label htmlFor="ti-notes">Notes</Label>
+						<Textarea
+							id="ti-notes"
+							value={task.notes ?? ""}
+							onChange={(e) => setNotes(e.target.value)}
+							rows={4}
+						/>
+					</div>
+				</div>
+
+				<div className="space-y-4">
+					<div>
+						<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+							Computed schedule
+							<span className="ml-1 normal-case text-muted-foreground/70">
+								(days from project start)
+							</span>
+						</h3>
+						{sched ? (
+							<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+								<ScheduleStat
+									label="Duration"
+									tooltip="How long this task takes once it starts. Computed from your PERT estimate as (optimistic + 4·most likely + pessimistic) / 6."
+									value={`${fmt(sched.duration)} d`}
+								/>
+								<ScheduleStat
+									label="Slack"
+									tooltip="Spare time before this task starts delaying the whole project. 0 days means it's on the critical path — any slip moves the finish date."
+									value={`${fmt(sched.slack)} d`}
+									highlight={sched.critical ? "critical" : undefined}
+								/>
+								<ScheduleStat
+									label="Earliest start"
+									tooltip="The earliest day this task can begin, given everything that has to finish first. (CPM: ES)"
+									value={fmt(sched.earliestStart)}
+									subValue={sched.earliestStartDate}
+								/>
+								<ScheduleStat
+									label="Earliest finish"
+									tooltip="Earliest start + duration. The earliest possible day this task could be done. (CPM: EF)"
+									value={fmt(sched.earliestFinish)}
+									subValue={sched.earliestFinishDate}
+								/>
+								<ScheduleStat
+									label="Latest start"
+									tooltip="The latest day this task can begin without delaying the project finish. (CPM: LS)"
+									value={fmt(sched.latestStart)}
+									subValue={sched.latestStartDate}
+								/>
+								<ScheduleStat
+									label="Latest finish"
+									tooltip="The latest day this task can end without delaying the project finish. (CPM: LF)"
+									value={fmt(sched.latestFinish)}
+									subValue={sched.latestFinishDate}
+								/>
+							</dl>
+						) : (
+							<p className="text-xs text-destructive">
+								Cycle in the graph blocks scheduling.
+							</p>
+						)}
+					</div>
+					{mcTask && task.kind === "task" && <MonteCarloCard mc={mcTask} />}
+				</div>
+			</div>
+
+			<Separator className="my-6" />
+			<DependenciesSection
+				task={task}
+				doc={doc}
+				changeDoc={changeDoc}
+				projectId={projectId}
+			/>
+			<Separator className="my-6" />
+			<DangerZone onDelete={onDelete} label="Delete task" />
+		</div>
+	);
+
 	return (
 		<div className="flex h-full flex-col overflow-hidden">
 			<header className="shrink-0 border-b px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 				Task
 			</header>
-			<div className="@container flex-1 overflow-auto p-4">
-				{conflictPill && <div className="mb-4">{conflictPill}</div>}
-				<TaskSummary task={task} sched={sched} mcTask={mcTask} />
-
-				{task.kind === "task" && (
-					<StatusRow
+			<Tabs
+				defaultValue="edit"
+				className="flex min-h-0 flex-1 flex-col gap-0"
+				data-testid="inspector-subtabs"
+			>
+				<div className="shrink-0 border-b bg-card/40 px-2 py-1.5">
+					<TabsList variant="line" className="w-full">
+						<TabsTrigger
+							value="overview"
+							data-testid="inspector-subtab-overview"
+							className="text-xs"
+						>
+							All details
+						</TabsTrigger>
+						<TabsTrigger
+							value="edit"
+							data-testid="inspector-subtab-edit"
+							className="text-xs"
+						>
+							Edit · Calc · Progress
+						</TabsTrigger>
+					</TabsList>
+				</div>
+				<TabsContent
+					value="overview"
+					className="mt-0 min-h-0 flex-1 overflow-auto"
+				>
+					<TaskOverview
+						task={task}
+						sched={sched}
+						mcTask={mcTask}
+						doc={doc}
+						projectId={projectId}
 						status={status}
 						progress={progressValue}
-						onStatusChange={setStatus}
-						onProgressChange={setProgress}
-						actualStart={task.actualStart}
-						actualFinish={task.actualFinish}
-						onActualStartChange={setActualStart}
-						onActualFinishChange={setActualFinish}
+						conflictPill={conflictPill}
 					/>
+				</TabsContent>
+				<TabsContent value="edit" className="mt-0 min-h-0 flex-1 overflow-auto">
+					{editView}
+				</TabsContent>
+			</Tabs>
+		</div>
+	);
+}
+
+// Read-only consolidated view shown in the "All details" sub-tab. Mirrors
+// every editable field on TaskForm as a labelled value, plus the computed
+// schedule and dependency lists, so the user can survey the task in one
+// glance without risking an accidental edit. Lists keep their navigate
+// affordance — that's how the user gets across the graph.
+function TaskOverview({
+	task,
+	sched,
+	mcTask,
+	doc,
+	projectId,
+	status,
+	progress,
+	conflictPill,
+}: {
+	task: Task;
+	sched: TaskSchedule | null;
+	mcTask: MonteCarloResult["tasks"][string] | null;
+	doc: PertDoc;
+	projectId: string;
+	status: TaskStatus;
+	progress: number;
+	conflictPill?: React.ReactNode;
+}) {
+	const parent = task.parentId ? doc.tasksById[task.parentId] : null;
+	const { incoming, outgoing } = useMemo(() => {
+		const inc: Array<{ depId: string; otherId: TaskId }> = [];
+		const out: Array<{ depId: string; otherId: TaskId }> = [];
+		for (const dep of Object.values(doc.dependenciesById)) {
+			if (dep.to.taskId === task.id && dep.from.taskId) {
+				inc.push({ depId: dep.id, otherId: dep.from.taskId });
+			} else if (dep.from.taskId === task.id && dep.to.taskId) {
+				out.push({ depId: dep.id, otherId: dep.to.taskId });
+			}
+		}
+		return { incoming: inc, outgoing: out };
+	}, [doc, task.id]);
+	const navigate = (id: TaskId) => {
+		selectionStore.setState((s) => ({ ...s, projectId, taskId: id }));
+	};
+	return (
+		<div className="@container space-y-5 p-4 text-sm">
+			{conflictPill && <div>{conflictPill}</div>}
+			<TaskSummary task={task} sched={sched} mcTask={mcTask} />
+
+			<OverviewSection label="Description">
+				<dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
+					<OverviewRow label="Title" value={task.title || "Untitled"} />
+					<OverviewRow
+						label="Kind"
+						value={task.kind === "milestone" ? "Milestone" : "Task"}
+					/>
+					{task.key && (
+						<OverviewRow
+							label="Key"
+							value={<span className="font-mono text-xs">{task.key}</span>}
+						/>
+					)}
+					{parent && (
+						<OverviewRow
+							label="Inside"
+							value={
+								<button
+									type="button"
+									className="text-left hover:underline"
+									onClick={() => navigate(parent.id)}
+								>
+									{parent.title || "Untitled container"}
+								</button>
+							}
+						/>
+					)}
+				</dl>
+				{task.notes && (
+					<p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+						{task.notes}
+					</p>
 				)}
+			</OverviewSection>
 
-				{/* Two-column layout above lg (1024px); single column below so the
-				    inspector stays usable inside the narrow bottom panel on small
-				    screens. The right column is purely informational, so it can
-				    safely sit lower in the source order on mobile. */}
-				<div className="mt-4 grid grid-cols-1 gap-4 @4xl:grid-cols-2 @4xl:gap-6">
-					<div className="space-y-4">
-						<div className="space-y-1.5">
-							<Label htmlFor="ti-title">Title</Label>
-							<Input
-								id="ti-title"
-								data-testid="inspector-title"
-								value={task.title}
-								onChange={(e) => setTitle(e.target.value)}
-							/>
-						</div>
+			{task.kind !== "milestone" && task.estimate && (
+				<OverviewSection label="Estimate (PERT)">
+					<dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
+						<OverviewRow
+							label="Optimistic"
+							value={`${fmt(task.estimate.optimistic)} ${task.estimate.unit}`}
+						/>
+						<OverviewRow
+							label="Most likely"
+							value={`${fmt(task.estimate.mostLikely)} ${task.estimate.unit}`}
+						/>
+						<OverviewRow
+							label="Pessimistic"
+							value={`${fmt(task.estimate.pessimistic)} ${task.estimate.unit}`}
+						/>
+					</dl>
+				</OverviewSection>
+			)}
 
-						<div className="space-y-1.5">
-							<Label htmlFor="ti-key">
-								Key{" "}
-								<span className="text-muted-foreground/70">
-									— dotted group, e.g. M1.A
-								</span>
-							</Label>
-							<Input
-								id="ti-key"
-								data-testid="inspector-key"
-								value={task.key ?? ""}
-								onChange={(e) => setKey(e.target.value)}
-								placeholder="ungrouped"
-								className="font-mono text-xs"
-							/>
-						</div>
-
-						<div className="space-y-1.5">
-							<Label htmlFor="ti-kind">Kind</Label>
-							<Select
-								value={task.kind}
-								onValueChange={(v) => setKind(v as TaskKind)}
-							>
-								<SelectTrigger id="ti-kind">
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectItem value="task">Task</SelectItem>
-									<SelectItem value="milestone">Milestone</SelectItem>
-								</SelectContent>
-							</Select>
-						</div>
-
-						{task.kind !== "milestone" && (
-							<div className="space-y-2">
-								<Label className="block text-xs">PERT estimate</Label>
-								<div className="grid grid-cols-3 gap-2">
-									<EstimateField
-										label="Optimistic"
-										id="ti-o"
-										value={task.estimate?.optimistic ?? 0}
-										onChange={(v) => setEstimateField("optimistic", v)}
-									/>
-									<EstimateField
-										label="Most likely"
-										id="ti-m"
-										value={task.estimate?.mostLikely ?? 0}
-										onChange={(v) => setEstimateField("mostLikely", v)}
-									/>
-									<EstimateField
-										label="Pessimistic"
-										id="ti-p"
-										value={task.estimate?.pessimistic ?? 0}
-										onChange={(v) => setEstimateField("pessimistic", v)}
-									/>
-								</div>
-								<div className="space-y-1.5">
-									<Label htmlFor="ti-unit" className="text-xs">
-										Unit
-									</Label>
-									<Select
-										value={task.estimate?.unit ?? "day"}
-										onValueChange={(v) =>
-											setEstimateUnit(v as Estimate["unit"])
-										}
-									>
-										<SelectTrigger id="ti-unit">
-											<SelectValue />
-										</SelectTrigger>
-										<SelectContent>
-											<SelectItem value="hour">Hours</SelectItem>
-											<SelectItem value="day">Days</SelectItem>
-											<SelectItem value="week">Weeks</SelectItem>
-										</SelectContent>
-									</Select>
-								</div>
-							</div>
+			{task.kind === "task" && (
+				<OverviewSection label="Progress">
+					<dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
+						<OverviewRow
+							label="Status"
+							value={<StatusPill status={status} />}
+						/>
+						{status !== "not_started" && (
+							<OverviewRow label="Done" value={`${progress}%`} />
 						)}
+						{task.actualStart && (
+							<OverviewRow label="Started" value={task.actualStart} />
+						)}
+						{task.actualFinish && (
+							<OverviewRow label="Finished" value={task.actualFinish} />
+						)}
+					</dl>
+				</OverviewSection>
+			)}
 
-						<div className="space-y-1.5">
-							<Label htmlFor="ti-notes">Notes</Label>
-							<Textarea
-								id="ti-notes"
-								value={task.notes ?? ""}
-								onChange={(e) => setNotes(e.target.value)}
-								rows={4}
-							/>
-						</div>
-					</div>
+			{sched ? (
+				<OverviewSection label="Computed schedule">
+					<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+						<ScheduleStat
+							label="Duration"
+							tooltip="Beta-PERT expected duration (o + 4m + p)/6."
+							value={`${fmt(sched.duration)} d`}
+						/>
+						<ScheduleStat
+							label="Slack"
+							tooltip="Days this task can slip before the project finish moves."
+							value={`${fmt(sched.slack)} d`}
+							highlight={sched.critical ? "critical" : undefined}
+						/>
+						<ScheduleStat
+							label="Earliest start"
+							tooltip="The earliest day this task can begin (CPM: ES)."
+							value={fmt(sched.earliestStart)}
+							subValue={sched.earliestStartDate}
+						/>
+						<ScheduleStat
+							label="Earliest finish"
+							tooltip="ES + duration (CPM: EF)."
+							value={fmt(sched.earliestFinish)}
+							subValue={sched.earliestFinishDate}
+						/>
+						<ScheduleStat
+							label="Latest start"
+							tooltip="Latest start without delaying the project (CPM: LS)."
+							value={fmt(sched.latestStart)}
+							subValue={sched.latestStartDate}
+						/>
+						<ScheduleStat
+							label="Latest finish"
+							tooltip="Latest finish without delaying the project (CPM: LF)."
+							value={fmt(sched.latestFinish)}
+							subValue={sched.latestFinishDate}
+						/>
+					</dl>
+				</OverviewSection>
+			) : (
+				<p className="text-xs text-destructive">
+					Cycle in the graph blocks scheduling.
+				</p>
+			)}
 
-					<div className="space-y-4">
-						<div>
-							<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-								Computed schedule
-								<span className="ml-1 normal-case text-muted-foreground/70">
-									(days from project start)
-								</span>
-							</h3>
-							{sched ? (
-								<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
-									<ScheduleStat
-										label="Duration"
-										tooltip="How long this task takes once it starts. Computed from your PERT estimate as (optimistic + 4·most likely + pessimistic) / 6."
-										value={`${fmt(sched.duration)} d`}
-									/>
-									<ScheduleStat
-										label="Slack"
-										tooltip="Spare time before this task starts delaying the whole project. 0 days means it's on the critical path — any slip moves the finish date."
-										value={`${fmt(sched.slack)} d`}
-										highlight={sched.critical ? "critical" : undefined}
-									/>
-									<ScheduleStat
-										label="Earliest start"
-										tooltip="The earliest day this task can begin, given everything that has to finish first. (CPM: ES)"
-										value={fmt(sched.earliestStart)}
-										subValue={sched.earliestStartDate}
-									/>
-									<ScheduleStat
-										label="Earliest finish"
-										tooltip="Earliest start + duration. The earliest possible day this task could be done. (CPM: EF)"
-										value={fmt(sched.earliestFinish)}
-										subValue={sched.earliestFinishDate}
-									/>
-									<ScheduleStat
-										label="Latest start"
-										tooltip="The latest day this task can begin without delaying the project finish. (CPM: LS)"
-										value={fmt(sched.latestStart)}
-										subValue={sched.latestStartDate}
-									/>
-									<ScheduleStat
-										label="Latest finish"
-										tooltip="The latest day this task can end without delaying the project finish. (CPM: LF)"
-										value={fmt(sched.latestFinish)}
-										subValue={sched.latestFinishDate}
-									/>
-								</dl>
-							) : (
-								<p className="text-xs text-destructive">
-									Cycle in the graph blocks scheduling.
-								</p>
-							)}
-						</div>
-						{mcTask && task.kind === "task" && <MonteCarloCard mc={mcTask} />}
-					</div>
-				</div>
+			{mcTask && task.kind === "task" && (
+				<OverviewSection label="">
+					<MonteCarloCard mc={mcTask} />
+				</OverviewSection>
+			)}
 
-				<Separator className="my-6" />
-				<DependenciesSection
-					task={task}
+			<OverviewSection label="Dependencies">
+				<OverviewDepList
+					label="Depends on"
+					rows={incoming}
 					doc={doc}
-					changeDoc={changeDoc}
-					projectId={projectId}
+					onNavigate={navigate}
+					testId="overview-deps-incoming"
 				/>
-				<Separator className="my-6" />
-				<DangerZone onDelete={onDelete} label="Delete task" />
+				<div className="mt-3">
+					<OverviewDepList
+						label="Required for"
+						rows={outgoing}
+						doc={doc}
+						onNavigate={navigate}
+						testId="overview-deps-outgoing"
+					/>
+				</div>
+			</OverviewSection>
+		</div>
+	);
+}
+
+function OverviewSection({
+	label,
+	children,
+}: {
+	label: string;
+	children: React.ReactNode;
+}) {
+	return (
+		<section>
+			{label && (
+				<h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-foreground/80">
+					{label}
+				</h3>
+			)}
+			{children}
+		</section>
+	);
+}
+
+function OverviewRow({
+	label,
+	value,
+}: {
+	label: string;
+	value: React.ReactNode;
+}) {
+	return (
+		<>
+			<dt className="text-xs text-muted-foreground">{label}</dt>
+			<dd className="min-w-0 text-xs">{value}</dd>
+		</>
+	);
+}
+
+function OverviewDepList({
+	label,
+	rows,
+	doc,
+	onNavigate,
+	testId,
+}: {
+	label: string;
+	rows: Array<{ depId: string; otherId: TaskId }>;
+	doc: PertDoc;
+	onNavigate: (id: TaskId) => void;
+	testId: string;
+}) {
+	return (
+		<div>
+			<div className="mb-1 flex items-center justify-between">
+				<span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+					{label}
+				</span>
+				<span className="text-[10px] text-muted-foreground">{rows.length}</span>
 			</div>
+			{rows.length === 0 ? (
+				<p className="text-xs text-muted-foreground/70">—</p>
+			) : (
+				<ul className="space-y-1" data-testid={testId}>
+					{rows.map((row) => {
+						const other = doc.tasksById[row.otherId];
+						return (
+							<li
+								key={row.depId}
+								className="rounded-md border border-border/60 bg-card/40 px-2 py-1 text-xs"
+							>
+								<button
+									type="button"
+									onClick={() => onNavigate(row.otherId)}
+									className="w-full truncate text-left hover:underline"
+									title={other?.title ?? row.otherId}
+								>
+									{other?.title ?? row.otherId}
+								</button>
+							</li>
+						);
+					})}
+				</ul>
+			)}
 		</div>
 	);
 }
@@ -1308,185 +1628,227 @@ function ContainerForm({
 		[changeDoc, task.id],
 	);
 
+	const editView = (
+		<div className="@container p-4">
+			{conflictPill && <div className="mb-4">{conflictPill}</div>}
+			<ContainerSummary rollup={rollup} />
+
+			<div className="mt-4 grid grid-cols-1 gap-4 @4xl:grid-cols-2 @4xl:gap-6">
+				<div className="space-y-5">
+					<SectionHeading
+						label="Hierarchy"
+						hint="What this container holds and how to identify it."
+					/>
+					<div className="space-y-1.5">
+						<Label htmlFor="ci-title">Title</Label>
+						<Input
+							id="ci-title"
+							data-testid="inspector-title"
+							value={task.title}
+							onChange={(e) => {
+								const next = e.target.value;
+								mutateTask((d) => {
+									d.title = next;
+								});
+							}}
+						/>
+					</div>
+					<div className="space-y-1.5">
+						<Label htmlFor="ci-key">
+							Key{" "}
+							<span className="text-muted-foreground/70">
+								— dotted group, e.g. M1.A
+							</span>
+						</Label>
+						<Input
+							id="ci-key"
+							data-testid="inspector-key"
+							value={task.key ?? ""}
+							onChange={(e) => {
+								const next = e.target.value;
+								mutateTask((d) => {
+									const trimmed = next.trim();
+									if (trimmed.length === 0) delete d.key;
+									else d.key = trimmed;
+								});
+							}}
+							placeholder="ungrouped"
+							className="font-mono text-xs"
+						/>
+					</div>
+					<div className="space-y-1.5">
+						<Label htmlFor="ci-notes">Notes</Label>
+						<Textarea
+							id="ci-notes"
+							value={task.notes ?? ""}
+							onChange={(e) => {
+								const next = e.target.value;
+								mutateTask((d) => {
+									d.notes = next;
+								});
+							}}
+							rows={3}
+						/>
+					</div>
+					<div className="pt-2">
+						<ChildrenSection
+							task={task}
+							doc={doc}
+							changeDoc={changeDoc}
+							projectId={projectId}
+						/>
+					</div>
+				</div>
+
+				<div className="space-y-5">
+					<SectionHeading
+						label="Schedule"
+						hint="Rolled-up scheduling stats across every descendant. When the container is collapsed, these are the numbers shown on the card."
+					/>
+					<div>
+						<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+							Rollup
+						</h3>
+						<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+							<dt className="text-xs text-muted-foreground">Tasks</dt>
+							<dd className="tabular-nums">{rollup.descendantCount}</dd>
+							<dt className="text-xs text-muted-foreground">Expected</dt>
+							<dd className="tabular-nums">{fmt(rollup.expected)} d</dd>
+							<dt className="text-xs text-muted-foreground">Min slack</dt>
+							<dd className="tabular-nums">
+								{rollup.minSlack === null ? "—" : `${fmt(rollup.minSlack)} d`}
+							</dd>
+							<dt className="text-xs text-muted-foreground">Critical</dt>
+							<dd
+								className={
+									rollup.hasCritical
+										? "font-semibold tabular-nums text-destructive"
+										: "tabular-nums"
+								}
+							>
+								{rollup.criticalCount}
+							</dd>
+						</dl>
+					</div>
+					{mcRollup && (
+						<div data-testid="container-monte-carlo">
+							<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+								Monte Carlo (worst descendant)
+							</h3>
+							<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+								<ScheduleStat
+									label="P50 finish"
+									tooltip="The realistic finish day of the latest descendant: across 1,500 simulated runs, half of them had everything in this container done by this date."
+									value={`${fmt(mcRollup.p50)} d`}
+								/>
+								<ScheduleStat
+									label="P90 finish"
+									tooltip="The safe finish day for the whole container: 90% of simulated runs finished every descendant by this date. Use it for stakeholder commitments."
+									value={`${fmt(mcRollup.p90)} d`}
+								/>
+								<ScheduleStat
+									label="Max criticality"
+									tooltip="The highest criticality score across all descendants. Tells you how often at least one task inside this container ended up on the project's critical path."
+									value={`${Math.round(mcRollup.maxCriticality * 100)}%`}
+								/>
+							</dl>
+						</div>
+					)}
+					{pathRollups.length > 0 && (
+						<div data-testid="container-path-rollups">
+							<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+								Per-interface paths
+							</h3>
+							<table className="w-full text-xs">
+								<thead className="text-[10px] uppercase tracking-wide text-muted-foreground">
+									<tr>
+										<th className="py-1 text-left font-medium">Entry → Exit</th>
+										<th className="py-1 text-right font-medium">Expected</th>
+										{pathRollups.some((p) => p.p90 !== undefined) && (
+											<th className="py-1 text-right font-medium">P90</th>
+										)}
+									</tr>
+								</thead>
+								<tbody>
+									{pathRollups.map((p) => (
+										<tr
+											key={`${p.entryId}-${p.exitId}`}
+											className="border-t"
+											data-testid={`path-${p.entryId}-${p.exitId}`}
+										>
+											<td className="py-1">
+												<span className="font-medium">{p.entryLabel}</span>
+												<span className="mx-1 text-muted-foreground">→</span>
+												<span className="font-medium">{p.exitLabel}</span>
+											</td>
+											<td className="py-1 text-right tabular-nums">
+												{fmt(p.expected)}d
+											</td>
+											{p.p90 !== undefined && (
+												<td className="py-1 text-right tabular-nums">
+													{fmt(p.p90)}d
+												</td>
+											)}
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</div>
+					)}
+				</div>
+			</div>
+
+			<Separator className="my-6" />
+			<DangerZone onDelete={onDelete} label="Delete container" />
+		</div>
+	);
+
 	return (
 		<div className="flex h-full flex-col overflow-hidden">
 			<header className="shrink-0 border-b px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 				Container
 			</header>
-			<div className="@container flex-1 overflow-auto p-4">
-				{conflictPill && <div className="mb-4">{conflictPill}</div>}
-				<ContainerSummary rollup={rollup} />
-
-				<div className="mt-4 grid grid-cols-1 gap-4 @4xl:grid-cols-2 @4xl:gap-6">
-					<div className="space-y-5">
-						<SectionHeading
-							label="Hierarchy"
-							hint="What this container holds and how to identify it."
-						/>
-						<div className="space-y-1.5">
-							<Label htmlFor="ci-title">Title</Label>
-							<Input
-								id="ci-title"
-								data-testid="inspector-title"
-								value={task.title}
-								onChange={(e) => {
-									const next = e.target.value;
-									mutateTask((d) => {
-										d.title = next;
-									});
-								}}
-							/>
-						</div>
-						<div className="space-y-1.5">
-							<Label htmlFor="ci-key">
-								Key{" "}
-								<span className="text-muted-foreground/70">
-									— dotted group, e.g. M1.A
-								</span>
-							</Label>
-							<Input
-								id="ci-key"
-								data-testid="inspector-key"
-								value={task.key ?? ""}
-								onChange={(e) => {
-									const next = e.target.value;
-									mutateTask((d) => {
-										const trimmed = next.trim();
-										if (trimmed.length === 0) delete d.key;
-										else d.key = trimmed;
-									});
-								}}
-								placeholder="ungrouped"
-								className="font-mono text-xs"
-							/>
-						</div>
-						<div className="space-y-1.5">
-							<Label htmlFor="ci-notes">Notes</Label>
-							<Textarea
-								id="ci-notes"
-								value={task.notes ?? ""}
-								onChange={(e) => {
-									const next = e.target.value;
-									mutateTask((d) => {
-										d.notes = next;
-									});
-								}}
-								rows={3}
-							/>
-						</div>
-						<div className="pt-2">
-							<ChildrenSection
-								task={task}
-								doc={doc}
-								changeDoc={changeDoc}
-								projectId={projectId}
-							/>
-						</div>
-					</div>
-
-					<div className="space-y-5">
-						<SectionHeading
-							label="Schedule"
-							hint="Rolled-up scheduling stats across every descendant. When the container is collapsed, these are the numbers shown on the card."
-						/>
-						<div>
-							<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-								Rollup
-							</h3>
-							<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
-								<dt className="text-xs text-muted-foreground">Tasks</dt>
-								<dd className="tabular-nums">{rollup.descendantCount}</dd>
-								<dt className="text-xs text-muted-foreground">Expected</dt>
-								<dd className="tabular-nums">{fmt(rollup.expected)} d</dd>
-								<dt className="text-xs text-muted-foreground">Min slack</dt>
-								<dd className="tabular-nums">
-									{rollup.minSlack === null ? "—" : `${fmt(rollup.minSlack)} d`}
-								</dd>
-								<dt className="text-xs text-muted-foreground">Critical</dt>
-								<dd
-									className={
-										rollup.hasCritical
-											? "font-semibold tabular-nums text-destructive"
-											: "tabular-nums"
-									}
-								>
-									{rollup.criticalCount}
-								</dd>
-							</dl>
-						</div>
-						{mcRollup && (
-							<div data-testid="container-monte-carlo">
-								<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-									Monte Carlo (worst descendant)
-								</h3>
-								<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
-									<ScheduleStat
-										label="P50 finish"
-										tooltip="The realistic finish day of the latest descendant: across 1,500 simulated runs, half of them had everything in this container done by this date."
-										value={`${fmt(mcRollup.p50)} d`}
-									/>
-									<ScheduleStat
-										label="P90 finish"
-										tooltip="The safe finish day for the whole container: 90% of simulated runs finished every descendant by this date. Use it for stakeholder commitments."
-										value={`${fmt(mcRollup.p90)} d`}
-									/>
-									<ScheduleStat
-										label="Max criticality"
-										tooltip="The highest criticality score across all descendants. Tells you how often at least one task inside this container ended up on the project's critical path."
-										value={`${Math.round(mcRollup.maxCriticality * 100)}%`}
-									/>
-								</dl>
-							</div>
-						)}
-						{pathRollups.length > 0 && (
-							<div data-testid="container-path-rollups">
-								<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-									Per-interface paths
-								</h3>
-								<table className="w-full text-xs">
-									<thead className="text-[10px] uppercase tracking-wide text-muted-foreground">
-										<tr>
-											<th className="py-1 text-left font-medium">
-												Entry → Exit
-											</th>
-											<th className="py-1 text-right font-medium">Expected</th>
-											{pathRollups.some((p) => p.p90 !== undefined) && (
-												<th className="py-1 text-right font-medium">P90</th>
-											)}
-										</tr>
-									</thead>
-									<tbody>
-										{pathRollups.map((p) => (
-											<tr
-												key={`${p.entryId}-${p.exitId}`}
-												className="border-t"
-												data-testid={`path-${p.entryId}-${p.exitId}`}
-											>
-												<td className="py-1">
-													<span className="font-medium">{p.entryLabel}</span>
-													<span className="mx-1 text-muted-foreground">→</span>
-													<span className="font-medium">{p.exitLabel}</span>
-												</td>
-												<td className="py-1 text-right tabular-nums">
-													{fmt(p.expected)}d
-												</td>
-												{p.p90 !== undefined && (
-													<td className="py-1 text-right tabular-nums">
-														{fmt(p.p90)}d
-													</td>
-												)}
-											</tr>
-										))}
-									</tbody>
-								</table>
-							</div>
-						)}
-					</div>
+			<Tabs
+				defaultValue="edit"
+				className="flex min-h-0 flex-1 flex-col gap-0"
+				data-testid="inspector-subtabs"
+			>
+				<div className="shrink-0 border-b bg-card/40 px-2 py-1.5">
+					<TabsList variant="line" className="w-full">
+						<TabsTrigger
+							value="overview"
+							data-testid="inspector-subtab-overview"
+							className="text-xs"
+						>
+							All details
+						</TabsTrigger>
+						<TabsTrigger
+							value="edit"
+							data-testid="inspector-subtab-edit"
+							className="text-xs"
+						>
+							Edit · Calc · Progress
+						</TabsTrigger>
+					</TabsList>
 				</div>
-
-				<Separator className="my-6" />
-				<DangerZone onDelete={onDelete} label="Delete container" />
-			</div>
+				<TabsContent
+					value="overview"
+					className="mt-0 min-h-0 flex-1 overflow-auto"
+				>
+					<ContainerOverview
+						task={task}
+						doc={doc}
+						projectId={projectId}
+						rollup={rollup}
+						mcRollup={mcRollup}
+						pathRollups={pathRollups}
+						conflictPill={conflictPill}
+					/>
+				</TabsContent>
+				<TabsContent value="edit" className="mt-0 min-h-0 flex-1 overflow-auto">
+					{editView}
+				</TabsContent>
+			</Tabs>
 		</div>
 	);
 }
@@ -1516,6 +1878,187 @@ function SectionHeading({
 				</TooltipContent>
 			</Tooltip>
 			{trailing}
+		</div>
+	);
+}
+
+// Read-only consolidated view shown in the container's "All details" sub-tab.
+// Mirrors the editable container form fields plus the schedule rollup, MC
+// summary, per-interface paths, and a navigable children list.
+function ContainerOverview({
+	task,
+	doc,
+	projectId,
+	rollup,
+	mcRollup,
+	pathRollups,
+	conflictPill,
+}: {
+	task: Task;
+	doc: PertDoc;
+	projectId: string;
+	rollup: ReturnType<typeof rollupContainer>;
+	mcRollup: { p50: number; p90: number; maxCriticality: number } | null;
+	pathRollups: ReturnType<typeof rollupContainerPaths>;
+	conflictPill?: React.ReactNode;
+}) {
+	const parent = task.parentId ? doc.tasksById[task.parentId] : null;
+	const children = useMemo(() => getChildren(doc, task.id), [doc, task.id]);
+	const navigate = (id: TaskId) => {
+		selectionStore.setState((s) => ({ ...s, projectId, taskId: id }));
+	};
+	return (
+		<div className="@container space-y-5 p-4 text-sm">
+			{conflictPill && <div>{conflictPill}</div>}
+			<ContainerSummary rollup={rollup} />
+
+			<OverviewSection label="Description">
+				<dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
+					<OverviewRow label="Title" value={task.title || "Untitled"} />
+					{task.key && (
+						<OverviewRow
+							label="Key"
+							value={<span className="font-mono text-xs">{task.key}</span>}
+						/>
+					)}
+					{parent && (
+						<OverviewRow
+							label="Inside"
+							value={
+								<button
+									type="button"
+									className="text-left hover:underline"
+									onClick={() => navigate(parent.id)}
+								>
+									{parent.title || "Untitled container"}
+								</button>
+							}
+						/>
+					)}
+				</dl>
+				{task.notes && (
+					<p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+						{task.notes}
+					</p>
+				)}
+			</OverviewSection>
+
+			<OverviewSection label="Children">
+				{children.length === 0 ? (
+					<p className="text-xs text-muted-foreground/70">
+						Drag tasks onto this container on the canvas to nest them.
+					</p>
+				) : (
+					<ul className="space-y-1" data-testid="overview-children">
+						{children.map((child) => (
+							<li
+								key={child.id}
+								className="rounded-md border border-border/60 bg-card/40 px-2 py-1 text-xs"
+							>
+								<button
+									type="button"
+									onClick={() => navigate(child.id)}
+									className="w-full truncate text-left hover:underline"
+									title={child.title}
+								>
+									<span className="mr-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+										{child.kind === "container"
+											? "box"
+											: child.kind === "milestone"
+												? "★"
+												: ""}
+									</span>
+									{child.title || "Untitled"}
+								</button>
+							</li>
+						))}
+					</ul>
+				)}
+			</OverviewSection>
+
+			<OverviewSection label="Schedule rollup">
+				<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+					<dt className="text-xs text-muted-foreground">Tasks</dt>
+					<dd className="tabular-nums text-xs">{rollup.descendantCount}</dd>
+					<dt className="text-xs text-muted-foreground">Expected</dt>
+					<dd className="tabular-nums text-xs">{fmt(rollup.expected)} d</dd>
+					<dt className="text-xs text-muted-foreground">Min slack</dt>
+					<dd className="tabular-nums text-xs">
+						{rollup.minSlack === null ? "—" : `${fmt(rollup.minSlack)} d`}
+					</dd>
+					<dt className="text-xs text-muted-foreground">Critical</dt>
+					<dd
+						className={
+							rollup.hasCritical
+								? "font-semibold tabular-nums text-xs text-destructive"
+								: "tabular-nums text-xs"
+						}
+					>
+						{rollup.criticalCount}
+					</dd>
+				</dl>
+			</OverviewSection>
+
+			{mcRollup && (
+				<OverviewSection label="Monte Carlo (worst descendant)">
+					<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+						<ScheduleStat
+							label="P50 finish"
+							tooltip="Realistic finish day of the latest descendant."
+							value={`${fmt(mcRollup.p50)} d`}
+						/>
+						<ScheduleStat
+							label="P90 finish"
+							tooltip="Safe finish day for the whole container."
+							value={`${fmt(mcRollup.p90)} d`}
+						/>
+						<ScheduleStat
+							label="Max criticality"
+							tooltip="Highest criticality score across all descendants."
+							value={`${Math.round(mcRollup.maxCriticality * 100)}%`}
+						/>
+					</dl>
+				</OverviewSection>
+			)}
+
+			{pathRollups.length > 0 && (
+				<OverviewSection label="Per-interface paths">
+					<table className="w-full text-xs">
+						<thead className="text-[10px] uppercase tracking-wide text-muted-foreground">
+							<tr>
+								<th className="py-1 text-left font-medium">Entry → Exit</th>
+								<th className="py-1 text-right font-medium">Expected</th>
+								{pathRollups.some((p) => p.p90 !== undefined) && (
+									<th className="py-1 text-right font-medium">P90</th>
+								)}
+							</tr>
+						</thead>
+						<tbody>
+							{pathRollups.map((p) => (
+								<tr
+									key={`${p.entryId}-${p.exitId}`}
+									className="border-t"
+									data-testid={`overview-path-${p.entryId}-${p.exitId}`}
+								>
+									<td className="py-1">
+										<span className="font-medium">{p.entryLabel}</span>
+										<span className="mx-1 text-muted-foreground">→</span>
+										<span className="font-medium">{p.exitLabel}</span>
+									</td>
+									<td className="py-1 text-right tabular-nums">
+										{fmt(p.expected)}d
+									</td>
+									{p.p90 !== undefined && (
+										<td className="py-1 text-right tabular-nums">
+											{fmt(p.p90)}d
+										</td>
+									)}
+								</tr>
+							))}
+						</tbody>
+					</table>
+				</OverviewSection>
+			)}
 		</div>
 	);
 }
