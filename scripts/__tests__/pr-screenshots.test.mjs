@@ -95,7 +95,7 @@ describe("renderComment", () => {
 		hasScreenshot: () => true,
 	};
 
-	it("groups stories by title and links to the raw image URL", () => {
+	it("groups stories by title and renders markdown links to the raw image URL", () => {
 		const out = renderComment({
 			...baseArgs,
 			stories: [
@@ -115,18 +115,22 @@ describe("renderComment", () => {
 		});
 		expect(out).toContain("### Foo/Bar");
 		expect(out).toContain("`src/components/foo/bar.stories.tsx`");
+		// Each story is a markdown link (so the reviewer's auth handles
+		// raw.githubusercontent.com on click) — NOT an `<img>` tag (which
+		// Camo would 404 on private repos).
 		expect(out).toContain(
-			"https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--default.png",
+			"- [Default](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--default.png)",
 		);
 		expect(out).toContain(
-			"https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--with-icon.png",
+			"- [With Icon](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--with-icon.png)",
 		);
+		expect(out).not.toMatch(/<img /);
 		// The title heading appears only once even though we have two
 		// stories under it.
 		expect(out.match(/### Foo\/Bar/g)).toHaveLength(1);
 	});
 
-	it("renders a fallback for stories whose screenshot is missing", () => {
+	it("renders a fallback line for stories whose screenshot is missing", () => {
 		const out = renderComment({
 			...baseArgs,
 			stories: [
@@ -135,7 +139,9 @@ describe("renderComment", () => {
 			hasScreenshot: () => false,
 		});
 		expect(out).toContain("_render failed");
-		expect(out).not.toMatch(/<img /);
+		// Missing-screenshot stories must not produce a link to a 404'd
+		// image; they're rendered as bold name + "render failed" instead.
+		expect(out).not.toMatch(/\]\(http/);
 	});
 
 	it("renders the empty-state message when nothing changed", () => {
