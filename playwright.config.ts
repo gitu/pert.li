@@ -75,7 +75,11 @@ export default defineConfig({
 		// Always start fresh — sidesteps port contention with a developer's
 		// running dev server and gives the test run a known-clean env.
 		reuseExistingServer: false,
-		timeout: 120_000,
+		// CI cold-start has to bundle ~50 @better-auth/* deps through Vite's
+		// optimizer before the SSR entry can load; on a fresh runner without
+		// a warm `node_modules/.vite` that comfortably exceeds 120s. Cache
+		// hits drop this back to ~10s. Locally it's even quicker.
+		timeout: process.env.CI ? 240_000 : 120_000,
 		stdout: "pipe",
 		stderr: "pipe",
 		env: {
