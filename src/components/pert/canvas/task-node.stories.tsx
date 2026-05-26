@@ -2,6 +2,7 @@ import { ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
+import { TooltipProvider } from "#/components/ui/tooltip";
 import { TaskNode, type TaskNodeData } from "./task-node";
 
 const nodeTypes = { task: TaskNode };
@@ -13,30 +14,37 @@ function NodeStage({
 	data: TaskNodeData;
 	selected?: boolean;
 }) {
+	// The radial quick-add cluster sits ~48px outside the card on each side.
+	// `fitView` only fits the node's reported bounds, so the cluster gets
+	// clipped against the React Flow viewport. We render at a fixed viewport
+	// with the node centred and enough horizontal slack to show both
+	// clusters in full.
 	const node = {
 		id: "demo",
 		type: "task",
-		position: { x: 60, y: 60 },
+		position: { x: 120, y: 60 },
 		data: data as unknown as Record<string, unknown>,
 		width: 200,
 		height: 80,
 		selected,
 	};
 	return (
-		<div className="h-[220px] w-[360px] rounded-md border bg-background">
-			<ReactFlowProvider>
-				<ReactFlow
-					nodes={[node]}
-					edges={[]}
-					nodeTypes={nodeTypes}
-					proOptions={{ hideAttribution: true }}
-					fitView
-					nodesDraggable={false}
-					zoomOnScroll={false}
-					panOnDrag={false}
-				/>
-			</ReactFlowProvider>
-		</div>
+		<TooltipProvider delayDuration={150}>
+			<div className="h-[220px] w-[560px] rounded-md border bg-background">
+				<ReactFlowProvider>
+					<ReactFlow
+						nodes={[node]}
+						edges={[]}
+						nodeTypes={nodeTypes}
+						proOptions={{ hideAttribution: true }}
+						defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+						nodesDraggable={false}
+						zoomOnScroll={false}
+						panOnDrag={false}
+					/>
+				</ReactFlowProvider>
+			</div>
+		</TooltipProvider>
 	);
 }
 
@@ -170,10 +178,11 @@ export const NoEstimate: Story = {
 	},
 };
 
-// Radial quick-add buttons appear on the left and right of the card,
-// centred on the source/target handles. Always-visible here so reviewers
-// can see the affordance without hovering the screenshot. The `play`
-// function exercises the two button callbacks to lock the contract.
+// Radial quick-add cluster — a task button and a milestone button on each
+// side, centred on the source/target connectors. Always-visible here so
+// reviewers see the affordance without hovering the screenshot. The `play`
+// function clicks each variant to lock the contract: both callbacks are
+// invoked with the chosen kind.
 export const WithRadialQuickAdd: Story = {
 	args: {
 		selected: true,
@@ -192,13 +201,30 @@ export const WithRadialQuickAdd: Story = {
 	},
 	play: async ({ canvasElement, args }) => {
 		const canvas = within(canvasElement);
-		const predecessor = await canvas.findByTestId("task-add-predecessor-demo");
-		const successor = await canvas.findByTestId("task-add-successor-demo");
-		await expect(predecessor).toBeVisible();
-		await expect(successor).toBeVisible();
-		await userEvent.click(successor);
-		await expect(args.data.onAddSuccessor).toHaveBeenCalledTimes(1);
-		await userEvent.click(predecessor);
-		await expect(args.data.onAddPredecessor).toHaveBeenCalledTimes(1);
+		const predTask = await canvas.findByTestId(
+			"task-add-predecessor-task-demo",
+		);
+		const predMilestone = await canvas.findByTestId(
+			"task-add-predecessor-milestone-demo",
+		);
+		const succTask = await canvas.findByTestId("task-add-successor-task-demo");
+		const succMilestone = await canvas.findByTestId(
+			"task-add-successor-milestone-demo",
+		);
+		await expect(predTask).toBeVisible();
+		await expect(succMilestone).toBeVisible();
+
+		await userEvent.click(succTask);
+		await expect(args.data.onAddSuccessor).toHaveBeenLastCalledWith("task");
+		await userEvent.click(succMilestone);
+		await expect(args.data.onAddSuccessor).toHaveBeenLastCalledWith(
+			"milestone",
+		);
+		await userEvent.click(predTask);
+		await expect(args.data.onAddPredecessor).toHaveBeenLastCalledWith("task");
+		await userEvent.click(predMilestone);
+		await expect(args.data.onAddPredecessor).toHaveBeenLastCalledWith(
+			"milestone",
+		);
 	},
 };

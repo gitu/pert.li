@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect, useState } from "react";
 import { expect, within } from "storybook/test";
+import { TooltipProvider } from "#/components/ui/tooltip";
 import { clearProjectCollapse, setCollapsed } from "#/lib/pert/collapse";
 import { ensureContainerInterfaces } from "#/lib/pert/interfaces";
 import {
@@ -217,19 +218,21 @@ function Stage({
 	}, [projectId, collapseOnMount]);
 
 	return (
-		<div className="h-[560px] w-full max-w-5xl overflow-hidden rounded-md border bg-background">
-			<PertCanvas
-				projectId={projectId}
-				doc={doc}
-				changeDoc={(mutate) =>
-					setDoc((current) => {
-						const draft: PertDoc = structuredClone(current);
-						mutate(draft);
-						return draft;
-					})
-				}
-			/>
-		</div>
+		<TooltipProvider delayDuration={150}>
+			<div className="h-[560px] w-full max-w-5xl overflow-hidden rounded-md border bg-background">
+				<PertCanvas
+					projectId={projectId}
+					doc={doc}
+					changeDoc={(mutate) =>
+						setDoc((current) => {
+							const draft: PertDoc = structuredClone(current);
+							mutate(draft);
+							return draft;
+						})
+					}
+				/>
+			</div>
+		</TooltipProvider>
 	);
 }
 
