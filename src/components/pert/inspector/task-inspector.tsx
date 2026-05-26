@@ -66,7 +66,12 @@ import { useMonteCarlo } from "#/lib/pert/use-monte-carlo";
 // read-only state and points at the pencil toggle.
 const noopChangeDoc: (mutate: (d: PertDoc) => void) => void = () => {};
 
-export function TaskInspector() {
+// One of the three inspector panes. `RightTabs` in `_app.tsx` hoists these to
+// top-level tabs (alongside History); the mobile sheet and fullscreen popup
+// pass no `pane` and get the bundled 3-tab UI rendered internally.
+export type InspectorPane = "details" | "plan" | "track";
+
+export function TaskInspector({ pane }: { pane?: InspectorPane } = {}) {
 	const selection = useStore(selectionStore);
 	const { doc, changeDoc, projectId } = useStore(projectDocStore);
 	const mc = useMonteCarlo(doc, { trials: 1500 });
@@ -102,10 +107,10 @@ export function TaskInspector() {
 		// of showing "the selected task has been removed."
 		selectionStore.setState((s) => ({ ...s, taskId: null }));
 	};
-	const body =
+	const renderPane = (p: InspectorPane) =>
 		task.kind === "container" ? (
 			<ContainerForm
-				key={task.id}
+				key={`${task.id}-${p}`}
 				task={task}
 				doc={doc}
 				changeDoc={safeChangeDoc}
@@ -113,10 +118,11 @@ export function TaskInspector() {
 				conflictPill={conflictPill}
 				onDelete={onDelete}
 				mcResult={mc.result}
+				pane={p}
 			/>
 		) : (
 			<TaskForm
-				key={task.id}
+				key={`${task.id}-${p}`}
 				task={task}
 				doc={doc}
 				changeDoc={safeChangeDoc}
@@ -131,8 +137,57 @@ export function TaskInspector() {
 					})
 				}
 				onDelete={onDelete}
+				pane={p}
 			/>
 		);
+
+	const body = pane ? (
+		renderPane(pane)
+	) : (
+		<Tabs
+			defaultValue="details"
+			className="flex h-full min-h-0 flex-col gap-0"
+			data-testid="inspector-tabs"
+		>
+			<div className="shrink-0 border-b bg-card/40 px-2 py-1.5">
+				<TabsList variant="line" className="w-full">
+					<TabsTrigger
+						value="details"
+						data-testid="inspector-tab-details"
+						className="text-xs"
+					>
+						Details
+					</TabsTrigger>
+					<TabsTrigger
+						value="plan"
+						data-testid="inspector-tab-plan"
+						className="text-xs"
+					>
+						Plan
+					</TabsTrigger>
+					<TabsTrigger
+						value="track"
+						data-testid="inspector-tab-track"
+						className="text-xs"
+					>
+						Track
+					</TabsTrigger>
+				</TabsList>
+			</div>
+			<TabsContent
+				value="details"
+				className="mt-0 min-h-0 flex-1 overflow-auto"
+			>
+				{renderPane("details")}
+			</TabsContent>
+			<TabsContent value="plan" className="mt-0 min-h-0 flex-1 overflow-auto">
+				{renderPane("plan")}
+			</TabsContent>
+			<TabsContent value="track" className="mt-0 min-h-0 flex-1 overflow-auto">
+				{renderPane("track")}
+			</TabsContent>
+		</Tabs>
+	);
 	if (!readOnly) return body;
 	return (
 		<div className="flex h-full min-h-0 flex-col">
@@ -167,6 +222,7 @@ function TaskForm({
 	mcResult,
 	onMutate,
 	onDelete,
+	pane,
 }: {
 	task: Task;
 	doc: PertDoc;
@@ -177,6 +233,7 @@ function TaskForm({
 	mcResult: MonteCarloResult | null;
 	onMutate: (mutate: (draft: Task) => void) => void;
 	onDelete: () => void;
+	pane: InspectorPane;
 }) {
 	const sched = scheduleResult.ok
 		? scheduleResult.schedule.tasks[task.id]
@@ -313,23 +370,10 @@ function TaskForm({
 				? (task.progress ?? 0)
 				: 0;
 
-	const editView = (
+	const planView = (
 		<div className="@container p-4">
 			{conflictPill && <div className="mb-4">{conflictPill}</div>}
 			<TaskSummary task={task} sched={sched} mcTask={mcTask} />
-
-			{task.kind === "task" && (
-				<StatusRow
-					status={status}
-					progress={progressValue}
-					onStatusChange={setStatus}
-					onProgressChange={setProgress}
-					actualStart={task.actualStart}
-					actualFinish={task.actualFinish}
-					onActualStartChange={setActualStart}
-					onActualFinishChange={setActualFinish}
-				/>
-			)}
 
 			{/* Two-column layout above lg (1024px); single column below so the
 			    inspector stays usable inside the narrow bottom panel on small
@@ -503,55 +547,46 @@ function TaskForm({
 		</div>
 	);
 
-	return (
-		<div className="flex h-full flex-col overflow-hidden">
-			<header className="shrink-0 border-b px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-				Task
-			</header>
-			<Tabs
-				defaultValue="edit"
-				className="flex min-h-0 flex-1 flex-col gap-0"
-				data-testid="inspector-subtabs"
-			>
-				<div className="shrink-0 border-b bg-card/40 px-2 py-1.5">
-					<TabsList variant="line" className="w-full">
-						<TabsTrigger
-							value="overview"
-							data-testid="inspector-subtab-overview"
-							className="text-xs"
-						>
-							All details
-						</TabsTrigger>
-						<TabsTrigger
-							value="edit"
-							data-testid="inspector-subtab-edit"
-							className="text-xs"
-						>
-							Edit · Calc · Progress
-						</TabsTrigger>
-					</TabsList>
+	const trackView = (
+		<div className="@container p-4">
+			{conflictPill && <div className="mb-4">{conflictPill}</div>}
+			<TaskSummary task={task} sched={sched} mcTask={mcTask} />
+			{task.kind === "task" ? (
+				<StatusRow
+					status={status}
+					progress={progressValue}
+					onStatusChange={setStatus}
+					onProgressChange={setProgress}
+					actualStart={task.actualStart}
+					actualFinish={task.actualFinish}
+					onActualStartChange={setActualStart}
+					onActualFinishChange={setActualFinish}
+				/>
+			) : (
+				<div className="mt-3 rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
+					Milestones flip to done automatically when every predecessor is
+					completed — there's nothing to mark here.
 				</div>
-				<TabsContent
-					value="overview"
-					className="mt-0 min-h-0 flex-1 overflow-auto"
-				>
-					<TaskOverview
-						task={task}
-						sched={sched}
-						mcTask={mcTask}
-						doc={doc}
-						projectId={projectId}
-						status={status}
-						progress={progressValue}
-						conflictPill={conflictPill}
-					/>
-				</TabsContent>
-				<TabsContent value="edit" className="mt-0 min-h-0 flex-1 overflow-auto">
-					{editView}
-				</TabsContent>
-			</Tabs>
+			)}
 		</div>
 	);
+
+	if (pane === "details") {
+		return (
+			<TaskOverview
+				task={task}
+				sched={sched}
+				mcTask={mcTask}
+				doc={doc}
+				projectId={projectId}
+				status={status}
+				progress={progressValue}
+				conflictPill={conflictPill}
+			/>
+		);
+	}
+	if (pane === "track") return trackView;
+	return planView;
 }
 
 // Read-only consolidated view shown in the "All details" sub-tab. Mirrors
@@ -1579,6 +1614,7 @@ function ContainerForm({
 	conflictPill,
 	onDelete,
 	mcResult,
+	pane,
 }: {
 	task: Task;
 	doc: PertDoc;
@@ -1587,6 +1623,7 @@ function ContainerForm({
 	conflictPill?: React.ReactNode;
 	onDelete: () => void;
 	mcResult: MonteCarloResult | null;
+	pane: InspectorPane;
 }) {
 	const scheduleResult = useMemo(() => computeSchedule(doc), [doc]);
 	const schedule = scheduleResult.ok ? scheduleResult.schedule : null;
@@ -1628,7 +1665,7 @@ function ContainerForm({
 		[changeDoc, task.id],
 	);
 
-	const editView = (
+	const planView = (
 		<div className="@container p-4">
 			{conflictPill && <div className="mb-4">{conflictPill}</div>}
 			<ContainerSummary rollup={rollup} />
@@ -1803,54 +1840,32 @@ function ContainerForm({
 		</div>
 	);
 
-	return (
-		<div className="flex h-full flex-col overflow-hidden">
-			<header className="shrink-0 border-b px-4 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-				Container
-			</header>
-			<Tabs
-				defaultValue="edit"
-				className="flex min-h-0 flex-1 flex-col gap-0"
-				data-testid="inspector-subtabs"
-			>
-				<div className="shrink-0 border-b bg-card/40 px-2 py-1.5">
-					<TabsList variant="line" className="w-full">
-						<TabsTrigger
-							value="overview"
-							data-testid="inspector-subtab-overview"
-							className="text-xs"
-						>
-							All details
-						</TabsTrigger>
-						<TabsTrigger
-							value="edit"
-							data-testid="inspector-subtab-edit"
-							className="text-xs"
-						>
-							Edit · Calc · Progress
-						</TabsTrigger>
-					</TabsList>
-				</div>
-				<TabsContent
-					value="overview"
-					className="mt-0 min-h-0 flex-1 overflow-auto"
-				>
-					<ContainerOverview
-						task={task}
-						doc={doc}
-						projectId={projectId}
-						rollup={rollup}
-						mcRollup={mcRollup}
-						pathRollups={pathRollups}
-						conflictPill={conflictPill}
-					/>
-				</TabsContent>
-				<TabsContent value="edit" className="mt-0 min-h-0 flex-1 overflow-auto">
-					{editView}
-				</TabsContent>
-			</Tabs>
+	const trackView = (
+		<div className="@container p-4">
+			{conflictPill && <div className="mb-4">{conflictPill}</div>}
+			<ContainerSummary rollup={rollup} />
+			<div className="mt-3 rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
+				A container's progress reflects its children. Open a child task to mark
+				it started or finished.
+			</div>
 		</div>
 	);
+
+	if (pane === "details") {
+		return (
+			<ContainerOverview
+				task={task}
+				doc={doc}
+				projectId={projectId}
+				rollup={rollup}
+				mcRollup={mcRollup}
+				pathRollups={pathRollups}
+				conflictPill={conflictPill}
+			/>
+		);
+	}
+	if (pane === "track") return trackView;
+	return planView;
 }
 
 // Compact heading + tooltip used to label the three conceptual sections of
