@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, within } from "storybook/test";
+import { expect, userEvent, within } from "storybook/test";
 import {
 	createEmptyPertDoc,
 	type Estimate,
@@ -115,6 +115,72 @@ export const Empty: Story = {
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await expect(canvas.getByText("No tasks yet.")).toBeInTheDocument();
+	},
+};
+
+function keyedDoc(): PertDoc {
+	const d = createEmptyPertDoc("Keyed phases");
+	d.tasksById.a1 = {
+		id: "a1",
+		kind: "task",
+		title: "Design API",
+		parentId: null,
+		key: "M1.API",
+		estimate: est(1, 2, 3),
+	};
+	d.tasksById.a2 = {
+		id: "a2",
+		kind: "task",
+		title: "Build API",
+		parentId: null,
+		key: "M1.API",
+		estimate: est(2, 3, 5),
+	};
+	d.tasksById.b1 = {
+		id: "b1",
+		kind: "task",
+		title: "Design UI",
+		parentId: null,
+		key: "M2.UI",
+		estimate: est(1, 2, 3),
+	};
+	d.tasksById.b2 = {
+		id: "b2",
+		kind: "task",
+		title: "Build UI",
+		parentId: null,
+		key: "M2.UI",
+		estimate: est(2, 3, 5),
+	};
+	d.dependenciesById.d1 = {
+		id: "d1",
+		from: { taskId: "a1" },
+		to: { taskId: "a2" },
+		type: "finish_to_start",
+	};
+	d.dependenciesById.d2 = {
+		id: "d2",
+		from: { taskId: "b1" },
+		to: { taskId: "b2" },
+		type: "finish_to_start",
+	};
+	return d;
+}
+
+export const Grouped: Story = {
+	args: { doc: keyedDoc(), projectId: "story-timeline-grouped" },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const toggle = await canvas.findByTestId("timeline-group");
+		// Off by default — no boundary markers, no key prefix.
+		await expect(toggle).toHaveAttribute("aria-pressed", "false");
+		await userEvent.click(toggle);
+		await expect(toggle).toHaveAttribute("aria-pressed", "true");
+		// At least one lane should now be marked as a group boundary.
+		const lanes = canvasElement.querySelectorAll(
+			"[data-testid^='timeline-lane-'][data-group-boundary='true']",
+		);
+		await expect(lanes.length).toBeGreaterThan(0);
 	},
 };
 

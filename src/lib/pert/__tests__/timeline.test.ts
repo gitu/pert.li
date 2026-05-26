@@ -99,6 +99,17 @@ describe("buildTimelineModel", () => {
 		expect(model.projectDuration).toBe(0);
 	});
 
+	it("carries the task key through onto the lane (omitted when blank)", () => {
+		const a: Task = { ...leaf("A", "A"), key: "M1.A" };
+		const b: Task = leaf("B", "B");
+		const doc = build(a, b);
+		const model = buildTimelineModel(doc, computeSchedule(doc));
+		const laneA = model.lanes.find((l) => l.taskId === "A");
+		const laneB = model.lanes.find((l) => l.taskId === "B");
+		expect(laneA?.key).toBe("M1.A");
+		expect(laneB?.key).toBeUndefined();
+	});
+
 	it("forwards critical flag from the schedule", () => {
 		const doc = build(
 			leaf("A", "A", est(2, 2, 2)),

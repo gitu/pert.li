@@ -10,6 +10,9 @@ export type TimelineLane = {
 	taskId: TaskId;
 	title: string;
 	kind: TaskKind;
+	// Dotted grouping key (e.g. "M1.A"). Carried through so the view can sort
+	// + render group boundaries when the user toggles grouping on.
+	key?: string;
 	earliestStart: number;
 	earliestFinish: number;
 	duration: number;
@@ -56,6 +59,9 @@ export function buildTimelineModel(
 			taskId: task.id,
 			title: task.title || "Untitled",
 			kind: task.kind,
+			...(task.key !== undefined && task.key.length > 0
+				? { key: task.key }
+				: {}),
 			earliestStart: s.earliestStart,
 			earliestFinish: s.earliestFinish,
 			duration: s.duration,
