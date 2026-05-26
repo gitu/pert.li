@@ -50,7 +50,9 @@ export function NodeDeleteButton({
 						? "opacity-100"
 						: "opacity-0 group-hover:opacity-100",
 			)}
-			title={armed ? "Click again to confirm" : "Delete (click again to confirm)"}
+			title={
+				armed ? "Click again to confirm" : "Delete (click again to confirm)"
+			}
 			aria-label={armed ? "Confirm delete" : "Delete"}
 			onPointerDown={(e) => e.stopPropagation()}
 			onClick={(e) => {

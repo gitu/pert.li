@@ -3,7 +3,6 @@ import {
 	CheckCircle2Icon,
 	CircleDotIcon,
 	CircleIcon,
-	PlusIcon,
 	RotateCcwIcon,
 	Trash2Icon,
 } from "lucide-react";
@@ -29,19 +28,21 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "#/components/ui/tooltip";
-import { removeTaskMutation } from "#/lib/ai/tool-mutators";
+import {
+	addDependencyMutation,
+	addTaskMutation,
+	moveTaskMutation,
+	removeTaskMutation,
+} from "#/lib/ai/tool-mutators";
 import { todayIsoDate } from "#/lib/pert/calendar";
-import { getDescendants } from "#/lib/pert/hierarchy";
+import { getChildren, getDescendants } from "#/lib/pert/hierarchy";
 import type { MonteCarloResult } from "#/lib/pert/montecarlo";
 import { rollupContainer, rollupContainerPaths } from "#/lib/pert/projection";
 import { readTaskConflicts } from "#/lib/pert/read-conflicts";
 import { computeSchedule, type TaskSchedule } from "#/lib/pert/schedule";
 import { projectDocStore, selectionStore } from "#/lib/pert/store";
 import type {
-	ContainerInterface,
 	Estimate,
-	InterfaceId,
-	InterfaceKind,
 	PertDoc,
 	Task,
 	TaskId,
@@ -107,6 +108,7 @@ export function TaskInspector() {
 				task={task}
 				doc={doc}
 				changeDoc={safeChangeDoc}
+				projectId={projectId}
 				conflictPill={conflictPill}
 				onDelete={onDelete}
 				mcResult={mc.result}
@@ -115,6 +117,9 @@ export function TaskInspector() {
 			<TaskForm
 				key={task.id}
 				task={task}
+				doc={doc}
+				changeDoc={safeChangeDoc}
+				projectId={projectId}
 				scheduleResult={computeSchedule(doc)}
 				conflictPill={conflictPill}
 				mcResult={mc.result}
@@ -153,6 +158,9 @@ type ScheduleResult = ReturnType<typeof computeSchedule>;
 
 function TaskForm({
 	task,
+	doc,
+	changeDoc,
+	projectId,
 	scheduleResult,
 	conflictPill,
 	mcResult,
@@ -160,6 +168,9 @@ function TaskForm({
 	onDelete,
 }: {
 	task: Task;
+	doc: PertDoc;
+	changeDoc: (mutate: (d: PertDoc) => void) => void;
+	projectId: string;
 	scheduleResult: ScheduleResult;
 	conflictPill?: React.ReactNode;
 	mcResult: MonteCarloResult | null;
@@ -485,6 +496,13 @@ function TaskForm({
 					</div>
 				</div>
 
+				<Separator className="my-6" />
+				<DependenciesSection
+					task={task}
+					doc={doc}
+					changeDoc={changeDoc}
+					projectId={projectId}
+				/>
 				<Separator className="my-6" />
 				<DangerZone onDelete={onDelete} label="Delete task" />
 			</div>
@@ -835,6 +853,314 @@ function DangerZone({
 	);
 }
 
+// Lists the dependencies touching the selected task (Depends on / Required
+// for) and offers a small inline quick-add row to spawn a successor or
+// predecessor in a single click. Each row is clickable to navigate to that
+// task in the inspector.
+function DependenciesSection({
+	task,
+	doc,
+	changeDoc,
+	projectId,
+}: {
+	task: Task;
+	doc: PertDoc;
+	changeDoc: (mutate: (d: PertDoc) => void) => void;
+	projectId: string;
+}) {
+	const { incoming, outgoing } = useMemo(() => {
+		const incoming: Array<{ depId: string; otherId: TaskId }> = [];
+		const outgoing: Array<{ depId: string; otherId: TaskId }> = [];
+		for (const dep of Object.values(doc.dependenciesById)) {
+			if (dep.to.taskId === task.id && dep.from.taskId) {
+				incoming.push({ depId: dep.id, otherId: dep.from.taskId });
+			} else if (dep.from.taskId === task.id && dep.to.taskId) {
+				outgoing.push({ depId: dep.id, otherId: dep.to.taskId });
+			}
+		}
+		return { incoming, outgoing };
+	}, [doc, task.id]);
+
+	const removeDep = (depId: string) => {
+		changeDoc((d) => {
+			delete d.dependenciesById[depId];
+		});
+	};
+
+	const navigate = (id: TaskId) => {
+		selectionStore.setState((s) => ({ ...s, projectId, taskId: id }));
+	};
+
+	return (
+		<div className="space-y-4">
+			<DependencyList
+				label="Depends on"
+				hint="Tasks that must finish before this one can start."
+				doc={doc}
+				rows={incoming}
+				onNavigate={navigate}
+				onRemove={removeDep}
+				testId="deps-incoming"
+			/>
+			<DependencyList
+				label="Required for"
+				hint="Tasks that wait on this one before they can start."
+				doc={doc}
+				rows={outgoing}
+				onNavigate={navigate}
+				onRemove={removeDep}
+				testId="deps-outgoing"
+			/>
+			<QuickAddDependencyRow task={task} changeDoc={changeDoc} />
+		</div>
+	);
+}
+
+function DependencyList({
+	label,
+	hint,
+	doc,
+	rows,
+	onNavigate,
+	onRemove,
+	testId,
+}: {
+	label: string;
+	hint: string;
+	doc: PertDoc;
+	rows: Array<{ depId: string; otherId: TaskId }>;
+	onNavigate: (id: TaskId) => void;
+	onRemove: (depId: string) => void;
+	testId: string;
+}) {
+	return (
+		<div>
+			<div className="mb-1.5 flex items-center justify-between">
+				<h3 className="text-[11px] font-semibold uppercase tracking-wider text-foreground/80">
+					{label}
+				</h3>
+				<span className="text-[10px] text-muted-foreground">{rows.length}</span>
+			</div>
+			{rows.length === 0 ? (
+				<p
+					className="text-xs text-muted-foreground"
+					data-testid={`${testId}-empty`}
+				>
+					{hint}
+				</p>
+			) : (
+				<ul className="space-y-1" data-testid={testId}>
+					{rows.map((row) => {
+						const other = doc.tasksById[row.otherId];
+						return (
+							<li
+								key={row.depId}
+								className="flex items-center gap-2 rounded-md border border-border/60 bg-card/40 px-2 py-1 text-xs"
+							>
+								<button
+									type="button"
+									onClick={() => onNavigate(row.otherId)}
+									className="min-w-0 flex-1 truncate text-left hover:underline"
+									title={other?.title ?? row.otherId}
+								>
+									{other?.title ?? row.otherId}
+								</button>
+								<Button
+									type="button"
+									size="sm"
+									variant="ghost"
+									className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-destructive"
+									onClick={() => onRemove(row.depId)}
+									data-testid={`${testId}-remove-${row.depId}`}
+								>
+									Remove
+								</Button>
+							</li>
+						);
+					})}
+				</ul>
+			)}
+		</div>
+	);
+}
+
+// Inline quick-add: the user types a name, optionally adjusts the estimate
+// (most-likely days; o/p auto-derive as m/2 and m*2), and clicks Successor
+// (current → new) or Predecessor (new → current). New tasks inherit the
+// current task's parent so a quick-add inside a container stays inside it.
+function QuickAddDependencyRow({
+	task,
+	changeDoc,
+}: {
+	task: Task;
+	changeDoc: (mutate: (d: PertDoc) => void) => void;
+}) {
+	const [title, setTitle] = useState("");
+	const [estimateDays, setEstimateDays] = useState("");
+
+	const submit = (direction: "successor" | "predecessor") => {
+		const trimmed = title.trim();
+		if (!trimmed) return;
+		const m = Number.parseFloat(estimateDays);
+		const mostLikely = Number.isFinite(m) && m > 0 ? m : 2;
+		const optimistic = Math.max(0.25, mostLikely / 2);
+		const pessimistic = mostLikely * 2;
+		changeDoc((d) => {
+			const { id: newId } = addTaskMutation(d, {
+				title: trimmed,
+				parentId: task.parentId,
+				estimate: {
+					optimistic,
+					mostLikely,
+					pessimistic,
+					unit: "day",
+				},
+			});
+			const fromId = direction === "successor" ? task.id : newId;
+			const toId = direction === "successor" ? newId : task.id;
+			addDependencyMutation(d, { fromTaskId: fromId, toTaskId: toId });
+		});
+		setTitle("");
+		setEstimateDays("");
+	};
+
+	return (
+		<div
+			className="rounded-md border border-dashed border-border/70 bg-muted/20 p-2"
+			data-testid="deps-quick-add"
+		>
+			<h3 className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-foreground/80">
+				Add follow-up
+			</h3>
+			<div className="flex flex-col gap-1.5 @sm:flex-row">
+				<Input
+					value={title}
+					onChange={(e) => setTitle(e.target.value)}
+					placeholder="New task name"
+					className="h-8 flex-1 text-xs"
+					data-testid="deps-quick-add-title"
+					onKeyDown={(e) => {
+						if (e.key === "Enter" && !e.shiftKey) {
+							e.preventDefault();
+							submit("successor");
+						}
+					}}
+				/>
+				<Input
+					value={estimateDays}
+					onChange={(e) => setEstimateDays(e.target.value)}
+					placeholder="est. days"
+					inputMode="decimal"
+					className="h-8 w-20 text-xs"
+					data-testid="deps-quick-add-estimate"
+				/>
+			</div>
+			<div className="mt-1.5 flex items-center gap-1">
+				<Button
+					type="button"
+					size="sm"
+					variant="outline"
+					className="h-7 flex-1 gap-1 text-[11px]"
+					onClick={() => submit("predecessor")}
+					disabled={!title.trim()}
+					data-testid="deps-quick-add-predecessor"
+					title="Insert a new task that this one depends on"
+				>
+					← Predecessor
+				</Button>
+				<Button
+					type="button"
+					size="sm"
+					variant="outline"
+					className="h-7 flex-1 gap-1 text-[11px]"
+					onClick={() => submit("successor")}
+					disabled={!title.trim()}
+					data-testid="deps-quick-add-successor"
+					title="Insert a new task that depends on this one"
+				>
+					Successor →
+				</Button>
+			</div>
+		</div>
+	);
+}
+
+// Lists the direct children of a container with a "Remove from container"
+// action that promotes the child one level up (to the container's parent).
+function ChildrenSection({
+	task,
+	doc,
+	changeDoc,
+	projectId,
+}: {
+	task: Task;
+	doc: PertDoc;
+	changeDoc: (mutate: (d: PertDoc) => void) => void;
+	projectId: string;
+}) {
+	const children = useMemo(() => getChildren(doc, task.id), [doc, task.id]);
+	const navigate = (id: TaskId) => {
+		selectionStore.setState((s) => ({ ...s, projectId, taskId: id }));
+	};
+	const detach = (childId: TaskId) => {
+		changeDoc((d) => {
+			moveTaskMutation(d, { taskId: childId, parentId: task.parentId ?? null });
+		});
+	};
+	return (
+		<div>
+			<div className="mb-1.5 flex items-center justify-between">
+				<h3 className="text-[11px] font-semibold uppercase tracking-wider text-foreground/80">
+					Children
+				</h3>
+				<span className="text-[10px] text-muted-foreground">
+					{children.length}
+				</span>
+			</div>
+			{children.length === 0 ? (
+				<p className="text-xs text-muted-foreground">
+					Drag a task onto this container on the canvas to nest it.
+				</p>
+			) : (
+				<ul className="space-y-1" data-testid="container-children">
+					{children.map((child) => (
+						<li
+							key={child.id}
+							className="flex items-center gap-2 rounded-md border border-border/60 bg-card/40 px-2 py-1 text-xs"
+						>
+							<button
+								type="button"
+								onClick={() => navigate(child.id)}
+								className="min-w-0 flex-1 truncate text-left hover:underline"
+								title={child.title}
+							>
+								<span className="mr-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+									{child.kind === "container"
+										? "box"
+										: child.kind === "milestone"
+											? "★"
+											: ""}
+								</span>
+								{child.title || "Untitled"}
+							</button>
+							<Button
+								type="button"
+								size="sm"
+								variant="ghost"
+								className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-destructive"
+								onClick={() => detach(child.id)}
+								data-testid={`container-detach-${child.id}`}
+							>
+								Detach
+							</Button>
+						</li>
+					))}
+				</ul>
+			)}
+		</div>
+	);
+}
+
 function EstimateField({
 	label,
 	id,
@@ -929,6 +1255,7 @@ function ContainerForm({
 	task,
 	doc,
 	changeDoc,
+	projectId,
 	conflictPill,
 	onDelete,
 	mcResult,
@@ -936,6 +1263,7 @@ function ContainerForm({
 	task: Task;
 	doc: PertDoc;
 	changeDoc: (mutate: (d: PertDoc) => void) => void;
+	projectId: string;
 	conflictPill?: React.ReactNode;
 	onDelete: () => void;
 	mcResult: MonteCarloResult | null;
@@ -970,16 +1298,6 @@ function ContainerForm({
 		() => rollupContainerPaths(doc, schedule, mcResult, task.id),
 		[doc, schedule, mcResult, task.id],
 	);
-	const leafDescendants = useMemo(
-		() =>
-			descendantIds
-				.map((id) => doc.tasksById[id])
-				.filter((t): t is Task => Boolean(t) && t.kind !== "container"),
-		[descendantIds, doc.tasksById],
-	);
-	const interfaces = doc.interfacesByContainerId[task.id] ?? {};
-	const interfaceList = useMemo(() => Object.values(interfaces), [interfaces]);
-
 	const mutateTask = useCallback(
 		(mutate: (t: Task) => void) => {
 			changeDoc((d) => {
@@ -989,39 +1307,6 @@ function ContainerForm({
 		},
 		[changeDoc, task.id],
 	);
-
-	const addInterface = (kind: InterfaceKind) => {
-		const id = newInterfaceId();
-		changeDoc((d) => {
-			if (!d.interfacesByContainerId[task.id]) {
-				d.interfacesByContainerId[task.id] = {};
-			}
-			const ifs = d.interfacesByContainerId[task.id];
-			ifs[id] = {
-				id,
-				containerId: task.id,
-				kind,
-				label: kind === "entry" ? "New entry" : "New exit",
-			};
-		});
-	};
-
-	const updateInterface = (
-		interfaceId: InterfaceId,
-		patch: (iface: ContainerInterface) => void,
-	) => {
-		changeDoc((d) => {
-			const draft = d.interfacesByContainerId[task.id]?.[interfaceId];
-			if (draft) patch(draft);
-		});
-	};
-
-	const removeInterface = (interfaceId: InterfaceId) => {
-		changeDoc((d) => {
-			const ifs = d.interfacesByContainerId[task.id];
-			if (ifs) delete ifs[interfaceId];
-		});
-	};
 
 	return (
 		<div className="flex h-full flex-col overflow-hidden">
@@ -1090,52 +1375,12 @@ function ContainerForm({
 							/>
 						</div>
 						<div className="pt-2">
-							<SectionHeading
-								label="Boundary"
-								hint="Named ports on the container card. When the container is collapsed, cross-boundary edges route through whichever port a dependency pins (or the default port for that side)."
-								trailing={
-									<div className="flex items-center gap-1">
-										<Button
-											type="button"
-											size="sm"
-											variant="outline"
-											className="h-7 gap-1 text-xs"
-											onClick={() => addInterface("entry")}
-											data-testid="container-add-entry"
-										>
-											<PlusIcon className="size-3" /> Entry
-										</Button>
-										<Button
-											type="button"
-											size="sm"
-											variant="outline"
-											className="h-7 gap-1 text-xs"
-											onClick={() => addInterface("exit")}
-											data-testid="container-add-exit"
-										>
-											<PlusIcon className="size-3" /> Exit
-										</Button>
-									</div>
-								}
+							<ChildrenSection
+								task={task}
+								doc={doc}
+								changeDoc={changeDoc}
+								projectId={projectId}
 							/>
-							{interfaceList.length === 0 ? (
-								<p className="text-xs text-muted-foreground">
-									No interfaces yet. Add entry/exit ports so collapsed edges
-									have a labelled handle to attach to.
-								</p>
-							) : (
-								<ul className="space-y-2">
-									{interfaceList.map((iface) => (
-										<InterfaceRow
-											key={iface.id}
-											iface={iface}
-											leafChoices={leafDescendants}
-											onChange={(patch) => updateInterface(iface.id, patch)}
-											onRemove={() => removeInterface(iface.id)}
-										/>
-									))}
-								</ul>
-							)}
 						</div>
 					</div>
 
@@ -1315,95 +1560,4 @@ function ContainerSummary({
 			</span>
 		</div>
 	);
-}
-
-function InterfaceRow({
-	iface,
-	leafChoices,
-	onChange,
-	onRemove,
-}: {
-	iface: ContainerInterface;
-	leafChoices: Task[];
-	onChange: (patch: (iface: ContainerInterface) => void) => void;
-	onRemove: () => void;
-}) {
-	return (
-		<li
-			data-testid={`interface-row-${iface.id}`}
-			className="space-y-2 rounded-md border bg-card/40 p-2"
-		>
-			<div className="flex items-center gap-2">
-				<Select
-					value={iface.kind}
-					onValueChange={(v) =>
-						onChange((d) => {
-							d.kind = v as InterfaceKind;
-						})
-					}
-				>
-					<SelectTrigger className="h-7 w-[88px] text-xs">
-						<SelectValue />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value="entry">Entry</SelectItem>
-						<SelectItem value="exit">Exit</SelectItem>
-					</SelectContent>
-				</Select>
-				<Input
-					value={iface.label}
-					onChange={(e) => {
-						const next = e.target.value;
-						onChange((d) => {
-							d.label = next;
-						});
-					}}
-					className="h-7 flex-1 text-xs"
-				/>
-				<Button
-					type="button"
-					size="icon"
-					variant="ghost"
-					className="size-7 text-destructive"
-					aria-label="Remove interface"
-					onClick={onRemove}
-				>
-					<Trash2Icon className="size-3.5" />
-				</Button>
-			</div>
-			<div className="flex items-center gap-2 text-xs text-muted-foreground">
-				<span className="w-[88px]">Routes to</span>
-				<Select
-					value={iface.taskRef ?? UNSET_REF}
-					onValueChange={(v) =>
-						onChange((d) => {
-							d.taskRef = v === UNSET_REF ? undefined : (v as TaskId);
-						})
-					}
-				>
-					<SelectTrigger className="h-7 flex-1 text-xs">
-						<SelectValue placeholder="Select descendant" />
-					</SelectTrigger>
-					<SelectContent>
-						<SelectItem value={UNSET_REF}>— Not set —</SelectItem>
-						{leafChoices.map((t) => (
-							<SelectItem key={t.id} value={t.id}>
-								{t.title || t.id}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
-			</div>
-		</li>
-	);
-}
-
-const UNSET_REF = "__unset__";
-
-function newInterfaceId(): string {
-	const bytes = new Uint8Array(6);
-	crypto.getRandomValues(bytes);
-	let s = "";
-	for (const b of bytes) s += b.toString(16).padStart(2, "0");
-	return `if_${s}`;
 }
