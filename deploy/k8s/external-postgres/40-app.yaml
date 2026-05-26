@@ -1,0 +1,70 @@
+# pert.li app Deployment — external Postgres variant.
+#
+# `replicas: 1` is intentional — see deploy/k8s/postgres-statefulset/40-app.yaml
+# for the rationale (Automerge in-process state, no fan-out yet).
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pertli
+  namespace: pertli
+spec:
+  selector:
+    app: pertli
+  ports:
+    - port: 80
+      targetPort: 8080
+      name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pertli
+  namespace: pertli
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pertli
+  template:
+    metadata:
+      labels:
+        app: pertli
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/gitu/pert.li:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: AUTOMERGE_STORAGE
+              value: postgres
+            - name: BETTER_AUTH_URL
+              valueFrom:
+                configMapKeyRef: { name: pertli, key: BETTER_AUTH_URL }
+          envFrom:
+            - secretRef:
+                name: pertli
+          readinessProbe:
+            httpGet:
+              path: /privacy
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /privacy
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              memory: "1Gi"

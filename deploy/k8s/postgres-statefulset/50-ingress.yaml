@@ -1,0 +1,34 @@
+# Ingress — bring your own controller (nginx, traefik, contour, cilium, …)
+# and TLS issuer (cert-manager, externally provisioned cert, …).
+#
+# WebSocket support: pert.li's collaborative sync uses a WS connection at
+# /sync. Most ingress controllers proxy WS by default, but nginx-ingress
+# needs the `proxy-read-timeout` bumped or long-lived sync sessions get cut.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pertli
+  namespace: pertli
+  annotations:
+    # nginx-ingress: keep the WS connection open up to an hour.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # cert-manager: uncomment and point to your ClusterIssuer for automatic TLS.
+    # cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: pert.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pertli
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - pert.example.com
+      secretName: pertli-tls

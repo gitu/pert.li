@@ -1,11 +1,13 @@
 # syntax=docker/dockerfile:1.7
-# Multi-stage build for pert.li → Cloud Run.
+# Multi-stage build for pert.li. Produces a slim Node image that runs on
+# Cloud Run, plain Docker, Kubernetes, or anywhere else Node 24 runs.
 #
 # Stage 1 (deps)      — fetch the full content-addressed store from the lockfile.
 # Stage 2 (build)     — install all deps and compile TanStack Start to .output/.
 # Stage 3 (prod-deps) — install ONLY production deps (for externalized packages
 #                       like @automerge/* that Nitro doesn't bundle).
-# Stage 4 (runner)    — copy .output/ + the prod node_modules into a slim image.
+# Stage 4 (runner)    — copy .output/ + the prod node_modules + migration
+#                       scripts + the entrypoint into a slim image.
 
 ARG NODE_VERSION=24.0.0
 
@@ -68,6 +70,11 @@ USER node
 
 COPY --chown=node:node --from=build /app/.output ./.output
 COPY --chown=node:node --from=prod-deps /app/node_modules ./node_modules
+# Migration scripts + the SQL migrations they apply. Kept out of the bundle
+# so they can be invoked / replaced without rebuilding the server.
+COPY --chown=node:node --from=build /app/scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.sh
+COPY --chown=node:node --from=build /app/scripts/migrate.mjs ./scripts/migrate.mjs
+COPY --chown=node:node --from=build /app/drizzle ./drizzle
 
 EXPOSE 8080
-CMD ["node", ".output/server/index.mjs"]
+ENTRYPOINT ["./scripts/docker-entrypoint.sh"]

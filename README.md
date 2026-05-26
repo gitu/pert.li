@@ -53,8 +53,15 @@ LLM_PROVIDER=             # openai | anthropic | gemini
 LLM_MODEL=
 OPENAI_BASE_URL=          # any OpenAI-compatible /v1 endpoint
 
-# Optional: passwordless email (without it, /signin uses a dev console fallback)
+# Optional: passwordless email (without either, /signin uses a dev console fallback).
+# SMTP takes precedence over Resend when both are set.
+SMTP_HOST=                # e.g. smtp.example.com — set this to use SMTP
+SMTP_PORT=587             # 465 = TLS-from-start, 587 = STARTTLS (default)
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=                # noreply@yourdomain.com
 RESEND_API_KEY=
+RESEND_FROM_EMAIL=        # verified Resend sender
 
 # Optional: a single OIDC SSO provider — leave unset to hide the SSO button
 OIDC_PROVIDER_ID=         # default "oidc"; URL segment for the callback
@@ -106,12 +113,22 @@ pnpm db:studio         # Drizzle Studio
 
 ## Self-hosting
 
-The repo ships a multi-stage `Dockerfile` and `docker.yml` workflow that publishes `ghcr.io/<owner>/pert.li:<tag>` on every git tag. The image is a slim Node runtime that runs `node .output/server/index.mjs`; provide `DATABASE_URL`, `BETTER_AUTH_SECRET`, and an LLM key as env vars.
+pert.li is MIT-licensed and ships as a Docker image (`ghcr.io/<owner>/pert.li:<tag>`, published on every git tag). The fastest path is `docker compose`:
 
-For Google Cloud Run specifically — including Cloud Build, Artifact Registry, Secret Manager wiring, and `pnpm db:push` on rollout — see [`DEPLOY.md`](./DEPLOY.md).
+```bash
+cp .env.example .env   # set BETTER_AUTH_SECRET, POSTGRES_PASSWORD, an LLM key
+docker compose up -d
+open http://localhost:8080
+```
 
-For other Nitro presets (Vercel, Netlify, Cloudflare Workers, AWS Lambda, …), the build output is portable; see <https://nitro.build/deploy>.
+The container entrypoint applies SQL migrations from `./drizzle/` on first start, then boots the bundled Nitro server. See [`SELF_HOSTING.md`](./SELF_HOSTING.md) for the full guide — Kubernetes manifests (in [`deploy/k8s/`](./deploy/k8s/)), TLS / reverse-proxy setup, backups, upgrades, optional SMTP / OIDC / LLM configuration, and the current multi-instance limitation.
+
+For Google Cloud Run specifically, see [`DEPLOY.md`](./DEPLOY.md). For other Nitro presets (Vercel, Netlify, Cloudflare Workers, AWS Lambda, …), the build output is portable; see <https://nitro.build/deploy>.
 
 ## Contributing
 
-Project conventions live in [`CLAUDE.md`](./CLAUDE.md) — testing rules (Vitest + Storybook + Playwright), styling, file layout, and a few `gotchas` worth knowing before opening a PR.
+Project conventions live in [`CLAUDE.md`](./CLAUDE.md) — testing rules (Vitest + Storybook + Playwright), styling, file layout, and a few `gotchas` worth knowing before opening a PR. New to the codebase? Start with [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the contributor quickstart.
+
+## License
+
+[MIT](./LICENSE). Security disclosures: see [`SECURITY.md`](./SECURITY.md).

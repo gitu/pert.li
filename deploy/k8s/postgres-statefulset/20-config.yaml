@@ -1,0 +1,13 @@
+# Public-facing URL the app announces (sign-in callbacks, cookie domain).
+# Change to your real hostname when you set up an Ingress + TLS.
+#
+# Non-secret tunables go here so changes don't require touching the Secret.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pertli
+  namespace: pertli
+data:
+  BETTER_AUTH_URL: "http://localhost:8080"
+  POSTGRES_USER: "pertli"
+  POSTGRES_DB: "pertli"

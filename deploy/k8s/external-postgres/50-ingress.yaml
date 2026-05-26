@@ -1,0 +1,29 @@
+# Same caveats as deploy/k8s/postgres-statefulset/50-ingress.yaml: bring your
+# own ingress controller, bump WS timeouts, wire up TLS via cert-manager or
+# an externally-provisioned cert.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pertli
+  namespace: pertli
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: pert.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pertli
+                port:
+                  number: 80
+  tls:
+    - hosts:
+        - pert.example.com
+      secretName: pertli-tls

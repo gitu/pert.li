@@ -3,7 +3,6 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { genericOAuth, magicLink } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
 import { count as countFn } from "drizzle-orm";
-import { Resend } from "resend";
 import { db } from "#/db";
 import { account, session, user, verification } from "#/db/schema";
 import {
@@ -11,6 +10,7 @@ import {
 	parseOidcConfig,
 	toPublicInfo,
 } from "#/lib/auth-oidc";
+import { createEmailTransport } from "#/lib/email.server";
 
 // Drizzle adapter works for both production Neon and the e2e PGLite
 // backend; the db proxy in src/db/index.ts routes to whichever driver
@@ -20,19 +20,12 @@ const authDatabase = drizzleAdapter(db, {
 	schema: { user, session, account, verification },
 });
 
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL ?? "noreply@pert.li";
-// Soft check: warn if the sender isn't on the verified @pert.li domain, but
-// don't crash the server. Cloud Run can run with Resend's sandbox sender
-// (`onboarding@resend.dev`) until the production DNS is in place, and dev
-// environments often default to it too. A hard throw blocked boot for
-// everyone the moment the domain wasn't yet verified.
-if (!/@pert\.li$/i.test(FROM_EMAIL)) {
+const emailTransport = createEmailTransport(process.env);
+if (emailTransport.kind === "console") {
 	console.warn(
-		`[auth] RESEND_FROM_EMAIL is "${FROM_EMAIL}". For production set this to a verified @pert.li sender; the sandbox address only delivers to the Resend account owner.`,
+		"[auth] No email transport configured (set SMTP_HOST or RESEND_API_KEY). Magic links will be logged to stdout instead of being sent.",
 	);
 }
-const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 
 // Optional: a single OIDC provider for on-prem / Entra ID deployments. When
 // the OIDC_* env vars aren't set the plugin isn't loaded at all, so the
@@ -118,23 +111,16 @@ export const auth = betterAuth({
 	plugins: [
 		magicLink({
 			sendMagicLink: async ({ email, url }) => {
-				if (!resend) {
-					// Local dev without Resend: log the link so sign-in still works
-					// instead of silently swallowing it. Prod MUST set RESEND_API_KEY.
-					console.log(`[magic-link] (no RESEND_API_KEY) ${email} → ${url}`);
-					return;
+				if (emailTransport.kind === "console") {
+					// Preserve the prior dev-fallback log format so anything (tests,
+					// docs, screencasts) that grepped for "[magic-link]" still works.
+					console.log(`[magic-link] ${email} → ${url}`);
 				}
-				const { error } = await resend.emails.send({
-					from: FROM_EMAIL,
+				await emailTransport.send({
 					to: email,
 					subject: "Your sign-in link for pert.li",
 					text: `Click to sign in to pert.li:\n\n${url}\n\nThe link expires in 5 minutes. If you didn't request it, you can ignore this email.`,
 				});
-				if (error) {
-					throw new Error(
-						`Resend send failed: ${error.message ?? JSON.stringify(error)}`,
-					);
-				}
 			},
 		}),
 		...oidcPlugins,
