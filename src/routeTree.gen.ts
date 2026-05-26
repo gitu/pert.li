@@ -15,6 +15,7 @@ import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
+import { Route as AppAdminRouteImport } from './routes/_app/admin'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
 import { Route as AppPProjectIdRouteImport } from './routes/_app/p.$projectId'
 
@@ -47,6 +48,11 @@ const ApiChatRoute = ApiChatRouteImport.update({
   path: '/api/chat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppAdminRoute = AppAdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => AppRoute,
+} as any)
 const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
   id: '/api/auth/$',
   path: '/api/auth/$',
@@ -63,6 +69,7 @@ export interface FileRoutesByFullPath {
   '/privacy': typeof PrivacyRoute
   '/signin': typeof SigninRoute
   '/welcome': typeof WelcomeRoute
+  '/admin': typeof AppAdminRoute
   '/api/chat': typeof ApiChatRoute
   '/p/$projectId': typeof AppPProjectIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -71,6 +78,7 @@ export interface FileRoutesByTo {
   '/privacy': typeof PrivacyRoute
   '/signin': typeof SigninRoute
   '/welcome': typeof WelcomeRoute
+  '/admin': typeof AppAdminRoute
   '/api/chat': typeof ApiChatRoute
   '/': typeof AppIndexRoute
   '/p/$projectId': typeof AppPProjectIdRoute
@@ -82,6 +90,7 @@ export interface FileRoutesById {
   '/privacy': typeof PrivacyRoute
   '/signin': typeof SigninRoute
   '/welcome': typeof WelcomeRoute
+  '/_app/admin': typeof AppAdminRoute
   '/api/chat': typeof ApiChatRoute
   '/_app/': typeof AppIndexRoute
   '/_app/p/$projectId': typeof AppPProjectIdRoute
@@ -94,6 +103,7 @@ export interface FileRouteTypes {
     | '/privacy'
     | '/signin'
     | '/welcome'
+    | '/admin'
     | '/api/chat'
     | '/p/$projectId'
     | '/api/auth/$'
@@ -102,6 +112,7 @@ export interface FileRouteTypes {
     | '/privacy'
     | '/signin'
     | '/welcome'
+    | '/admin'
     | '/api/chat'
     | '/'
     | '/p/$projectId'
@@ -112,6 +123,7 @@ export interface FileRouteTypes {
     | '/privacy'
     | '/signin'
     | '/welcome'
+    | '/_app/admin'
     | '/api/chat'
     | '/_app/'
     | '/_app/p/$projectId'
@@ -171,6 +183,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiChatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_app/admin': {
+      id: '/_app/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AppAdminRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/api/auth/$': {
       id: '/api/auth/$'
       path: '/api/auth/$'
@@ -189,11 +208,13 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppRouteChildren {
+  AppAdminRoute: typeof AppAdminRoute
   AppIndexRoute: typeof AppIndexRoute
   AppPProjectIdRoute: typeof AppPProjectIdRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAdminRoute: AppAdminRoute,
   AppIndexRoute: AppIndexRoute,
   AppPProjectIdRoute: AppPProjectIdRoute,
 }

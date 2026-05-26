@@ -36,6 +36,12 @@ export const user = pgTable("user", {
 	image: text("image"),
 	createdAt: timestamp("createdAt").notNull(),
 	updatedAt: timestamp("updatedAt").notNull(),
+	// Self-hosted operator role. Promotion is automatic for the first user
+	// that signs up (see auth.server.ts databaseHooks). Everyone else stays
+	// non-admin until an existing admin flips them in the DB directly. Kept
+	// on the user row so Better Auth's session can surface it via
+	// `user.additionalFields` without an extra join.
+	isAdmin: boolean("isAdmin").notNull().default(false),
 });
 
 export const session = pgTable("session", {

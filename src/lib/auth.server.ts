@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { genericOAuth, magicLink } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
+import { count as countFn } from "drizzle-orm";
 import { Resend } from "resend";
 import { db } from "#/db";
 import { account, session, user, verification } from "#/db/schema";
@@ -82,6 +83,35 @@ export const auth = betterAuth({
 	database: authDatabase,
 	baseURL,
 	trustedOrigins,
+	user: {
+		// Expose `isAdmin` on the session user. Defaults to false; the create
+		// hook below auto-promotes the first user that signs up so a fresh
+		// self-hosted instance has at least one operator without any manual
+		// DB poking.
+		additionalFields: {
+			isAdmin: {
+				type: "boolean",
+				required: false,
+				defaultValue: false,
+				input: false,
+			},
+		},
+	},
+	databaseHooks: {
+		user: {
+			create: {
+				async before(data) {
+					// First user to sign up gets the admin bit so a freshly-provisioned
+					// instance has at least one operator without any manual DB poking.
+					// All subsequent users default to non-admin (see schema default).
+					const [{ value }] = await db.select({ value: countFn() }).from(user);
+					if (value === 0) {
+						return { data: { ...data, isAdmin: true } };
+					}
+				},
+			},
+		},
+	},
 	emailAndPassword: {
 		enabled: true,
 	},
