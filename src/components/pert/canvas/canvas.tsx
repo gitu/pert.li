@@ -56,7 +56,7 @@ import {
 } from "./container-node";
 import { CycleBanner } from "./cycle-banner";
 import { TaskNode, type TaskNodeData } from "./task-node";
-import { CanvasToolbar } from "./toolbar";
+import { CanvasAddToolbar, CanvasViewToolbar } from "./toolbar";
 
 export type CanvasProps = {
 	projectId: string;
@@ -234,6 +234,58 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		},
 		[changeDoc],
 	);
+
+	// Radial quick-add: spawn a new task linked by a dependency to the source
+	// task. The new task lands one column to the side at the source's y so the
+	// auto-layout (when enabled) only needs to nudge, and the user sees it
+	// without panning. Inherits the source's container parent so quick-adds
+	// inside a container stay inside it. Selecting + entering inline-edit on
+	// the new task lets the user immediately rename it without a second click.
+	const onAddLinkedTask = useCallback(
+		(sourceId: TaskId, direction: "successor" | "predecessor") => {
+			const source = doc.tasksById[sourceId];
+			if (!source) return;
+			const sourcePos = source.layout?.position ?? { x: 0, y: 0 };
+			const offsetX = TASK_WIDTH + 80;
+			const position = {
+				x:
+					direction === "successor"
+						? sourcePos.x + offsetX
+						: sourcePos.x - offsetX,
+				y: sourcePos.y,
+			};
+			const newTaskId = newId("task");
+			const newDepId = newId("dep");
+			changeDoc((d) => {
+				const draftSource = d.tasksById[sourceId];
+				if (!draftSource) return;
+				d.tasksById[newTaskId] = {
+					id: newTaskId,
+					kind: "task",
+					title: "New task",
+					parentId: draftSource.parentId ?? null,
+					layout: { position },
+					estimate: {
+						optimistic: 1,
+						mostLikely: 2,
+						pessimistic: 4,
+						unit: "day",
+					},
+				};
+				const fromId = direction === "successor" ? sourceId : newTaskId;
+				const toId = direction === "successor" ? newTaskId : sourceId;
+				d.dependenciesById[newDepId] = {
+					id: newDepId,
+					from: { taskId: fromId },
+					to: { taskId: toId },
+					type: "finish_to_start",
+				};
+			});
+			selectTask(projectId, newTaskId);
+			setEditingNodeId(newTaskId);
+		},
+		[changeDoc, doc.tasksById, projectId],
+	);
 	const reactFlow = useReactFlow();
 	const { screenToFlowPosition, setCenter, getZoom } = reactFlow;
 	const recentlyCreated = useRecentlyCreatedHighlight(doc, setCenter, getZoom);
@@ -254,6 +306,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				editingNodeId,
 				onCommitInlineEdit,
 				onCancelInlineEdit,
+				onAddLinkedTask,
 			),
 		[
 			doc,
@@ -269,6 +322,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			editingNodeId,
 			onCommitInlineEdit,
 			onCancelInlineEdit,
+			onAddLinkedTask,
 		],
 	);
 	const derivedEdges = useMemo(
@@ -479,19 +533,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		setSelectedEdgeId(null);
 	}, [projectId]);
 
-	const onPaneDoubleClick = useCallback(
-		(event: React.MouseEvent) => {
-			const position = screenToFlowPosition({
-				x: event.clientX,
-				y: event.clientY,
-			});
-			createTask(changeDoc, "task", position, null, (id) =>
-				selectTask(projectId, id),
-			);
-		},
-		[changeDoc, projectId, screenToFlowPosition],
-	);
-
 	const selectedTaskId = useStore(selectionStore, (s) =>
 		s.projectId === projectId ? s.taskId : null,
 	);
@@ -538,7 +579,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				onConnect={onConnect}
 				onPaneClick={onPaneClick}
 				onPaneContextMenu={(e) => e.preventDefault()}
-				onDoubleClick={onPaneDoubleClick}
 				onNodeDoubleClick={(_event, node) => {
 					// Containers handle expand/collapse via the chevron button —
 					// don't grab their double-click. Only leaf nodes get inline
@@ -573,18 +613,30 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				className="pointer-events-none absolute top-3 left-1/2 z-10 max-w-[calc(100%-1.5rem)] -translate-x-1/2"
 			>
 				<div className="pointer-events-auto">
-					<CanvasToolbar
+					<CanvasAddToolbar
 						onAddTask={() => handleAddTask("task")}
 						onAddMilestone={() => handleAddTask("milestone")}
 						onAddContainer={() => handleAddTask("container")}
-						prefs={prefs}
-						onSetEdgeStyle={handleSetEdgeStyle}
-						onSetSpacing={handleSetSpacing}
-						onRelayout={handleRelayout}
-						onToggleContinuous={handleToggleContinuous}
 					/>
 				</div>
 			</div>
+			{!isMobile && (
+				// Sit just above the React Flow Controls (bottom-left), so the
+				// re-layout / auto-layout / display controls live next to the
+				// pan/zoom navigation utilities. Hidden on mobile to match the
+				// Controls panel which is also hidden on touch.
+				<div className="pointer-events-none absolute bottom-28 left-3 z-10">
+					<div className="pointer-events-auto">
+						<CanvasViewToolbar
+							prefs={prefs}
+							onSetEdgeStyle={handleSetEdgeStyle}
+							onSetSpacing={handleSetSpacing}
+							onRelayout={handleRelayout}
+							onToggleContinuous={handleToggleContinuous}
+						/>
+					</div>
+				</div>
+			)}
 			{cycle && (
 				<div className="pointer-events-none absolute left-1/2 top-14 z-10 -translate-x-1/2">
 					<CycleBanner
@@ -654,6 +706,10 @@ function buildNodes(
 		next: { title: string; mostLikelyDays?: number },
 	) => void,
 	onCancelInlineEdit: () => void,
+	onAddLinkedTask: (
+		sourceId: TaskId,
+		direction: "successor" | "predecessor",
+	) => void,
 ): Node[] {
 	const fallback = fallbackGridLayout(doc);
 	const schedule = scheduleResult.ok ? scheduleResult.schedule : null;
@@ -755,6 +811,7 @@ function buildNodes(
 				editingNodeId,
 				onCommitInlineEdit,
 				onCancelInlineEdit,
+				onAddLinkedTask,
 			);
 		}
 	}
@@ -778,6 +835,10 @@ function pushLeafNode(
 		next: { title: string; mostLikelyDays?: number },
 	) => void,
 	onCancelInlineEdit: () => void,
+	onAddLinkedTask: (
+		sourceId: TaskId,
+		direction: "successor" | "predecessor",
+	) => void,
 ) {
 	const task = projected.task;
 	const pos = task.layout?.position ?? fallback[task.id] ?? { x: 0, y: 0 };
@@ -803,6 +864,8 @@ function pushLeafNode(
 			? (next) => onCommitInlineEdit(task.id, next)
 			: undefined,
 		onCancelEdit: editing ? onCancelInlineEdit : undefined,
+		onAddPredecessor: () => onAddLinkedTask(task.id, "predecessor"),
+		onAddSuccessor: () => onAddLinkedTask(task.id, "successor"),
 	};
 	nodes.push({
 		id: task.id,

@@ -17,7 +17,6 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
-import { Separator } from "#/components/ui/separator";
 import {
 	type CanvasPrefs,
 	EDGE_STYLES,
@@ -25,35 +24,20 @@ import {
 	type LayoutSpacing,
 } from "#/lib/pert/canvas-prefs";
 
-export type CanvasToolbarProps = {
+export type CanvasAddToolbarProps = {
 	onAddTask: () => void;
 	onAddMilestone: () => void;
 	onAddContainer: () => void;
-	prefs: CanvasPrefs;
-	onSetEdgeStyle: (style: EdgeStyle) => void;
-	onSetSpacing: (spacing: LayoutSpacing) => void;
-	onRelayout: () => void;
-	onToggleContinuous: () => void;
 };
 
-export function CanvasToolbar({
+export function CanvasAddToolbar({
 	onAddTask,
 	onAddMilestone,
 	onAddContainer,
-	prefs,
-	onSetEdgeStyle,
-	onSetSpacing,
-	onRelayout,
-	onToggleContinuous,
-}: CanvasToolbarProps) {
+}: CanvasAddToolbarProps) {
 	return (
 		<div
 			data-testid="canvas-toolbar"
-			// `flex-wrap` lets the toolbar spill onto a second row on narrow
-			// viewports instead of overflowing horizontally and clipping the
-			// last few buttons. `justify-center` keeps the wrapped row aligned
-			// under the first one. Separators are intentionally NOT hidden when
-			// wrapped — they still mark the grouping even when stacked.
 			className="flex flex-wrap items-center justify-center gap-1 rounded-lg border bg-background/95 px-1.5 py-1 shadow-sm backdrop-blur"
 		>
 			<Button
@@ -86,7 +70,30 @@ export function CanvasToolbar({
 				<FolderPlusIcon className="size-3.5" />
 				Container
 			</Button>
-			<Separator orientation="vertical" className="mx-1 h-5" />
+		</div>
+	);
+}
+
+export type CanvasViewToolbarProps = {
+	prefs: CanvasPrefs;
+	onSetEdgeStyle: (style: EdgeStyle) => void;
+	onSetSpacing: (spacing: LayoutSpacing) => void;
+	onRelayout: () => void;
+	onToggleContinuous: () => void;
+};
+
+export function CanvasViewToolbar({
+	prefs,
+	onSetEdgeStyle,
+	onSetSpacing,
+	onRelayout,
+	onToggleContinuous,
+}: CanvasViewToolbarProps) {
+	return (
+		<div
+			data-testid="canvas-view-toolbar"
+			className="flex flex-col items-stretch gap-1 rounded-lg border bg-background/95 p-1 shadow-sm backdrop-blur"
+		>
 			<Button
 				size="sm"
 				variant="ghost"
@@ -107,8 +114,8 @@ export function CanvasToolbar({
 				aria-pressed={prefs.continuousLayout}
 				title={
 					prefs.continuousLayout
-						? "Continuous auto-layout is ON. Selected node visually stays put as the rest reflows."
-						: "Turn on continuous auto-layout — every change reflows the graph; the selected node visually stays put."
+						? "Auto-layout is ON. Selected node visually stays put as the rest reflows."
+						: "Turn on auto-layout — every change reflows the graph; the selected node visually stays put."
 				}
 			>
 				<PinIcon
@@ -116,7 +123,7 @@ export function CanvasToolbar({
 						prefs.continuousLayout ? "size-3.5 text-primary" : "size-3.5"
 					}
 				/>
-				Continuous
+				Auto-layout
 			</Button>
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
@@ -131,7 +138,7 @@ export function CanvasToolbar({
 						Display
 					</Button>
 				</DropdownMenuTrigger>
-				<DropdownMenuContent align="end" className="min-w-52">
+				<DropdownMenuContent align="start" side="right" className="min-w-52">
 					<DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
 						Edge style
 					</DropdownMenuLabel>

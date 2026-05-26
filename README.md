@@ -1,317 +1,134 @@
-Welcome to your new TanStack Start app! 
+# pert.li
 
-This project is **pnpm-only** (`packageManager` field in `package.json` pins
-the version). If you don't have pnpm yet:
+Collaborative PERT planning with an AI co-planner.
+
+pert.li turns rough scopes into PERT charts you can actually steer: three-point estimates (optimistic / most likely / pessimistic), a deterministic critical path, nested containers, and live multi-user edits. Every keystroke syncs through [Automerge](https://automerge.org) — no save button, no merge conflicts — and a built-in chat assistant can read your plan and create tasks, set estimates, and wire dependencies on your behalf.
+
+## Quick start
+
+Requires Node 24+ and pnpm 11 (corepack will install it for you).
 
 ```bash
 corepack enable
 corepack prepare pnpm@11.3.0 --activate
-```
 
-# Getting Started
-
-To run this application:
-
-```bash
 pnpm install
-pnpm dev
+pnpm dev          # http://localhost:3000
 ```
 
-# Building For Production
+No database setup is needed for first-run dev. The Vite plugin boots an in-process Postgres ([PGLite](https://github.com/electric-sql/pglite)) at `./.data/pglite`, pushes the Drizzle schema, and is ready in ~2 s. Data persists between restarts; delete the directory to start fresh.
 
-To build this application for production:
+To use a real Postgres instead, drop a `DATABASE_URL` into `.env.local` and Drizzle will hit it directly. To re-enable the [Neon Launchpad](https://neon.new) provisioning flow (claimable database, 72 h expiry) set `USE_NEON_PROVISION=1`.
 
-```bash
-pnpm build
-```
+## Features
 
-## Testing
+- **PERT, done properly.** Three-point estimates, automatic ES / EF / LS / LF, slack, and a critical path that updates as you type. The CPM engine is pure TypeScript with property tests in `src/lib/pert/`.
+- **Five synchronized views.** Network canvas (React Flow + ELK auto-layout), Timeline (Gantt), Table (inline editing + grouping with PERT confidence bands), Matrix (dependency toggle), and Tree list — edits in any view sync to the others live.
+- **Nested containers.** Group related tasks into sub-projects with their own entry/exit interfaces. The schedule rolls up automatically.
+- **Real-time collaboration.** Automerge CRDT under the hood, broadcast within a browser and WebSocket-synced across browsers. Two people see the same critical path without stepping on each other's keystrokes.
+- **AI co-planner.** A chat dock that can ingest a brief, propose a task breakdown, set estimates, wire dependencies, and walk new users through the tool. Auto-detects the provider you've configured ([Anthropic](https://www.anthropic.com) → [OpenAI](https://openai.com) → [Gemini](https://ai.google.dev), by key presence) and accepts any OpenAI-compatible endpoint via `OPENAI_BASE_URL` (Azure, OpenRouter, LM Studio, Ollama, vLLM, llama.cpp).
+- **`.pert.json` import / export.** Stable interchange format with a JSON Schema, nested dependencies, and a 31-test round-trip suite.
+- **Mobile UI.** Below 768 px the desktop layout is replaced by a read-only-first shell with tap-friendly view variants. Toggle the pencil to edit.
+- **Auth out of the box.** Passwordless email (via [Resend](https://resend.com)) plus a single optional OIDC SSO provider (Entra ID, Okta, Keycloak, Authentik, …).
+- **Self-hostable.** Pushes an image to `ghcr.io/<owner>/pert.li` on every tag; the multi-stage `Dockerfile` produces a slim Node image. See `DEPLOY.md` for the Cloud Run recipe.
 
-This project uses [Vitest](https://vitest.dev/) for testing. You can run the tests with:
+## Environment
 
-```bash
-pnpm test
-```
-
-## Styling
-
-This project uses [Tailwind CSS](https://tailwindcss.com/) for styling.
-
-### Removing Tailwind CSS
-
-If you prefer not to use Tailwind CSS:
-
-1. Remove the demo pages in `src/routes/demo/`
-2. Replace the Tailwind import in `src/styles.css` with your own styles
-3. Remove `tailwindcss()` from the plugins array in `vite.config.ts`
-4. Uninstall the packages: `pnpm remove @tailwindcss/vite tailwindcss`
-
-## Linting & Formatting
-
-This project uses [Biome](https://biomejs.dev/) for linting and formatting. The following scripts are available:
-
-
-```bash
-pnpm lint
-pnpm format
-pnpm check
-```
-
-
-## Deploy with Nitro
-
-This project uses Nitro as a generic server adapter, so it can run on any Node-compatible host.
-
-```bash
-pnpm build
-node dist/server/index.mjs
-```
-
-The build output is a self-contained Node server. To deploy, push the `dist/` directory to your host (Render, Fly.io, your own VPS, etc.) and run the server command above.
-
-For host-specific presets (Vercel, Netlify, Cloudflare, AWS Lambda, etc.) and tuning, see https://v3.nitro.build/deploy.
-
-
-# TanStack Chat Application
-
-Am example chat application built with TanStack Start, TanStack Store, and Claude AI.
-
-## .env Updates
+Drop these in `.env.local`. Everything is optional in dev — the chat assistant disables itself if no LLM key is present, and PGLite kicks in if there's no `DATABASE_URL`.
 
 ```env
-ANTHROPIC_API_KEY=your_anthropic_api_key
+# Database — unset to use the local PGLite fallback at ./.data/pglite
+DATABASE_URL=
+
+# Auth — generate with `pnpm dlx @better-auth/cli secret`
+BETTER_AUTH_SECRET=
+
+# LLM provider — set one of these (Anthropic is preferred when multiple are set)
+ANTHROPIC_API_KEY=
+OPENAI_API_KEY=
+GEMINI_API_KEY=
+
+# Optional: override the auto-detect order, the model, or the OpenAI base URL
+LLM_PROVIDER=             # openai | anthropic | gemini
+LLM_MODEL=
+OPENAI_BASE_URL=          # any OpenAI-compatible /v1 endpoint
+
+# Optional: passwordless email (without either, /signin uses a dev console fallback).
+# SMTP takes precedence over Resend when both are set.
+SMTP_HOST=                # e.g. smtp.example.com — set this to use SMTP
+SMTP_PORT=587             # 465 = TLS-from-start, 587 = STARTTLS (default)
+SMTP_USER=
+SMTP_PASS=
+SMTP_FROM=                # noreply@yourdomain.com
+RESEND_API_KEY=
+RESEND_FROM_EMAIL=        # verified Resend sender
+
+# Optional: a single OIDC SSO provider — leave unset to hide the SSO button
+OIDC_PROVIDER_ID=         # default "oidc"; URL segment for the callback
+OIDC_PROVIDER_NAME=       # button label; default "SSO"
+OIDC_DISCOVERY_URL=       # https://idp.example.com/.well-known/openid-configuration
+OIDC_CLIENT_ID=
+OIDC_CLIENT_SECRET=
+OIDC_SCOPES=              # comma-separated; default "openid,email,profile"
+
+# Optional: external privacy policy URL (defaults to the built-in /privacy page)
+PRIVACY_POLICY_URL=
 ```
 
-## ✨ Features
+Register `<app-origin>/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>` as the redirect URI with your IdP.
 
-### AI Capabilities
-- 🤖 Powered by Claude 3.5 Sonnet 
-- 📝 Rich markdown formatting with syntax highlighting
-- 🎯 Customizable system prompts for tailored AI behavior
-- 🔄 Real-time message updates and streaming responses (coming soon)
-
-### User Experience
-- 🎨 Modern UI with Tailwind CSS and Lucide icons
-- 🔍 Conversation management and history
-- 🔐 Secure API key management
-- 📋 Markdown rendering with code highlighting
-
-### Technical Features
-- 📦 Centralized state management with TanStack Store
-- 🔌 Extensible architecture for multiple AI providers
-- 🛠️ TypeScript for type safety
-
-## Architecture
-
-### Tech Stack
-- **Frontend Framework**: TanStack Start
-- **Routing**: TanStack Router
-- **State Management**: TanStack Store
-- **Styling**: Tailwind CSS
-- **AI Integration**: Anthropic's Claude API
-
-## Shadcn
-
-Add components using the latest version of [Shadcn](https://ui.shadcn.com/).
+## Scripts
 
 ```bash
-pnpm dlx shadcn@latest add button
+pnpm dev               # Vite dev server on :3000
+pnpm build             # Production build (Nitro server output in .output/)
+pnpm preview           # Preview the production build
+node .output/server/index.mjs   # Run the built server
+
+pnpm test              # Vitest (unit + property tests)
+pnpm e2e               # Playwright e2e on a built server (port 3100)
+pnpm storybook         # Storybook on :6006
+pnpm storybook:ci      # Storybook + test-runner together
+
+pnpm check             # Biome — lint + format + organize-imports (preferred pre-commit)
+pnpm lint              # Biome lint only
+pnpm format            # Biome format (writes)
+
+pnpm db:push           # Push schema in src/db/schema.ts to the DB
+pnpm db:generate       # Generate a SQL migration into ./drizzle/
+pnpm db:migrate        # Apply migrations
+pnpm db:studio         # Drizzle Studio
 ```
 
+## Tech stack
 
-## Setting up Better Auth
+- [**TanStack Start**](https://tanstack.com/start) meta-framework on top of Vite + [Nitro](https://nitro.build) (Node-compatible server output), with TanStack Router (file-based routes in `src/routes/`), Query, Store, React DB, and the TanStack AI SDK.
+- [**React 19**](https://react.dev) with the React Compiler — no manual `useMemo` / `useCallback` unless profiling says otherwise.
+- [**Drizzle ORM**](https://orm.drizzle.team) on [Neon Postgres](https://neon.tech) in prod, [PGLite](https://github.com/electric-sql/pglite) in dev.
+- [**Automerge**](https://automerge.org) CRDT for real-time collaboration over WebSocket (server-authoritative) + BroadcastChannel (tab-to-tab).
+- [**Better Auth**](https://better-auth.com) for email + OIDC, on top of Drizzle.
+- [**Tailwind CSS v4**](https://tailwindcss.com) and [shadcn/ui](https://ui.shadcn.com) (`new-york` style, `zinc` base).
+- [**React Flow**](https://reactflow.dev) + [ELK](https://eclipse.dev/elk/) for the canvas, [TanStack Table](https://tanstack.com/table) for the table view.
+- [**Biome**](https://biomejs.dev) for linting / formatting (tabs, double quotes).
 
-1. Generate and set the `BETTER_AUTH_SECRET` environment variable in your `.env.local`:
+## Self-hosting
 
-   ```bash
-   pnpm dlx @better-auth/cli secret
-   ```
-
-2. Visit the [Better Auth documentation](https://www.better-auth.com) to unlock the full potential of authentication in your app.
-
-### Adding a Database (Optional)
-
-Better Auth can work in stateless mode, but to persist user data, add a database:
-
-```typescript
-// src/lib/auth.ts
-import { betterAuth } from "better-auth";
-import { Pool } from "pg";
-
-export const auth = betterAuth({
-  database: new Pool({
-    connectionString: process.env.DATABASE_URL,
-  }),
-  // ... rest of config
-});
-```
-
-Then run migrations:
+pert.li is MIT-licensed and ships as a Docker image (`ghcr.io/<owner>/pert.li:<tag>`, published on every git tag). The fastest path is `docker compose`:
 
 ```bash
-pnpm dlx @better-auth/cli migrate
+cp .env.example .env   # set BETTER_AUTH_SECRET, POSTGRES_PASSWORD, an LLM key
+docker compose up -d
+open http://localhost:8080
 ```
 
+The container entrypoint applies SQL migrations from `./drizzle/` on first start, then boots the bundled Nitro server. See [`SELF_HOSTING.md`](./SELF_HOSTING.md) for the full guide — Kubernetes manifests (in [`deploy/k8s/`](./deploy/k8s/)), TLS / reverse-proxy setup, backups, upgrades, optional SMTP / OIDC / LLM configuration, and the current multi-instance limitation.
 
-## Setting up Neon
+For Google Cloud Run specifically, see [`DEPLOY.md`](./DEPLOY.md). For other Nitro presets (Vercel, Netlify, Cloudflare Workers, AWS Lambda, …), the build output is portable; see <https://nitro.build/deploy>.
 
-When running the `dev` command, `vite-plugin-neon-new` will identify there is not a database setup. It will then create and seed a claimable database.
+## Contributing
 
-It is the same process as [Neon Launchpad](https://neon.new).
+Project conventions live in [`CLAUDE.md`](./CLAUDE.md) — testing rules (Vitest + Storybook + Playwright), styling, file layout, and a few `gotchas` worth knowing before opening a PR. New to the codebase? Start with [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the contributor quickstart.
 
-> [!IMPORTANT]  
-> Claimable databases expire in 72 hours.
+## License
 
-
-
-## Routing
-
-This project uses [TanStack Router](https://tanstack.com/router) with file-based routing. Routes are managed as files in `src/routes`.
-
-### Adding A Route
-
-To add a new route to your application just add a new file in the `./src/routes` directory.
-
-TanStack will automatically generate the content of the route file for you.
-
-Now that you have two routes you can use a `Link` component to navigate between them.
-
-### Adding Links
-
-To use SPA (Single Page Application) navigation you will need to import the `Link` component from `@tanstack/react-router`.
-
-```tsx
-import { Link } from "@tanstack/react-router";
-```
-
-Then anywhere in your JSX you can use it like so:
-
-```tsx
-<Link to="/about">About</Link>
-```
-
-This will create a link that will navigate to the `/about` route.
-
-More information on the `Link` component can be found in the [Link documentation](https://tanstack.com/router/v1/docs/framework/react/api/router/linkComponent).
-
-### Using A Layout
-
-In the File Based Routing setup the layout is located in `src/routes/__root.tsx`. Anything you add to the root route will appear in all the routes. The route content will appear in the JSX where you render `{children}` in the `shellComponent`.
-
-Here is an example layout that includes a header:
-
-```tsx
-import { HeadContent, Scripts, createRootRoute } from '@tanstack/react-router'
-
-export const Route = createRootRoute({
-  head: () => ({
-    meta: [
-      { charSet: 'utf-8' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-      { title: 'My App' },
-    ],
-  }),
-  shellComponent: ({ children }) => (
-    <html lang="en">
-      <head>
-        <HeadContent />
-      </head>
-      <body>
-        <header>
-          <nav>
-            <Link to="/">Home</Link>
-            <Link to="/about">About</Link>
-          </nav>
-        </header>
-        {children}
-        <Scripts />
-      </body>
-    </html>
-  ),
-})
-```
-
-More information on layouts can be found in the [Layouts documentation](https://tanstack.com/router/latest/docs/framework/react/guide/routing-concepts#layouts).
-
-## Server Functions
-
-TanStack Start provides server functions that allow you to write server-side code that seamlessly integrates with your client components.
-
-```tsx
-import { createServerFn } from '@tanstack/react-start'
-
-const getServerTime = createServerFn({
-  method: 'GET',
-}).handler(async () => {
-  return new Date().toISOString()
-})
-
-// Use in a component
-function MyComponent() {
-  const [time, setTime] = useState('')
-  
-  useEffect(() => {
-    getServerTime().then(setTime)
-  }, [])
-  
-  return <div>Server time: {time}</div>
-}
-```
-
-## API Routes
-
-You can create API routes by using the `server` property in your route definitions:
-
-```tsx
-import { createFileRoute } from '@tanstack/react-router'
-import { json } from '@tanstack/react-start'
-
-export const Route = createFileRoute('/api/hello')({
-  server: {
-    handlers: {
-      GET: () => json({ message: 'Hello, World!' }),
-    },
-  },
-})
-```
-
-## Data Fetching
-
-There are multiple ways to fetch data in your application. You can use TanStack Query to fetch data from a server. But you can also use the `loader` functionality built into TanStack Router to load the data for a route before it's rendered.
-
-For example:
-
-```tsx
-import { createFileRoute } from '@tanstack/react-router'
-
-export const Route = createFileRoute('/people')({
-  loader: async () => {
-    const response = await fetch('https://swapi.dev/api/people')
-    return response.json()
-  },
-  component: PeopleComponent,
-})
-
-function PeopleComponent() {
-  const data = Route.useLoaderData()
-  return (
-    <ul>
-      {data.results.map((person) => (
-        <li key={person.name}>{person.name}</li>
-      ))}
-    </ul>
-  )
-}
-```
-
-Loaders simplify your data fetching logic dramatically. Check out more information in the [Loader documentation](https://tanstack.com/router/latest/docs/framework/react/guide/data-loading#loader-parameters).
-
-# Demo files
-
-Files prefixed with `demo` can be safely deleted. They are there to provide a starting point for you to play around with the features you've installed.
-
-# Learn More
-
-You can learn more about all of the offerings from TanStack in the [TanStack documentation](https://tanstack.com).
-
-For TanStack Start specific documentation, visit [TanStack Start](https://tanstack.com/start).
+[MIT](./LICENSE). Security disclosures: see [`SECURITY.md`](./SECURITY.md).

@@ -22,6 +22,7 @@ import {
 	PanelLeftIcon,
 	PlusIcon,
 	SettingsIcon,
+	ShieldIcon,
 	SunIcon,
 	UserCogIcon,
 } from "lucide-react";
@@ -140,13 +141,25 @@ function AppShell() {
 		);
 	}
 
+	// `isAdmin` is exposed via Better Auth's additionalFields config but isn't
+	// part of the base typed user shape. Read it defensively and pass an
+	// extended user object down to the shells so the topbar can show the
+	// admin nav entry only when the bit is set.
+	const sessionUser = session.user as { isAdmin?: unknown };
+	const shellUser = {
+		name: session.user.name,
+		email: session.user.email,
+		image: session.user.image,
+		isAdmin: sessionUser.isAdmin === true,
+	};
+
 	return (
 		<ViewModeProvider>
 			<RepoProvider>
 				<TooltipProvider delayDuration={150}>
 					{isMobile ? (
 						<MobileShell
-							user={session.user}
+							user={shellUser}
 							inProject={inProject}
 							onNewProject={() => setCreateOpen(true)}
 							onEditProfile={() => setProfileOpen(true)}
@@ -155,7 +168,7 @@ function AppShell() {
 						/>
 					) : (
 						<DesktopShell
-							user={session.user}
+							user={shellUser}
 							inProject={inProject}
 							pinnedChat={pinnedChat}
 							setPinnedSlot={setPinnedSlot}
@@ -233,7 +246,12 @@ function DesktopShell({
 	onNewProject,
 	onEditProfile,
 }: {
-	user: { name?: string | null; email: string; image?: string | null };
+	user: {
+		name?: string | null;
+		email: string;
+		image?: string | null;
+		isAdmin: boolean;
+	};
 	inProject: boolean;
 	pinnedChat: boolean;
 	setPinnedSlot: (el: HTMLDivElement | null) => void;
@@ -363,7 +381,12 @@ function MobileShell({
 	onOpenProjects,
 	onOpenHistory,
 }: {
-	user: { name?: string | null; email: string; image?: string | null };
+	user: {
+		name?: string | null;
+		email: string;
+		image?: string | null;
+		isAdmin: boolean;
+	};
 	inProject: boolean;
 	onNewProject: () => void;
 	onEditProfile: () => void;
@@ -426,7 +449,12 @@ function TopBar({
 	onToggleLeft,
 	onToggleBottom,
 }: {
-	user: { name?: string | null; email: string; image?: string | null };
+	user: {
+		name?: string | null;
+		email: string;
+		image?: string | null;
+		isAdmin: boolean;
+	};
 	onNewProject: () => void;
 	onEditProfile: () => void;
 	leftCollapsed: boolean;
@@ -528,6 +556,14 @@ function TopBar({
 						<UserCogIcon className="size-4" />
 						Edit profile
 					</DropdownMenuItem>
+					{user.isAdmin && (
+						<DropdownMenuItem asChild>
+							<Link to="/admin" data-testid="topbar-nav-admin">
+								<ShieldIcon className="size-4" />
+								Admin
+							</Link>
+						</DropdownMenuItem>
+					)}
 					<ThemeMenu />
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onClick={() => void authClient.signOut()}>

@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { genericOAuth, magicLink } from "better-auth/plugins";
 import { tanstackStartCookies } from "better-auth/tanstack-start";
+import { count as countFn } from "drizzle-orm";
 import { db } from "#/db";
 import { account, session, user, verification } from "#/db/schema";
 import {
@@ -56,8 +57,16 @@ export function getOidcPublicInfo(): OidcPublicInfo | null {
 // Pass baseURL + trustedOrigins through explicitly so the CSRF check works
 // against any deployment URL (custom domain, on-prem, e2e test port).
 const baseURL = process.env.BETTER_AUTH_URL;
+// In non-production, accept any loopback origin so `pnpm dev` works on
+// whichever port Vite happened to grab (3000, 3500, a worktree port, …)
+// without making the contributor set BETTER_AUTH_URL by hand. Production
+// still requires BETTER_AUTH_URL — these wildcards aren't added there.
+const isDev = process.env.NODE_ENV !== "production";
 const trustedOrigins = [
 	process.env.BETTER_AUTH_URL,
+	...(isDev
+		? ["http://localhost:*", "http://127.0.0.1:*", "http://[::1]:*"]
+		: []),
 	process.env.E2E_PGLITE === "1"
 		? `http://localhost:${process.env.PORT ?? "3100"}`
 		: undefined,
@@ -67,6 +76,35 @@ export const auth = betterAuth({
 	database: authDatabase,
 	baseURL,
 	trustedOrigins,
+	user: {
+		// Expose `isAdmin` on the session user. Defaults to false; the create
+		// hook below auto-promotes the first user that signs up so a fresh
+		// self-hosted instance has at least one operator without any manual
+		// DB poking.
+		additionalFields: {
+			isAdmin: {
+				type: "boolean",
+				required: false,
+				defaultValue: false,
+				input: false,
+			},
+		},
+	},
+	databaseHooks: {
+		user: {
+			create: {
+				async before(data) {
+					// First user to sign up gets the admin bit so a freshly-provisioned
+					// instance has at least one operator without any manual DB poking.
+					// All subsequent users default to non-admin (see schema default).
+					const [{ value }] = await db.select({ value: countFn() }).from(user);
+					if (value === 0) {
+						return { data: { ...data, isAdmin: true } };
+					}
+				},
+			},
+		},
+	},
 	emailAndPassword: {
 		enabled: true,
 	},
