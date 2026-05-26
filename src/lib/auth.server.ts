@@ -63,8 +63,16 @@ export function getOidcPublicInfo(): OidcPublicInfo | null {
 // Pass baseURL + trustedOrigins through explicitly so the CSRF check works
 // against any deployment URL (custom domain, on-prem, e2e test port).
 const baseURL = process.env.BETTER_AUTH_URL;
+// In non-production, accept any loopback origin so `pnpm dev` works on
+// whichever port Vite happened to grab (3000, 3500, a worktree port, …)
+// without making the contributor set BETTER_AUTH_URL by hand. Production
+// still requires BETTER_AUTH_URL — these wildcards aren't added there.
+const isDev = process.env.NODE_ENV !== "production";
 const trustedOrigins = [
 	process.env.BETTER_AUTH_URL,
+	...(isDev
+		? ["http://localhost:*", "http://127.0.0.1:*", "http://[::1]:*"]
+		: []),
 	process.env.E2E_PGLITE === "1"
 		? `http://localhost:${process.env.PORT ?? "3100"}`
 		: undefined,
