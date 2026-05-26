@@ -10,8 +10,13 @@
 //   argv[3]            — directory holding the rendered PNGs
 //   argv[4]            — output markdown file (default: stdout)
 //
-// For each story in the input JSON, we link to the published raw image
-// on the screenshots branch — GitHub renders these inline in PR comments.
+// For each story in the input JSON, we render a plain markdown link to
+// the published raw image on the screenshots branch. We deliberately do
+// NOT use `<img>` tags: this repo is private, and GitHub's anonymous
+// Camo image proxy that fetches `<img src>` URLs in PR comments would
+// 404 against raw.githubusercontent.com. Plain `<a>` links sidestep
+// Camo entirely — when an authenticated reviewer clicks one, the image
+// opens in a new tab where their GitHub session handles auth.
 // Stories whose PNG is missing on disk are listed as "(render failed)".
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -42,18 +47,14 @@ export function renderComment({ stories, repo, prNumber, branch = "screenshots",
 			lines.push(`<sub>\`${group[0].file}\`</sub>`);
 			lines.push("");
 			for (const story of group) {
-				lines.push(`<details open><summary><strong>${story.name}</strong></summary>`);
-				lines.push("");
 				if (hasScreenshot(story)) {
 					const url = `${rawBase}/${story.id}.png`;
-					lines.push(`<img src="${url}" alt="${story.title} — ${story.name}" width="640" />`);
+					lines.push(`- [${story.name}](${url})`);
 				} else {
-					lines.push("_render failed — see the storybook job log for details_");
+					lines.push(`- **${story.name}** — _render failed_`);
 				}
-				lines.push("");
-				lines.push("</details>");
-				lines.push("");
 			}
+			lines.push("");
 		}
 	}
 
