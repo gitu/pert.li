@@ -1,7 +1,7 @@
 import { ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { TaskNode, type TaskNodeData } from "./task-node";
 
 const nodeTypes = { task: TaskNode };
@@ -64,7 +64,13 @@ export const Default: Story = {
 	},
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(canvas.getByText("Design API surface")).toBeInTheDocument();
+		// React Flow mounts its shell synchronously but only renders nodes once
+		// its ResizeObserver fires. In the bundled Storybook the play function
+		// runs before that tick, so use `findByText` to retry until the node
+		// appears instead of asserting on the first frame.
+		await expect(
+			await canvas.findByText("Design API surface"),
+		).toBeInTheDocument();
 	},
 };
 
@@ -83,7 +89,7 @@ export const Critical: Story = {
 	},
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(canvas.getByText("critical")).toBeInTheDocument();
+		await expect(await canvas.findByText("critical")).toBeInTheDocument();
 	},
 };
 
@@ -101,11 +107,13 @@ export const InProgress: Story = {
 		},
 	},
 	play: async ({ canvasElement }) => {
-		const node = canvasElement.querySelector(
-			'[data-testid^="task-progress-"]',
-		) as HTMLElement | null;
-		await expect(node).not.toBeNull();
-		await expect(node?.style.width).toBe("60%");
+		await waitFor(() => {
+			const node = canvasElement.querySelector(
+				'[data-testid^="task-progress-"]',
+			) as HTMLElement | null;
+			expect(node).not.toBeNull();
+			expect(node?.style.width).toBe("60%");
+		});
 	},
 };
 
