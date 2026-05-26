@@ -172,15 +172,31 @@ export const Grouped: Story = {
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		const toggle = await canvas.findByTestId("timeline-group");
-		// Off by default — no boundary markers, no key prefix.
+		// Off by default — no header rows in the SVG.
 		await expect(toggle).toHaveAttribute("aria-pressed", "false");
+		await expect(
+			canvasElement.querySelector("[data-testid^='timeline-header-']"),
+		).toBeNull();
 		await userEvent.click(toggle);
 		await expect(toggle).toHaveAttribute("aria-pressed", "true");
-		// At least one lane should now be marked as a group boundary.
-		const lanes = canvasElement.querySelectorAll(
-			"[data-testid^='timeline-lane-'][data-group-boundary='true']",
+		// Top-level groups (M1, M2) and their nested sub-groups (API, UI)
+		// should all materialise as header rows. M1 / M2 are depth-0;
+		// API / UI are depth-1.
+		const headers = canvasElement.querySelectorAll(
+			"[data-testid^='timeline-header-']",
 		);
-		await expect(lanes.length).toBeGreaterThan(0);
+		await expect(headers.length).toBeGreaterThanOrEqual(4);
+		await expect(
+			canvasElement.querySelector("[data-depth='0']"),
+		).not.toBeNull();
+		await expect(
+			canvasElement.querySelector("[data-depth='1']"),
+		).not.toBeNull();
+		// Lanes inside the second-level groups should be at depth 2.
+		const deepLane = canvasElement.querySelector(
+			"[data-testid='timeline-lane-a1'][data-depth='2']",
+		);
+		await expect(deepLane).not.toBeNull();
 	},
 };
 
