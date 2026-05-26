@@ -351,15 +351,27 @@ jobs:
           # for the diff but matches db-back-compat (cache hit overlap).
           fetch-depth: 0
 
-      - name: Detect changed stories
+      - name: Detect UI changes (quick gate)
         id: diff
         env:
           BASE_REF: origin/${{ github.base_ref }}
+        # Eager gate: run the screenshot pipeline whenever the PR touches
+        # anything plausibly UI-impacting. The precise filtering (which
+        # stories actually appear in the comment) happens later in
+        # `scripts/changed-stories.mjs` against the built storybook index,
+        # using a directory-tree match — so this gate intentionally errs
+        # on the side of running. A `pr-screenshots` run that finds zero
+        # affected stories costs ~1-2min of CI; missing a UI change costs
+        # a review round-trip, which is worse.
         run: |
           set -euo pipefail
-          changed=$(git diff --name-only --diff-filter=ACMR "$BASE_REF"...HEAD -- "src/**/*.stories.tsx" || true)
+          changed=$(git diff --name-only --diff-filter=ACMRD "$BASE_REF"...HEAD -- \
+            "src/**" \
+            "tailwind*" \
+            "components.json" \
+            ".storybook/**" || true)
           if [ -z "$changed" ]; then
-            echo "no *.stories.tsx changes — skipping screenshot pipeline"
+            echo "no UI-adjacent changes — skipping screenshot pipeline"
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
             echo "$changed"
@@ -441,8 +453,9 @@ jobs:
           }
           kill "$(cat /tmp/sb-http.pid)" 2>/dev/null || true
 
-      - name: Filter screenshots to changed stories
+      - name: Filter screenshots to affected stories
         if: steps.diff.outputs.has_changes == 'true'
+        id: match
         env:
           BASE_REF: origin/${{ github.base_ref }}
         run: |
@@ -459,9 +472,11 @@ jobs:
             fi
           done
           ls -la pr-staging/
+          count=$(jq '.stories | length' changed-stories.json)
+          echo "matched=$count" >> "$GITHUB_OUTPUT"
 
       - name: Publish to screenshots branch
-        if: steps.diff.outputs.has_changes == 'true'
+        if: steps.match.outputs.matched != '' && steps.match.outputs.matched != '0'
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -469,7 +484,7 @@ jobs:
         run: bash scripts/publish-pr-screenshots.sh pr-staging
 
       - name: Build sticky-comment body
-        if: steps.diff.outputs.has_changes == 'true'
+        if: steps.match.outputs.matched != '' && steps.match.outputs.matched != '0'
         env:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -477,20 +492,21 @@ jobs:
         run: node scripts/build-pr-screenshot-comment.mjs changed-stories.json pr-staging comment.md
 
       - name: Post / update sticky PR comment
-        if: steps.diff.outputs.has_changes == 'true'
+        if: steps.match.outputs.matched != '' && steps.match.outputs.matched != '0'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: pr-screenshots
           path: comment.md
 
-      - name: Remove sticky comment when no stories changed
-        if: steps.diff.outputs.has_changes != 'true'
+      - name: Remove sticky comment when no stories are affected
+        # Two paths land here: (1) the quick gate skipped entirely (no
+        # UI-adjacent changes); (2) the gate ran but no story directory
+        # tree was touched. Either way, wipe any stale comment so the PR
+        # doesn't keep showing screenshots from a prior commit.
+        if: steps.diff.outputs.has_changes != 'true' || steps.match.outputs.matched == '0'
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: pr-screenshots
-          # Wipe a previously-posted comment if the latest push removed
-          # all the story diffs that originally triggered it — otherwise
-          # the comment lingers with stale URLs.
           delete: true
 
       - name: Upload screenshots artifact (debug)

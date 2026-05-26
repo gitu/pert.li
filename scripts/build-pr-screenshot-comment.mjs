@@ -26,7 +26,7 @@ export function renderComment({ stories, repo, prNumber, branch = "screenshots",
 	const lines = ["## 📸 PR screenshots", ""];
 
 	if (!stories || stories.length === 0) {
-		lines.push("_No `*.stories.tsx` files changed in this PR._");
+		lines.push("_No story directories were touched by this PR._");
 	} else {
 		lines.push(
 			`Rendered ${stories.length} stor${stories.length === 1 ? "y" : "ies"} from files touched in this PR.`,

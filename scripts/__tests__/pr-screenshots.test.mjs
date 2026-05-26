@@ -33,7 +33,11 @@ const INDEX = {
 			id: "widget--basic",
 			title: "Widget",
 			name: "Basic",
-			importPath: "./src/components/widget.stories.tsx",
+			// Each story lives in its own component dir — mirrors the
+			// real repo, where stories are always nested 2+ levels deep
+			// under `src/`. The matcher's dirname heuristic relies on
+			// that convention to scope changes correctly.
+			importPath: "./src/components/widget/widget.stories.tsx",
 			type: "story",
 		},
 	},
@@ -49,8 +53,32 @@ describe("matchStoriesToFiles", () => {
 		expect(out.every((s) => s.file === "src/components/foo/bar.stories.tsx")).toBe(true);
 	});
 
-	it("returns nothing when no changed file maps to a story", () => {
-		expect(matchStoriesToFiles(INDEX, ["src/components/unrelated.tsx"])).toEqual([]);
+	it("matches a sibling source file in the same directory", () => {
+		// Touching `bar.tsx` (the component the story renders) should
+		// flag every story exported from `bar.stories.tsx`.
+		const out = matchStoriesToFiles(INDEX, ["src/components/foo/bar.tsx"]);
+		expect(out.map((s) => s.id).sort()).toEqual(["foo-bar--default", "foo-bar--with-icon"]);
+	});
+
+	it("matches a nested file under the story directory", () => {
+		// Touching anything under `src/components/foo/` (e.g. a child
+		// component or local util) should still flag stories at that
+		// level — the dirname-prefix match walks the whole subtree.
+		const out = matchStoriesToFiles(INDEX, ["src/components/foo/internal/helper.ts"]);
+		expect(out.map((s) => s.id).sort()).toEqual(["foo-bar--default", "foo-bar--with-icon"]);
+	});
+
+	it("does NOT match a sibling directory with a shared prefix", () => {
+		// `src/components/foo-bar/` must not bleed into stories living
+		// in `src/components/foo/`. The matcher uses `dir + "/"` as the
+		// prefix to defend against this.
+		const out = matchStoriesToFiles(INDEX, ["src/components/foo-bar/anything.ts"]);
+		expect(out).toEqual([]);
+	});
+
+	it("returns nothing when changes are outside every story's directory tree", () => {
+		expect(matchStoriesToFiles(INDEX, ["src/lib/utils.ts"])).toEqual([]);
+		expect(matchStoriesToFiles(INDEX, ["src/server/routes.ts"])).toEqual([]);
 	});
 
 	it("survives a malformed index", () => {
@@ -112,7 +140,7 @@ describe("renderComment", () => {
 
 	it("renders the empty-state message when nothing changed", () => {
 		const out = renderComment({ ...baseArgs, stories: [] });
-		expect(out).toContain("No `*.stories.tsx` files changed");
+		expect(out).toContain("No story directories were touched");
 	});
 
 	it("trims the head sha to 7 chars in the footer", () => {
