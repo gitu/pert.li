@@ -8,6 +8,7 @@ import {
 import { memo } from "react";
 import type { ContainerRollup } from "#/lib/pert/projection";
 import { cn } from "#/lib/utils";
+import { NodeDeleteButton } from "./node-delete-button";
 
 // Two related node renderings for a container task:
 //  - "container-collapsed" — single card with a port rail down each side
@@ -44,6 +45,9 @@ export type ContainerNodeData = {
 	// canvas based on the auto-fit bounds + port rail.
 	minWidth?: number;
 	minHeight?: number;
+	// Called when the user confirms the on-node delete button. Two-click
+	// confirm is handled inside NodeDeleteButton.
+	onDelete?: () => void;
 };
 
 const PORT_GAP = 26;
@@ -79,7 +83,7 @@ function CollapsedImpl(props: NodeProps) {
 			style={{ minHeight, width: "100%" }}
 			data-just-created={data.justCreated || undefined}
 			className={cn(
-				"relative rounded-lg border bg-card px-3 py-2 text-card-foreground shadow-sm transition-shadow",
+				"group relative rounded-lg border bg-card px-3 py-2 text-card-foreground shadow-sm transition-shadow",
 				allDone
 					? "border-sky-500/60 bg-sky-500/[0.04]"
 					: critical
@@ -103,6 +107,13 @@ function CollapsedImpl(props: NodeProps) {
 				lineClassName="!border-primary/30"
 				handleClassName="!bg-primary !border-background"
 			/>
+			{data.onDelete && (
+				<NodeDeleteButton
+					onDelete={data.onDelete}
+					alwaysVisible={props.selected}
+					testId={`container-delete-${props.id}`}
+				/>
+			)}
 			<InterfaceRail ports={data.entries} side="left" />
 			<InterfaceRail ports={data.exits} side="right" />
 			<div className="flex items-start gap-2">
@@ -218,7 +229,7 @@ function ExpandedImpl(props: NodeProps) {
 			data-testid={`container-expanded-${props.id}`}
 			data-just-created={data.justCreated || undefined}
 			className={cn(
-				"rounded-lg border border-dashed bg-muted/20 transition-colors",
+				"group rounded-lg border-2 border-dashed border-foreground/25 bg-foreground/[0.04] shadow-sm transition-colors dark:bg-foreground/[0.02]",
 				props.selected && "ring-2 ring-primary",
 				data.dropTarget &&
 					"ring-2 ring-primary !border-primary !border-solid bg-primary/[0.06]",
@@ -236,6 +247,13 @@ function ExpandedImpl(props: NodeProps) {
 				lineClassName="!border-primary/30"
 				handleClassName="!bg-primary !border-background"
 			/>
+			{data.onDelete && (
+				<NodeDeleteButton
+					onDelete={data.onDelete}
+					alwaysVisible={props.selected}
+					testId={`container-delete-${props.id}`}
+				/>
+			)}
 			<div
 				data-drag-handle="container-header"
 				className="flex cursor-move items-center gap-1.5 border-b border-dashed bg-card/80 px-2 py-1 text-xs font-medium backdrop-blur-sm"

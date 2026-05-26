@@ -4,7 +4,6 @@ import {
 	LayoutGridIcon,
 	PlusIcon,
 	Settings2Icon,
-	Trash2Icon,
 } from "lucide-react";
 import { Button } from "#/components/ui/button";
 import {
@@ -29,9 +28,6 @@ export type CanvasToolbarProps = {
 	onAddTask: () => void;
 	onAddMilestone: () => void;
 	onAddContainer: () => void;
-	// Undefined when nothing is selected — disables the delete button.
-	onDeleteSelected?: () => void;
-	// New: layout / display controls.
 	prefs: CanvasPrefs;
 	onSetEdgeStyle: (style: EdgeStyle) => void;
 	onSetSpacing: (spacing: LayoutSpacing) => void;
@@ -42,7 +38,6 @@ export function CanvasToolbar({
 	onAddTask,
 	onAddMilestone,
 	onAddContainer,
-	onDeleteSelected,
 	prefs,
 	onSetEdgeStyle,
 	onSetSpacing,
@@ -87,18 +82,6 @@ export function CanvasToolbar({
 			>
 				<FolderPlusIcon className="size-3.5" />
 				Container
-			</Button>
-			<Separator orientation="vertical" className="mx-1 h-5" />
-			<Button
-				size="sm"
-				variant="ghost"
-				className="h-8 gap-1.5 text-xs text-destructive disabled:text-muted-foreground"
-				onClick={onDeleteSelected}
-				disabled={!onDeleteSelected}
-				data-testid="toolbar-delete"
-			>
-				<Trash2Icon className="size-3.5" />
-				Delete
 			</Button>
 			<Separator orientation="vertical" className="mx-1 h-5" />
 			<Button

@@ -149,6 +149,14 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		[changeDoc],
 	);
 
+	const onDeleteTask = useCallback(
+		(taskId: TaskId) => {
+			removeTaskFromDoc(changeDoc, taskId);
+			selectTask(projectId, null);
+		},
+		[changeDoc, projectId],
+	);
+
 	const onContainerToggle = useCallback(
 		(taskId: TaskId) => {
 			// Capture the expanded bounds-position into the doc before collapsing
@@ -178,7 +186,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	// Tracking it here lets the toolbar's Delete button target the selected
 	// edge (mirroring what the Backspace/Delete key already does via
 	// `onEdgesChange` + `deleteKeyCode`).
-	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+	const [, setSelectedEdgeId] = useState<string | null>(null);
 	// Container that the user is currently hovering a dragged leaf over. Set
 	// while a drag is in progress; nulled when the drag ends or the leaf
 	// leaves all container bounds. Drives the drop-target ring on the
@@ -196,6 +204,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				scheduleResult,
 				onContainerToggle,
 				onContainerResize,
+				onDeleteTask,
 				cycleTaskIds,
 				mc.result,
 				dragHoverContainerId,
@@ -207,6 +216,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			scheduleResult,
 			onContainerToggle,
 			onContainerResize,
+			onDeleteTask,
 			cycleTaskIds,
 			mc.result,
 			dragHoverContainerId,
@@ -460,23 +470,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		[changeDoc, doc.tasksById, projectId, screenToFlowPosition, selectedTaskId],
 	);
 
-	const handleDeleteSelected = useCallback(() => {
-		// Prefer the edge — when both a task and an edge are somehow selected
-		// (transient race after a click), the edge is what the user most
-		// recently interacted with via the toolbar Delete affordance.
-		if (selectedEdgeId) {
-			changeDoc((d) => {
-				delete d.dependenciesById[selectedEdgeId];
-			});
-			setSelectedEdgeId(null);
-			setEdges((current) => current.filter((e) => e.id !== selectedEdgeId));
-			return;
-		}
-		if (!selectedTaskId) return;
-		removeTaskFromDoc(changeDoc, selectedTaskId);
-		selectTask(projectId, null);
-	}, [changeDoc, projectId, selectedEdgeId, selectedTaskId]);
-
 	useEffect(() => {
 		return () => {
 			selectTask(projectId, null);
@@ -530,11 +523,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 						onAddTask={() => handleAddTask("task")}
 						onAddMilestone={() => handleAddTask("milestone")}
 						onAddContainer={() => handleAddTask("container")}
-						onDeleteSelected={
-							selectedTaskId || selectedEdgeId
-								? handleDeleteSelected
-								: undefined
-						}
 						prefs={prefs}
 						onSetEdgeStyle={handleSetEdgeStyle}
 						onSetSpacing={handleSetSpacing}
@@ -600,6 +588,7 @@ function buildNodes(
 		taskId: TaskId,
 		size: { width: number; height: number },
 	) => void,
+	onDeleteTask: (taskId: TaskId) => void,
 	cycleTaskIds: ReadonlySet<TaskId>,
 	mcResult: MonteCarloResult | null,
 	dragHoverContainerId: TaskId | null,
@@ -640,6 +629,7 @@ function buildNodes(
 				onResizeEnd: (size) => onResizeContainer(containerId, size),
 				minWidth: bounds.width,
 				minHeight: bounds.height,
+				onDelete: () => onDeleteTask(containerId),
 			};
 			nodes.push({
 				id: projected.task.id,
@@ -675,6 +665,7 @@ function buildNodes(
 				justCreated: recentlyCreated.has(containerId),
 				onResizeEnd: (size) => onResizeContainer(containerId, size),
 				minWidth: COLLAPSED_CARD_WIDTH,
+				onDelete: () => onDeleteTask(containerId),
 			};
 			const autoHeight = containerCollapsedHeight(baseData);
 			const data: ContainerNodeData = { ...baseData, minHeight: autoHeight };
@@ -699,6 +690,7 @@ function buildNodes(
 				cycleTaskIds,
 				mcResult,
 				recentlyCreated,
+				onDeleteTask,
 			);
 		}
 	}
@@ -715,6 +707,7 @@ function pushLeafNode(
 	cycleTaskIds: ReadonlySet<TaskId>,
 	mcResult: MonteCarloResult | null,
 	recentlyCreated: ReadonlySet<TaskId>,
+	onDeleteTask: (taskId: TaskId) => void,
 ) {
 	const task = projected.task;
 	const pos = task.layout?.position ?? fallback[task.id] ?? { x: 0, y: 0 };
@@ -732,6 +725,7 @@ function pushLeafNode(
 		progress: sched?.progress ?? task.progress ?? 0,
 		criticality: mcTask?.criticality,
 		justCreated: recentlyCreated.has(task.id),
+		onDelete: () => onDeleteTask(task.id),
 	};
 	nodes.push({
 		id: task.id,
@@ -781,6 +775,11 @@ function buildEdges(
 			animated: edge.critical || onCycle,
 			style,
 			data: { onCycle },
+			// Sit above expanded containers (zIndex 1) but below leaf task
+			// nodes (zIndex 10) so an edge passing through a container's
+			// area is never visually hidden by the container body, while
+			// leaves still paint on top of the edge stroke.
+			zIndex: 5,
 		};
 	});
 }

@@ -8,6 +8,7 @@ import {
 import { memo } from "react";
 import { PresenceBadge } from "#/components/pert/presence/presence-badge";
 import { cn } from "#/lib/utils";
+import { NodeDeleteButton } from "./node-delete-button";
 
 export type TaskNodeData = {
 	title: string;
@@ -26,6 +27,9 @@ export type TaskNodeData = {
 	// True for ~2.4s right after the task is added to the doc. Drives a
 	// brief CSS pulse so the user notices the new node.
 	justCreated?: boolean;
+	// Called when the user confirms the on-node delete button. Two-click
+	// confirm is handled inside NodeDeleteButton.
+	onDelete?: () => void;
 };
 
 // Custom React Flow node rendering a single task. Slack and critical state
@@ -65,6 +69,13 @@ function TaskNodeImpl(props: NodeProps) {
 				position={Position.Left}
 				className="!h-3 !w-3 !rounded-full !border-2 !border-background !bg-muted-foreground"
 			/>
+			{data.onDelete && (
+				<NodeDeleteButton
+					onDelete={data.onDelete}
+					alwaysVisible={props.selected}
+					testId={`task-delete-${props.id}`}
+				/>
+			)}
 			<div className="flex items-start gap-2">
 				{data.cycle ? (
 					<AlertOctagonIcon className="mt-0.5 size-4 shrink-0 text-destructive" />
