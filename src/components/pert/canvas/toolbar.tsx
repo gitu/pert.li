@@ -2,6 +2,7 @@ import {
 	CircleDotIcon,
 	FolderPlusIcon,
 	LayoutGridIcon,
+	PinIcon,
 	PlusIcon,
 	Settings2Icon,
 } from "lucide-react";
@@ -32,6 +33,7 @@ export type CanvasToolbarProps = {
 	onSetEdgeStyle: (style: EdgeStyle) => void;
 	onSetSpacing: (spacing: LayoutSpacing) => void;
 	onRelayout: () => void;
+	onToggleContinuous: () => void;
 };
 
 export function CanvasToolbar({
@@ -42,6 +44,7 @@ export function CanvasToolbar({
 	onSetEdgeStyle,
 	onSetSpacing,
 	onRelayout,
+	onToggleContinuous,
 }: CanvasToolbarProps) {
 	return (
 		<div
@@ -94,6 +97,26 @@ export function CanvasToolbar({
 			>
 				<LayoutGridIcon className="size-3.5" />
 				Re-layout
+			</Button>
+			<Button
+				size="sm"
+				variant={prefs.continuousLayout ? "secondary" : "ghost"}
+				className="h-8 gap-1.5 text-xs"
+				onClick={onToggleContinuous}
+				data-testid="toolbar-continuous-layout"
+				aria-pressed={prefs.continuousLayout}
+				title={
+					prefs.continuousLayout
+						? "Continuous auto-layout is ON. Selected node visually stays put as the rest reflows."
+						: "Turn on continuous auto-layout — every change reflows the graph; the selected node visually stays put."
+				}
+			>
+				<PinIcon
+					className={
+						prefs.continuousLayout ? "size-3.5 text-primary" : "size-3.5"
+					}
+				/>
+				Continuous
 			</Button>
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>

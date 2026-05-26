@@ -20,6 +20,7 @@ import {
 	EDGE_STYLE_TO_REACT_FLOW_TYPE,
 	type EdgeStyle,
 	type LayoutSpacing,
+	setContinuousLayout,
 	setEdgeStyle,
 	setLayoutSpacing,
 	useCanvasPrefs,
@@ -118,6 +119,17 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		(spacing: LayoutSpacing) => setLayoutSpacing(projectId, spacing),
 		[projectId],
 	);
+	const handleToggleContinuous = useCallback(() => {
+		setContinuousLayout(projectId, !prefs.continuousLayout);
+	}, [projectId, prefs.continuousLayout]);
+	useContinuousLayout(
+		projectId,
+		doc,
+		changeDoc,
+		prefs.spacing,
+		collapsedSet,
+		prefs.continuousLayout,
+	);
 
 	const projection = useMemo(
 		() => projectGraph(doc, scheduleResult, collapsedSet),
@@ -193,7 +205,37 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	// container node.
 	const [dragHoverContainerId, setDragHoverContainerId] =
 		useState<TaskId | null>(null);
-	const { screenToFlowPosition, setCenter, getZoom } = useReactFlow();
+	// Node id currently in inline-edit mode (double-clicked). The node
+	// renders a small title + estimate form in place of its label until the
+	// user commits (Enter / blur) or cancels (Esc).
+	const [editingNodeId, setEditingNodeId] = useState<TaskId | null>(null);
+	const onCancelInlineEdit = useCallback(() => setEditingNodeId(null), []);
+	const onCommitInlineEdit = useCallback(
+		(taskId: TaskId, next: { title: string; mostLikelyDays?: number }) => {
+			changeDoc((d) => {
+				const t = d.tasksById[taskId];
+				if (!t) return;
+				t.title = next.title;
+				if (
+					typeof next.mostLikelyDays === "number" &&
+					t.kind !== "milestone" &&
+					t.kind !== "container"
+				) {
+					const m = next.mostLikelyDays;
+					t.estimate = {
+						optimistic: Math.max(0.25, m / 2),
+						mostLikely: m,
+						pessimistic: m * 2,
+						unit: t.estimate?.unit ?? "day",
+					};
+				}
+			});
+			setEditingNodeId(null);
+		},
+		[changeDoc],
+	);
+	const reactFlow = useReactFlow();
+	const { screenToFlowPosition, setCenter, getZoom } = reactFlow;
 	const recentlyCreated = useRecentlyCreatedHighlight(doc, setCenter, getZoom);
 
 	const derivedNodes = useMemo(
@@ -209,6 +251,9 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				mc.result,
 				dragHoverContainerId,
 				recentlyCreated,
+				editingNodeId,
+				onCommitInlineEdit,
+				onCancelInlineEdit,
 			),
 		[
 			doc,
@@ -221,6 +266,9 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			mc.result,
 			dragHoverContainerId,
 			recentlyCreated,
+			editingNodeId,
+			onCommitInlineEdit,
+			onCancelInlineEdit,
 		],
 	);
 	const derivedEdges = useMemo(
@@ -491,6 +539,12 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				onPaneClick={onPaneClick}
 				onPaneContextMenu={(e) => e.preventDefault()}
 				onDoubleClick={onPaneDoubleClick}
+				onNodeDoubleClick={(_event, node) => {
+					// Containers handle expand/collapse via the chevron button —
+					// don't grab their double-click. Only leaf nodes get inline
+					// edit. Same for the cycle-marked nodes (chrome differs).
+					if (node.type === "task") setEditingNodeId(node.id);
+				}}
 				fitView
 				// React Flow's auto-fit slightly over-zooms on phone-sized
 				// viewports — small projects render at near 1×, hiding nearby
@@ -527,6 +581,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 						onSetEdgeStyle={handleSetEdgeStyle}
 						onSetSpacing={handleSetSpacing}
 						onRelayout={handleRelayout}
+						onToggleContinuous={handleToggleContinuous}
 					/>
 				</div>
 			</div>
@@ -593,6 +648,12 @@ function buildNodes(
 	mcResult: MonteCarloResult | null,
 	dragHoverContainerId: TaskId | null,
 	recentlyCreated: ReadonlySet<TaskId>,
+	editingNodeId: TaskId | null,
+	onCommitInlineEdit: (
+		taskId: TaskId,
+		next: { title: string; mostLikelyDays?: number },
+	) => void,
+	onCancelInlineEdit: () => void,
 ): Node[] {
 	const fallback = fallbackGridLayout(doc);
 	const schedule = scheduleResult.ok ? scheduleResult.schedule : null;
@@ -691,6 +752,9 @@ function buildNodes(
 				mcResult,
 				recentlyCreated,
 				onDeleteTask,
+				editingNodeId,
+				onCommitInlineEdit,
+				onCancelInlineEdit,
 			);
 		}
 	}
@@ -708,15 +772,23 @@ function pushLeafNode(
 	mcResult: MonteCarloResult | null,
 	recentlyCreated: ReadonlySet<TaskId>,
 	onDeleteTask: (taskId: TaskId) => void,
+	editingNodeId: TaskId | null,
+	onCommitInlineEdit: (
+		taskId: TaskId,
+		next: { title: string; mostLikelyDays?: number },
+	) => void,
+	onCancelInlineEdit: () => void,
 ) {
 	const task = projected.task;
 	const pos = task.layout?.position ?? fallback[task.id] ?? { x: 0, y: 0 };
 	const sched = schedule?.tasks[task.id];
 	const mcTask = mcResult?.tasks[task.id];
+	const editing = editingNodeId === task.id;
 	const data: TaskNodeData = {
 		title: task.title,
 		kind: task.kind === "milestone" ? "milestone" : "task",
 		durationDays: sched?.duration ?? 0,
+		mostLikelyDays: task.estimate?.mostLikely,
 		slackDays: sched?.slack ?? null,
 		critical: sched?.critical ?? false,
 		hasEstimate: Boolean(task.estimate),
@@ -726,6 +798,11 @@ function pushLeafNode(
 		criticality: mcTask?.criticality,
 		justCreated: recentlyCreated.has(task.id),
 		onDelete: () => onDeleteTask(task.id),
+		editing,
+		onCommitEdit: editing
+			? (next) => onCommitInlineEdit(task.id, next)
+			: undefined,
+		onCancelEdit: editing ? onCancelInlineEdit : undefined,
 	};
 	nodes.push({
 		id: task.id,
@@ -975,6 +1052,112 @@ function useAutoLayout(
 			cancelled = true;
 		};
 	}, [doc, changeDoc, spacing, collapsed]);
+}
+
+// Continuous auto-layout. When enabled, every structural doc change (new
+// node / edge, reparent, collapse toggle, kind switch) re-runs ELK and
+// commits the resulting positions. To keep the user oriented, we capture
+// the *screen* position of the currently selected node before laying out,
+// then pan the viewport so the same node lands at the same screen pixel
+// after the new positions render. Without this, large reflows yank focus
+// to wherever ELK happened to place the selection — disorienting and a
+// real reason users avoid auto-layout.
+//
+// Layout only kicks off on a structural fingerprint change. Pure position
+// edits (a manual drag) deliberately don't trigger a reflow, so the user's
+// own drag isn't immediately undone.
+function useContinuousLayout(
+	projectId: string,
+	doc: PertDoc,
+	changeDoc: (mutate: (d: PertDoc) => void) => void,
+	spacing: LayoutSpacing,
+	collapsed: ReadonlySet<TaskId>,
+	enabled: boolean,
+) {
+	const reactFlow = useReactFlow();
+	const structuralKey = useMemo(() => {
+		const tasks = Object.values(doc.tasksById)
+			.map(
+				(t) =>
+					`${t.id}|${t.parentId ?? ""}|${t.kind}|${
+						collapsed.has(t.id) ? "c" : "e"
+					}`,
+			)
+			.sort()
+			.join(",");
+		const deps = Object.values(doc.dependenciesById)
+			.map((d) => `${d.from.taskId ?? "*"}->${d.to.taskId ?? "*"}`)
+			.sort()
+			.join(",");
+		return `${tasks}::${deps}::${spacing}`;
+	}, [doc, collapsed, spacing]);
+
+	// structuralKey stands in for doc/changeDoc/spacing/collapsed/reactFlow —
+	// re-running on those would loop (changeDoc) or thrash (every doc edit).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: see comment above
+	useEffect(() => {
+		if (!enabled) return;
+		let cancelled = false;
+		// Debounce so a flurry of edits (e.g. typing in the inline form)
+		// doesn't run ELK on every keystroke.
+		const handle = window.setTimeout(async () => {
+			const selectedTaskId = selectionStore.state.taskId;
+			const isSelectedInProject =
+				selectionStore.state.projectId === projectId && selectedTaskId;
+			// Capture the selected node's screen position BEFORE the layout
+			// runs — this is the pixel we want it to stay at.
+			let pin: { id: TaskId; screen: { x: number; y: number } } | null = null;
+			if (isSelectedInProject) {
+				const rfNode = reactFlow.getNode(selectedTaskId);
+				if (rfNode) {
+					pin = {
+						id: selectedTaskId,
+						screen: reactFlow.flowToScreenPosition({
+							x: rfNode.position.x,
+							y: rfNode.position.y,
+						}),
+					};
+				}
+			}
+			const positions = await computeLayout(doc, {
+				spacing,
+				forceReflow: true,
+				collapsed,
+			});
+			if (cancelled) return;
+			// Apply positions. Expanded containers derive their position from
+			// children, so only leaves + collapsed containers need updating.
+			changeDoc((d) => {
+				for (const task of Object.values(d.tasksById)) {
+					if (task.kind === "container" && !collapsed.has(task.id)) continue;
+					const pos = positions[task.id];
+					if (!pos) continue;
+					task.layout = { ...(task.layout ?? {}), position: pos };
+				}
+			});
+			// After the new positions land, pan the viewport so the pinned
+			// node's screen position is unchanged. requestAnimationFrame
+			// gives React Flow one frame to apply the new positions before
+			// we compute the offset.
+			if (pin) {
+				const after = positions[pin.id];
+				if (after) {
+					requestAnimationFrame(() => {
+						const vp = reactFlow.getViewport();
+						reactFlow.setViewport({
+							x: pin.screen.x - after.x * vp.zoom,
+							y: pin.screen.y - after.y * vp.zoom,
+							zoom: vp.zoom,
+						});
+					});
+				}
+			}
+		}, 350);
+		return () => {
+			cancelled = true;
+			window.clearTimeout(handle);
+		};
+	}, [structuralKey, enabled, projectId]);
 }
 
 function createTask(

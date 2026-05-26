@@ -5,7 +5,7 @@ import {
 	CircleDotIcon,
 	ZapIcon,
 } from "lucide-react";
-import { memo } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { PresenceBadge } from "#/components/pert/presence/presence-badge";
 import { cn } from "#/lib/utils";
 import { NodeDeleteButton } from "./node-delete-button";
@@ -13,7 +13,13 @@ import { NodeDeleteButton } from "./node-delete-button";
 export type TaskNodeData = {
 	title: string;
 	kind: "task" | "milestone";
+	// Beta-PERT expected duration shown on the card label. Derived from the
+	// schedule engine; not editable inline.
 	durationDays: number;
+	// Most-likely value from the user's estimate, used to seed the inline
+	// edit form so the user sees and modifies the input they originally
+	// typed rather than the calculated expected duration.
+	mostLikelyDays?: number;
 	slackDays: number | null;
 	critical: boolean;
 	hasEstimate: boolean;
@@ -30,6 +36,13 @@ export type TaskNodeData = {
 	// Called when the user confirms the on-node delete button. Two-click
 	// confirm is handled inside NodeDeleteButton.
 	onDelete?: () => void;
+	// Inline-edit mode: when true the node replaces its title/duration
+	// block with a small form so the user can rename + adjust the
+	// most-likely estimate without opening the inspector. Wired up by the
+	// canvas; the canvas's `onNodeDoubleClick` handler flips it on.
+	editing?: boolean;
+	onCommitEdit?: (next: { title: string; mostLikelyDays?: number }) => void;
+	onCancelEdit?: () => void;
 };
 
 // Custom React Flow node rendering a single task. Slack and critical state
@@ -91,45 +104,61 @@ function TaskNodeImpl(props: NodeProps) {
 					<div className="mt-1.5 size-2 shrink-0 rounded-full bg-muted-foreground" />
 				)}
 				<div className="min-w-0 flex-1">
-					<div
-						className={cn(
-							"truncate text-sm",
-							data.critical ? "font-semibold" : "font-medium",
-						)}
-					>
-						{data.title || "Untitled"}
-					</div>
-					<div className="mt-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-						{isMilestone ? (
-							<span>milestone</span>
-						) : (
-							<>
-								<span>{data.hasEstimate ? fmt(data.durationDays) : "?"} d</span>
-								{!data.cycle && data.slackDays !== null && !data.critical && (
-									<>
-										<span aria-hidden>·</span>
-										<span>{fmt(data.slackDays)}d slack</span>
-									</>
+					{data.editing && data.onCommitEdit && data.onCancelEdit ? (
+						<InlineEditForm
+							initialTitle={data.title}
+							initialMostLikely={isMilestone ? undefined : data.mostLikelyDays}
+							showEstimate={!isMilestone}
+							onCommit={data.onCommitEdit}
+							onCancel={data.onCancelEdit}
+						/>
+					) : (
+						<>
+							<div
+								className={cn(
+									"truncate text-sm",
+									data.critical ? "font-semibold" : "font-medium",
 								)}
-								{!data.cycle && data.critical && (
+							>
+								{data.title || "Untitled"}
+							</div>
+							<div className="mt-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+								{isMilestone ? (
+									<span>milestone</span>
+								) : (
 									<>
-										<span aria-hidden>·</span>
-										<span className="font-semibold text-destructive">
-											critical
+										<span>
+											{data.hasEstimate ? fmt(data.durationDays) : "?"} d
 										</span>
+										{!data.cycle &&
+											data.slackDays !== null &&
+											!data.critical && (
+												<>
+													<span aria-hidden>·</span>
+													<span>{fmt(data.slackDays)}d slack</span>
+												</>
+											)}
+										{!data.cycle && data.critical && (
+											<>
+												<span aria-hidden>·</span>
+												<span className="font-semibold text-destructive">
+													critical
+												</span>
+											</>
+										)}
+										{data.cycle && (
+											<>
+												<span aria-hidden>·</span>
+												<span className="font-semibold text-destructive">
+													on cycle
+												</span>
+											</>
+										)}
 									</>
 								)}
-								{data.cycle && (
-									<>
-										<span aria-hidden>·</span>
-										<span className="font-semibold text-destructive">
-											on cycle
-										</span>
-									</>
-								)}
-							</>
-						)}
-					</div>
+							</div>
+						</>
+					)}
 				</div>
 			</div>
 			{(inFlight || isDone) && (
@@ -157,6 +186,96 @@ function TaskNodeImpl(props: NodeProps) {
 function fmt(n: number): string {
 	if (Number.isInteger(n)) return n.toString();
 	return n.toFixed(1);
+}
+
+// Two-field inline editor rendered in place of the title/duration block when
+// the user double-clicks a node. Title autofocuses; Enter commits, Escape
+// cancels, blur outside the form commits. Class `nodrag` so React Flow
+// doesn't grab the inputs as a node drag, and `nopan`/`nowheel` so cursor
+// keys + scroll behave like a normal text input.
+function InlineEditForm({
+	initialTitle,
+	initialMostLikely,
+	showEstimate,
+	onCommit,
+	onCancel,
+}: {
+	initialTitle: string;
+	initialMostLikely: number | undefined;
+	showEstimate: boolean;
+	onCommit: (next: { title: string; mostLikelyDays?: number }) => void;
+	onCancel: () => void;
+}) {
+	const [title, setTitle] = useState(initialTitle);
+	const [estDays, setEstDays] = useState(
+		initialMostLikely === undefined ? "" : String(initialMostLikely),
+	);
+	const titleRef = useRef<HTMLInputElement | null>(null);
+	useEffect(() => {
+		titleRef.current?.focus();
+		titleRef.current?.select();
+	}, []);
+
+	const commit = () => {
+		const trimmed = title.trim();
+		if (!trimmed) {
+			onCancel();
+			return;
+		}
+		const parsed = Number.parseFloat(estDays);
+		onCommit({
+			title: trimmed,
+			mostLikelyDays:
+				showEstimate && Number.isFinite(parsed) && parsed > 0
+					? parsed
+					: undefined,
+		});
+	};
+
+	return (
+		<form
+			className="nodrag nopan space-y-1"
+			onSubmit={(e) => {
+				e.preventDefault();
+				commit();
+			}}
+			onBlur={(e) => {
+				// Commit when focus leaves the entire form (not when moving
+				// between the two inputs inside it).
+				if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+					commit();
+				}
+			}}
+			onKeyDown={(e) => {
+				if (e.key === "Escape") {
+					e.preventDefault();
+					onCancel();
+				}
+			}}
+		>
+			<input
+				ref={titleRef}
+				data-testid="task-inline-title"
+				value={title}
+				onChange={(e) => setTitle(e.target.value)}
+				placeholder="Title"
+				className="nowheel w-full rounded border border-border bg-background px-1.5 py-0.5 text-sm font-medium focus:border-primary focus:outline-none"
+			/>
+			{showEstimate && (
+				<div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+					<input
+						data-testid="task-inline-estimate"
+						value={estDays}
+						onChange={(e) => setEstDays(e.target.value)}
+						placeholder="est."
+						inputMode="decimal"
+						className="nowheel w-12 rounded border border-border bg-background px-1 py-0.5 text-xs text-foreground focus:border-primary focus:outline-none"
+					/>
+					<span>d (most likely)</span>
+				</div>
+			)}
+		</form>
+	);
 }
 
 export const TaskNode = memo(TaskNodeImpl);
