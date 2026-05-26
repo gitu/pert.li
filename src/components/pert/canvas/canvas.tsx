@@ -16,6 +16,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import { useStore } from "@tanstack/react-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { findNeighborTaskId } from "#/lib/pert/canvas-keynav";
 import {
 	EDGE_STYLE_TO_REACT_FLOW_TYPE,
 	type EdgeStyle,
@@ -235,14 +236,20 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		[changeDoc],
 	);
 
-	// Radial quick-add: spawn a new task linked by a dependency to the source
-	// task. The new task lands one column to the side at the source's y so the
-	// auto-layout (when enabled) only needs to nudge, and the user sees it
-	// without panning. Inherits the source's container parent so quick-adds
-	// inside a container stay inside it. Selecting + entering inline-edit on
-	// the new task lets the user immediately rename it without a second click.
+	// Radial quick-add: spawn a new task or milestone linked by a dependency
+	// to the source task. The new node lands one column to the side at the
+	// source's y so the auto-layout (when enabled) only needs to nudge, and
+	// the user sees it without panning. Inherits the source's container
+	// parent so quick-adds inside a container stay inside it. Selecting +
+	// entering inline-edit on the new task lets the user immediately rename
+	// it without a second click. Milestones skip the estimate block — they
+	// have none in the model.
 	const onAddLinkedTask = useCallback(
-		(sourceId: TaskId, direction: "successor" | "predecessor") => {
+		(
+			sourceId: TaskId,
+			direction: "successor" | "predecessor",
+			kind: "task" | "milestone",
+		) => {
 			const source = doc.tasksById[sourceId];
 			if (!source) return;
 			const sourcePos = source.layout?.position ?? { x: 0, y: 0 };
@@ -259,19 +266,22 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			changeDoc((d) => {
 				const draftSource = d.tasksById[sourceId];
 				if (!draftSource) return;
-				d.tasksById[newTaskId] = {
+				const draft: Task = {
 					id: newTaskId,
-					kind: "task",
-					title: "New task",
+					kind,
+					title: kind === "milestone" ? "New milestone" : "New task",
 					parentId: draftSource.parentId ?? null,
 					layout: { position },
-					estimate: {
+				};
+				if (kind === "task") {
+					draft.estimate = {
 						optimistic: 1,
 						mostLikely: 2,
 						pessimistic: 4,
 						unit: "day",
-					},
-				};
+					};
+				}
+				d.tasksById[newTaskId] = draft;
 				const fromId = direction === "successor" ? sourceId : newTaskId;
 				const toId = direction === "successor" ? newTaskId : sourceId;
 				d.dependenciesById[newDepId] = {
@@ -565,6 +575,74 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		};
 	}, [projectId]);
 
+	// Arrow-key navigation on the canvas. Plain arrows jump the selection
+	// through the dependency graph (←/→ = predecessor/successor, ↑/↓ =
+	// sibling tasks sharing a predecessor or successor). ⌘+← / ⌘+→ create a
+	// new linked task in that direction — the keyboard mirror of the radial
+	// quick-add buttons on the node card. Bound once via a ref so the handler
+	// doesn't re-attach on every doc edit.
+	const keyNavRef = useRef({ doc, projectId, onAddLinkedTask });
+	keyNavRef.current = { doc, projectId, onAddLinkedTask };
+	useEffect(() => {
+		function handler(e: KeyboardEvent) {
+			if (e.defaultPrevented) return;
+			const key = e.key;
+			if (
+				key !== "ArrowLeft" &&
+				key !== "ArrowRight" &&
+				key !== "ArrowUp" &&
+				key !== "ArrowDown"
+			) {
+				return;
+			}
+			const target = e.target as HTMLElement | null;
+			if (target) {
+				const tag = target.tagName;
+				if (
+					tag === "INPUT" ||
+					tag === "TEXTAREA" ||
+					tag === "SELECT" ||
+					target.isContentEditable
+				) {
+					return;
+				}
+			}
+			const state = selectionStore.state;
+			const current = keyNavRef.current;
+			if (state.projectId !== current.projectId || !state.taskId) return;
+			const task = current.doc.tasksById[state.taskId];
+			if (!task || task.kind === "container") return;
+
+			const wantsCreate = e.metaKey || e.ctrlKey;
+			if (wantsCreate) {
+				if (key !== "ArrowLeft" && key !== "ArrowRight") return;
+				e.preventDefault();
+				current.onAddLinkedTask(
+					state.taskId,
+					key === "ArrowRight" ? "successor" : "predecessor",
+					"task",
+				);
+				return;
+			}
+
+			const dir =
+				key === "ArrowLeft"
+					? "left"
+					: key === "ArrowRight"
+						? "right"
+						: key === "ArrowUp"
+							? "up"
+							: "down";
+			const next = findNeighborTaskId(current.doc, state.taskId, dir);
+			if (next) {
+				e.preventDefault();
+				selectTask(current.projectId, next);
+			}
+		}
+		window.addEventListener("keydown", handler);
+		return () => window.removeEventListener("keydown", handler);
+	}, []);
+
 	const resolvedTheme = useResolvedTheme();
 	const isMobile = useIsMobile();
 
@@ -709,6 +787,7 @@ function buildNodes(
 	onAddLinkedTask: (
 		sourceId: TaskId,
 		direction: "successor" | "predecessor",
+		kind: "task" | "milestone",
 	) => void,
 ): Node[] {
 	const fallback = fallbackGridLayout(doc);
@@ -838,6 +917,7 @@ function pushLeafNode(
 	onAddLinkedTask: (
 		sourceId: TaskId,
 		direction: "successor" | "predecessor",
+		kind: "task" | "milestone",
 	) => void,
 ) {
 	const task = projected.task;
@@ -864,8 +944,8 @@ function pushLeafNode(
 			? (next) => onCommitInlineEdit(task.id, next)
 			: undefined,
 		onCancelEdit: editing ? onCancelInlineEdit : undefined,
-		onAddPredecessor: () => onAddLinkedTask(task.id, "predecessor"),
-		onAddSuccessor: () => onAddLinkedTask(task.id, "successor"),
+		onAddPredecessor: (kind) => onAddLinkedTask(task.id, "predecessor", kind),
+		onAddSuccessor: (kind) => onAddLinkedTask(task.id, "successor", kind),
 	};
 	nodes.push({
 		id: task.id,
