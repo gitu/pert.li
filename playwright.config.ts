@@ -20,7 +20,24 @@ export default defineConfig({
 	// for full determinism; local dev gets 2 for a faster feedback loop while
 	// staying stable.
 	workers: process.env.CI ? 1 : 2,
-	reporter: process.env.CI ? "github" : "list",
+	// CI uses multiple reporters so each run drops three artifacts the
+	// repo can lean on:
+	//   - `github`: inline annotations on the PR / Actions UI.
+	//   - `list` (with steps): every assertion lands in the job log,
+	//     so failures don't require fishing through traces.
+	//   - `html`: drilldown report uploaded as an artifact below.
+	//   - `json`: machine-readable summary the CI step parses into the
+	//     job summary table.
+	// Local dev keeps `list` only — running Playwright locally is for
+	// the interactive workflow; the HTML report is opt-in via `pnpm e2e:ui`.
+	reporter: process.env.CI
+		? [
+				["github"],
+				["list", { printSteps: true }],
+				["html", { outputFolder: "playwright-report", open: "never" }],
+				["json", { outputFile: "playwright-report/results.json" }],
+			]
+		: "list",
 	use: {
 		baseURL: process.env.E2E_BASE_URL ?? `http://localhost:${E2E_PORT}`,
 		trace: "on-first-retry",

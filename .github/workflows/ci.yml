@@ -103,6 +103,31 @@ jobs:
           BASE_REF: origin/${{ github.base_ref }}
         run: node scripts/check-db-back-compat.mjs
 
+  docker-build:
+    # Runs on every push to main + every PR. The intent is just to catch
+    # Dockerfile breakage early — the image is built but NOT pushed; the
+    # docker.yml workflow handles publishing on tags. `cache-from: gha`
+    # reuses the layer cache populated by tag builds so PR runs stay fast.
+    name: docker build (no publish)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: false
+          tags: pert-li:pr-${{ github.event.pull_request.number || github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   e2e:
     name: playwright e2e
     runs-on: ubuntu-latest
@@ -112,7 +137,7 @@ jobs:
       # The Playwright config seeds the dev server with E2E_PGLITE=1, so an
       # in-process Postgres handles all DB traffic — no real Postgres needed.
       # We still set BETTER_AUTH_SECRET to keep auth happy at module load.
-      BETTER_AUTH_SECRET: ci-only-not-secret
+      BETTER_AUTH_SECRET: ci-only-not-secret-long-enough--
       ANTHROPIC_API_KEY: ci-placeholder
     steps:
       - name: Checkout
@@ -198,8 +223,20 @@ jobs:
       - name: Playwright tests
         run: pnpm e2e
 
+      # Walk the JSON reporter output and write a markdown summary into
+      # the job's GITHUB_STEP_SUMMARY. Runs on success AND failure so
+      # passing runs still show per-spec timings + retries in the Actions
+      # UI without downloading the HTML report.
+      - name: E2E summary → job step summary
+        if: always()
+        run: node scripts/playwright-summary.mjs playwright-report/results.json >> "$GITHUB_STEP_SUMMARY"
+        continue-on-error: true
+
       - name: Upload Playwright report
-        if: failure()
+        # Always upload — passing runs are useful for spot-checking
+        # per-test timings and step traces. The HTML report is small
+        # enough that 14-day retention costs nothing meaningful.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
@@ -207,6 +244,9 @@ jobs:
           retention-days: 14
 
       - name: Upload test traces
+        # Traces are large (screenshots + DOM snapshots per step) so
+        # we only keep them when something failed and a human is going
+        # to open them.
         if: failure()
         uses: actions/upload-artifact@v4
         with:
