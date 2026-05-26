@@ -33,6 +33,7 @@ process.env.PROJECT_ROOT = process.cwd();
 const useNeonProvisioning = process.env.USE_NEON_PROVISION === "1";
 
 const config = defineConfig({
+	build: { target: ['chrome111', 'edge111', 'firefox114', 'safari16.4'] },
 	resolve: { tsconfigPaths: true },
 	optimizeDeps: {
 		// Pulling server-only chains (better-auth, drizzle, jose, kysely) into
@@ -43,6 +44,7 @@ const config = defineConfig({
 	},
 	plugins: [
 		devtools(),
+		wasm(),
 		nitro({
 			// `@electric-sql/pglite` resolves `postgres.wasm` / `initdb.wasm`
 			// relative to `import.meta.url`. Once rollup inlines pglite into
@@ -56,8 +58,20 @@ const config = defineConfig({
 			// a `.wasm` side-file and additionally uses CJS `__dirname` to find
 			// it, which crashes the ESM Nitro output if bundled inline. Letting
 			// Node resolve through `node_modules` keeps the wasm reachable.
+			//
+			// `drizzle-kit/api` re-exports every Drizzle driver (mysql2,
+			// aws-data-api, vercel-postgres, …) — most have optional peer
+			// deps that aren't installed here, so following the chain at
+			// build time trips MISSING_EXPORT errors. The `/* @vite-ignore */`
+			// hint in src/db/index.ts is honored by Vite's client bundler but
+			// not by Rolldown on the server side, so we externalize the whole
+			// package here.
 			rollupConfig: {
-				external: [/^@electric-sql\//, /^@automerge\//],
+				external: [
+					/^@electric-sql\//,
+					/^@automerge\//,
+					/^drizzle-kit(\/|$)/,
+				],
 			},
 			features: { websocket: true },
 			handlers: [{ route: "/sync", handler: "./src/server/sync.ts" }],
@@ -67,7 +81,6 @@ const config = defineConfig({
 		tailwindcss(),
 		tanstackStart(),
 		viteReact(),
-		wasm(),
 		babel({ presets: [reactCompilerPreset()] }),
 	],
 	worker: {
