@@ -142,38 +142,26 @@ steps:
           "$$IMAGE" \
           /workspace/scripts/check-secret-leak.mjs
 
-  # 2b. Push the Drizzle schema (src/db/schema.ts) to the production database
-  #     before we deploy, so the running image never finds itself ahead of
-  #     the DB. Runs inside the just-built `cache-build` image which carries
-  #     the full dev-deps tree (drizzle-kit lives there).
+  # Schema management runs at container start, not here. The runner image's
+  # entrypoint (`scripts/docker-entrypoint.sh` → `scripts/migrate.mjs`)
+  # applies versioned migrations from `./drizzle/` against the live DB
+  # before the server binds. Single source of truth, pinned to the SQL
+  # files committed to the repo — schema changes ship via
+  # `pnpm db:generate` and the generated `drizzle/NNNN_*.sql` file, not
+  # via `drizzle-kit push` inferring from `src/db/schema.ts`.
   #
-  #     ⚠️  `drizzle-kit push` applies changes directly. For destructive
-  #     schema changes (column drops, renames) generate a SQL migration with
-  #     `pnpm db:generate` and use `db:migrate` instead — push is fine for
-  #     additive changes but will happily nuke columns it thinks are gone.
-  - id: db-push
-    name: gcr.io/cloud-builders/docker
-    entrypoint: bash
-    waitFor: ["build"]
-    secretEnv:
-      - DATABASE_URL
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        IMAGE=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-build
-        docker run --rm \
-          -w /app \
-          -e DATABASE_URL \
-          "$$IMAGE" \
-          pnpm db:push
+  # If a deploy crashes at the migrate step with
+  # `42710 type "..." already exists` (e.g. a DB previously managed with
+  # `drizzle-kit push`), boot once with `BASELINE_MIGRATIONS=1` on the
+  # Cloud Run service to mark current journal entries as applied without
+  # re-running their SQL, then clear the flag.
 
   # 3. Push all tags — both the deployable ones (:SHA and :latest) and the
   #    per-stage cache images (:cache-deps, :cache-build, :cache-prod-deps)
   #    so the next run can rehydrate them via --cache-from.
   - id: push
     name: gcr.io/cloud-builders/docker
-    waitFor: ["secrets-check", "db-push"]
+    waitFor: ["secrets-check"]
     args:
       - push
       - --all-tags
