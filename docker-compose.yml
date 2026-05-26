@@ -1,0 +1,90 @@
+# One-command on-prem self-host for pert.li.
+#
+# Usage:
+#   cp .env.example .env       # fill in secrets (or `make env`)
+#   docker compose up -d
+#   open http://localhost:8080
+#
+# The app container runs the bundled Nitro server. On first start the
+# entrypoint applies SQL migrations to the Postgres sidecar; subsequent
+# starts are idempotent.
+#
+# Production tweaks (TLS, off-host backups, OIDC, SMTP, LLM keys) are all
+# environment-driven — see .env.example and SELF_HOSTING.md.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pertli}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-pertli}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready -U <user>` connects with the same role the app will use,
+      # so we catch auth misconfig early instead of waiting for the app to
+      # crash-loop with a confusing error.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pertli} -d ${POSTGRES_DB:-pertli}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    # Postgres listens only on the compose network by default. Uncomment to
+    # expose for psql / Drizzle Studio access from the host (5432 collides
+    # with a local install — pick another port if needed).
+    # ports:
+    #   - "127.0.0.1:5433:5432"
+
+  app:
+    image: ghcr.io/${PERTLI_IMAGE_OWNER:-gitu}/pert.li:${PERTLI_IMAGE_TAG:-latest}
+    # Building locally? Replace `image:` with:
+    #   build: { context: ., dockerfile: Dockerfile }
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # --- required ---
+      DATABASE_URL: postgres://${POSTGRES_USER:-pertli}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-pertli}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?generate with `pnpm dlx @better-auth/cli secret`}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:8080}
+      # --- LLM (any one provider is enough; chat disables itself if none set) ---
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+      # --- email (SMTP takes precedence; without either, magic-links log to stdout) ---
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
+      # --- optional: OIDC SSO ---
+      OIDC_PROVIDER_ID: ${OIDC_PROVIDER_ID:-}
+      OIDC_PROVIDER_NAME: ${OIDC_PROVIDER_NAME:-}
+      OIDC_DISCOVERY_URL: ${OIDC_DISCOVERY_URL:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_SCOPES: ${OIDC_SCOPES:-}
+      # --- optional: privacy policy redirect ---
+      PRIVACY_POLICY_URL: ${PRIVACY_POLICY_URL:-}
+    ports:
+      - "${PORT:-8080}:8080"
+    healthcheck:
+      # `/privacy` is the cheapest server-rendered route that doesn't require
+      # an authenticated session or hit the database. node has no curl; we
+      # use the bundled http client.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/privacy').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+
+volumes:
+  postgres-data:

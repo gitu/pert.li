@@ -1,6 +1,11 @@
 import { neon } from "@neondatabase/serverless";
-import { drizzle, type NeonHttpDatabase } from "drizzle-orm/neon-http";
+import {
+	drizzle as drizzleNeonHttp,
+	type NeonHttpDatabase,
+} from "drizzle-orm/neon-http";
+import { drizzle as drizzleNodePg } from "drizzle-orm/node-postgres";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
+import { Pool } from "pg";
 import * as schema from "./schema.ts";
 
 // Both real and test drivers share this shape — Drizzle's PgDatabase is the
@@ -10,13 +15,36 @@ type AppDatabase = PgDatabase<PgQueryResultHKT, typeof schema> &
 
 const DEFAULT_LOCAL_PGLITE_DIR = "./.data/pglite";
 
-type DbMode = "e2e-pglite" | "local-pglite" | "neon";
+type DbMode = "e2e-pglite" | "local-pglite" | "neon" | "pg";
+
+// Hostnames that should go through the Neon HTTP driver instead of plain
+// node-postgres. The serverless driver only speaks Neon's SQL-over-HTTP
+// protocol, so on-prem Postgres / Cloud SQL / RDS need the regular driver.
+const NEON_HOST_PATTERNS = [
+	/\.neon\.tech$/i,
+	/\.neondb\.com$/i,
+	/\.neon\.build$/i,
+];
+
+function isNeonUrl(url: string): boolean {
+	if (process.env.DB_DRIVER === "neon") return true;
+	if (process.env.DB_DRIVER === "pg") return false;
+	try {
+		const u = new URL(url);
+		return NEON_HOST_PATTERNS.some((re) => re.test(u.hostname));
+	} catch {
+		return false;
+	}
+}
 
 function resolveMode(): DbMode {
 	if (process.env.E2E_PGLITE === "1") return "e2e-pglite";
 	// Opt-in via LOCAL_PGLITE=1, OR opt-in by absence of DATABASE_URL — that
 	// way `pnpm dev` works zero-config the first time without Neon launchpad,
-	// and a developer that wants real Neon just provisions DATABASE_URL.
+	// and a developer that wants real Neon just provisions DATABASE_URL. In
+	// production we follow the same rule: no DATABASE_URL → in-process PGLite
+	// (suitable for single-replica self-hosting on a PVC), DATABASE_URL set →
+	// real Postgres.
 	if (
 		process.env.LOCAL_PGLITE === "1" ||
 		!process.env.DATABASE_URL ||
@@ -24,7 +52,7 @@ function resolveMode(): DbMode {
 	) {
 		return "local-pglite";
 	}
-	return "neon";
+	return isNeonUrl(process.env.DATABASE_URL) ? "neon" : "pg";
 }
 
 async function initPglite(dataDir?: string): Promise<AppDatabase> {
@@ -53,6 +81,19 @@ async function initPglite(dataDir?: string): Promise<AppDatabase> {
 	return drizzleDb as unknown as AppDatabase;
 }
 
+function initNeon(url: string): AppDatabase {
+	return drizzleNeonHttp(neon(url), { schema }) as unknown as AppDatabase;
+}
+
+function initNodePg(url: string): AppDatabase {
+	// node-postgres' Pool is the right shape for any vanilla Postgres
+	// (self-hosted, RDS, Cloud SQL, Supabase direct, ...). Connections are
+	// established lazily on first query, so this is safe to call synchronously
+	// at module init.
+	const pool = new Pool({ connectionString: url, max: 10 });
+	return drizzleNodePg(pool, { schema }) as unknown as AppDatabase;
+}
+
 let _db: AppDatabase | undefined;
 let _initPromise: Promise<AppDatabase> | undefined;
 
@@ -64,18 +105,21 @@ async function init(): Promise<AppDatabase> {
 	}
 	if (mode === "local-pglite") {
 		const dir = process.env.LOCAL_PGLITE_DIR ?? DEFAULT_LOCAL_PGLITE_DIR;
-		console.log(`[db] Using local PGLite at ${dir} (no DATABASE_URL set)`);
+		console.log(`[db] Using PGLite at ${dir} (no DATABASE_URL set)`);
 		return initPglite(dir);
 	}
-	// Production / Neon-backed: synchronous driver, no schema push (managed
-	// out-of-band via `pnpm db:push` / migrations).
 	const url = process.env.DATABASE_URL;
 	if (!url) {
 		throw new Error(
-			"DATABASE_URL is not set. Set it to a Postgres URL, or unset it (and remove LOCAL_PGLITE=0) to use the local PGLite fallback.",
+			"DATABASE_URL is not set. Set it to a Postgres URL, or unset it (and remove LOCAL_PGLITE=0) to use the PGLite fallback.",
 		);
 	}
-	return drizzle(neon(url), { schema }) as unknown as AppDatabase;
+	if (mode === "neon") {
+		console.log("[db] Using Neon HTTP driver");
+		return initNeon(url);
+	}
+	console.log("[db] Using node-postgres driver");
+	return initNodePg(url);
 }
 
 export async function ensureDb(): Promise<AppDatabase> {
@@ -107,6 +151,14 @@ export function getDb(): AppDatabase {
 // upgrade through Nitro's proxy. Instead, the Vite plugin in
 // `pglite-vite-plugin.ts` calls `ensureDb()` during `configureServer` so
 // the DB is ready before the server starts listening.
+//
+// Production: the synchronous Proxy fallback below handles Neon and vanilla
+// Postgres lazily on first access. PGLite-in-production is intentionally not
+// wired here — drizzle-kit's `pushSchema` hangs against the Rolldown-bundled
+// schema object (Drizzle's Symbol identities don't survive the bundling), so
+// schema management for self-hosted deployments goes through the container
+// entrypoint (`scripts/docker-entrypoint.sh`) which runs the unbundled
+// `pnpm db:push` against a real Postgres before the server starts.
 if (process.env.E2E_PGLITE === "1") {
 	await ensureDb();
 }
@@ -114,10 +166,19 @@ if (process.env.E2E_PGLITE === "1") {
 export const db = new Proxy({} as NeonHttpDatabase<typeof schema>, {
 	get: (_target, prop, receiver) => {
 		if (!_db) {
+			// Synchronous fallback: only the URL-based drivers (Neon / node-pg)
+			// can be constructed lazily here. PGLite paths must have gone through
+			// ensureDb() during startup; getting here without an initialized _db
+			// means the boot sequence missed its init hook.
 			const url = process.env.DATABASE_URL;
-			if (!url)
-				throw new Error("DATABASE_URL is not set. See src/db/index.ts.");
-			_db = drizzle(neon(url), { schema }) as unknown as AppDatabase;
+			if (!url) {
+				throw new Error(
+					"db accessed before init and no DATABASE_URL is set. " +
+						"Either call `await ensureDb()` at startup (PGLite paths) " +
+						"or set DATABASE_URL (Neon / Postgres).",
+				);
+			}
+			_db = isNeonUrl(url) ? initNeon(url) : initNodePg(url);
 		}
 		return Reflect.get(_db, prop, receiver);
 	},

@@ -1,0 +1,93 @@
+# pert.li app Deployment.
+#
+# `replicas: 1` is intentional — the Automerge sync server keeps live
+# in-process state and would only sync between replicas after a hard reload
+# (durable state still goes through Postgres). Multi-instance fan-out via
+# Redis pub/sub is on the roadmap; until then, scale vertically.
+#
+# DATABASE_URL is assembled inline from ConfigMap + Secret so a password
+# rotation only needs `kubectl rollout restart deployment/pertli`.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pertli
+  namespace: pertli
+spec:
+  selector:
+    app: pertli
+  ports:
+    - port: 80
+      targetPort: 8080
+      name: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pertli
+  namespace: pertli
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pertli
+  template:
+    metadata:
+      labels:
+        app: pertli
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/gitu/pert.li:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: AUTOMERGE_STORAGE
+              value: postgres
+            - name: BETTER_AUTH_SECRET
+              valueFrom:
+                secretKeyRef: { name: pertli, key: BETTER_AUTH_SECRET }
+            - name: BETTER_AUTH_URL
+              valueFrom:
+                configMapKeyRef: { name: pertli, key: BETTER_AUTH_URL }
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef: { name: pertli, key: POSTGRES_USER }
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef: { name: pertli, key: POSTGRES_DB }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: pertli, key: POSTGRES_PASSWORD }
+            - name: DATABASE_URL
+              value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@postgres-0.postgres:5432/$(POSTGRES_DB)"
+          envFrom:
+            # Pull every additional optional key the Secret happens to carry
+            # (LLM keys, SMTP_*, OIDC_*, PRIVACY_POLICY_URL, …). `optional:
+            # false` is intentional — the Secret itself is mandatory, even
+            # if it only carries the two required keys.
+            - secretRef:
+                name: pertli
+          readinessProbe:
+            httpGet:
+              path: /privacy
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /privacy
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              memory: "1Gi"

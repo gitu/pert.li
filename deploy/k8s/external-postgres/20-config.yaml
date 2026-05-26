@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pertli
+  namespace: pertli
+data:
+  BETTER_AUTH_URL: "http://localhost:8080"
