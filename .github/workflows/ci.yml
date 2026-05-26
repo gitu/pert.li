@@ -316,6 +316,192 @@ jobs:
       - name: Storybook test-runner
         run: pnpm storybook:ci
 
+  pr-screenshots:
+    # PR-only, informational. Renders every story whose source file changed
+    # on this branch, pushes the PNGs to the `screenshots` orphan branch
+    # under `pr-<num>/`, and posts a sticky PR comment with the images
+    # embedded via raw.githubusercontent.com. Deliberately NOT in the
+    # ci-ready gate — a flake here should never block merge.
+    name: PR screenshots
+    # Skip on forks: GITHUB_TOKEN on a fork PR is read-only by default,
+    # so the screenshots-branch push would fail and the sticky comment
+    # could not be created. Re-enable for forks later via a
+    # pull_request_target variant if we want it.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # `contents: write` so we can push to the screenshots branch with
+      # the default GITHUB_TOKEN. `pull-requests: write` for the sticky
+      # comment action.
+      contents: write
+      pull-requests: write
+    env:
+      # Story modules transitively import code that reads these at load
+      # time (better-auth client config, chat provider sniff). Dummy
+      # values keep imports happy; nothing actually runs against them.
+      BETTER_AUTH_SECRET: ci-only-not-secret
+      ANTHROPIC_API_KEY: ci-placeholder
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # We need the merge base on disk to diff against — the default
+          # shallow checkout only carries HEAD. fetch-depth 0 is overkill
+          # for the diff but matches db-back-compat (cache hit overlap).
+          fetch-depth: 0
+
+      - name: Detect changed stories
+        id: diff
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only --diff-filter=ACMR "$BASE_REF"...HEAD -- "src/**/*.stories.tsx" || true)
+          if [ -z "$changed" ]; then
+            echo "no *.stories.tsx changes — skipping screenshot pipeline"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$changed"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup pnpm
+        if: steps.diff.outputs.has_changes == 'true'
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.3.0
+          run_install: false
+
+      - name: Setup Node.js
+        if: steps.diff.outputs.has_changes == 'true'
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.diff.outputs.has_changes == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Approve build scripts
+        if: steps.diff.outputs.has_changes == 'true'
+        run: pnpm approve-builds --all
+        continue-on-error: true
+
+      - name: Resolve Playwright version
+        if: steps.diff.outputs.has_changes == 'true'
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        if: steps.diff.outputs.has_changes == 'true'
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          # Same cache key as the e2e + storybook jobs so all three share
+          # the warm download whenever any of them runs first.
+          key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
+
+      - name: Install Chromium (+ system deps)
+        if: steps.diff.outputs.has_changes == 'true' && steps.pw-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Chromium system deps only
+        if: steps.diff.outputs.has_changes == 'true' && steps.pw-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+
+      - name: Build Storybook
+        if: steps.diff.outputs.has_changes == 'true'
+        # Static build gives us a reproducible `index.json` (mapping
+        # story id -> importPath) for the changed-stories filter, and
+        # lets test-storybook run against a plain file server instead
+        # of `storybook dev` (no compile-on-demand variance).
+        run: pnpm build-storybook --quiet
+
+      - name: Screenshot every story
+        if: steps.diff.outputs.has_changes == 'true'
+        env:
+          STORYBOOK_SCREENSHOT_DIR: ${{ github.workspace }}/pr-screenshots
+        # `python3 -m http.server` ships with ubuntu-latest — avoids a
+        # cold `pnpm dlx http-server` install on every run. We background
+        # it, `wait-on` blocks until the port is live, then test-storybook
+        # drives every story; the postVisit hook in .storybook/test-runner.ts
+        # dumps a PNG per story into $STORYBOOK_SCREENSHOT_DIR.
+        run: |
+          set -euo pipefail
+          mkdir -p "$STORYBOOK_SCREENSHOT_DIR"
+          ( cd storybook-static && python3 -m http.server 6006 >/tmp/sb-http.log 2>&1 ) &
+          echo "$!" > /tmp/sb-http.pid
+          pnpm exec wait-on -l tcp:6006 -t 60000
+          pnpm exec test-storybook --url http://localhost:6006 || {
+            status=$?
+            echo "test-storybook exited with $status; continuing so we still publish whatever rendered"
+          }
+          kill "$(cat /tmp/sb-http.pid)" 2>/dev/null || true
+
+      - name: Filter screenshots to changed stories
+        if: steps.diff.outputs.has_changes == 'true'
+        env:
+          BASE_REF: origin/${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          node scripts/changed-stories.mjs "$BASE_REF" storybook-static/index.json > changed-stories.json
+          jq '.stories[] | .id + " (" + .title + " / " + .name + ")"' changed-stories.json
+          mkdir -p pr-staging
+          for id in $(jq -r '.stories[].id' changed-stories.json); do
+            src="pr-screenshots/${id}.png"
+            if [ -f "$src" ]; then
+              cp "$src" "pr-staging/${id}.png"
+            else
+              echo "::warning::no screenshot rendered for story id $id"
+            fi
+          done
+          ls -la pr-staging/
+
+      - name: Publish to screenshots branch
+        if: steps.diff.outputs.has_changes == 'true'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/publish-pr-screenshots.sh pr-staging
+
+      - name: Build sticky-comment body
+        if: steps.diff.outputs.has_changes == 'true'
+        env:
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/build-pr-screenshot-comment.mjs changed-stories.json pr-staging comment.md
+
+      - name: Post / update sticky PR comment
+        if: steps.diff.outputs.has_changes == 'true'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: pr-screenshots
+          path: comment.md
+
+      - name: Remove sticky comment when no stories changed
+        if: steps.diff.outputs.has_changes != 'true'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: pr-screenshots
+          # Wipe a previously-posted comment if the latest push removed
+          # all the story diffs that originally triggered it — otherwise
+          # the comment lingers with stale URLs.
+          delete: true
+
+      - name: Upload screenshots artifact (debug)
+        if: steps.diff.outputs.has_changes == 'true' && always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-screenshots
+          path: pr-screenshots
+          retention-days: 7
+          if-no-files-found: ignore
+
   # Aggregate gate. Branch protection should require *this* job, not the
   # individual ones — adding a new job only needs editing one `needs:`
   # list, not the repo settings, and a job that legitimately skips on the

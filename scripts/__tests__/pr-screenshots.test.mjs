@@ -1,0 +1,125 @@
+import { describe, expect, it } from "vitest";
+import { renderComment } from "../build-pr-screenshot-comment.mjs";
+import { matchStoriesToFiles } from "../changed-stories.mjs";
+
+// Minimal shape mirroring storybook's `storybook-static/index.json`.
+// Real builds add a bunch of metadata; the matcher only reads
+// `id`, `title`, `name`, `importPath`, `type`.
+const INDEX = {
+	v: 5,
+	entries: {
+		"foo-bar--default": {
+			id: "foo-bar--default",
+			title: "Foo/Bar",
+			name: "Default",
+			importPath: "./src/components/foo/bar.stories.tsx",
+			type: "story",
+		},
+		"foo-bar--with-icon": {
+			id: "foo-bar--with-icon",
+			title: "Foo/Bar",
+			name: "With Icon",
+			importPath: "./src/components/foo/bar.stories.tsx",
+			type: "story",
+		},
+		"foo-bar--docs": {
+			id: "foo-bar--docs",
+			title: "Foo/Bar",
+			name: "docs",
+			importPath: "./src/components/foo/bar.stories.tsx",
+			type: "docs",
+		},
+		"widget--basic": {
+			id: "widget--basic",
+			title: "Widget",
+			name: "Basic",
+			importPath: "./src/components/widget.stories.tsx",
+			type: "story",
+		},
+	},
+};
+
+describe("matchStoriesToFiles", () => {
+	it("returns the stories whose importPath matches a changed file (and excludes docs)", () => {
+		const out = matchStoriesToFiles(INDEX, ["src/components/foo/bar.stories.tsx"]);
+		expect(out.map((s) => s.id).sort()).toEqual(["foo-bar--default", "foo-bar--with-icon"]);
+		// Each match carries the normalized file path back to the caller
+		// (the CI workflow uses it to render the file-path subtitle in the
+		// sticky comment).
+		expect(out.every((s) => s.file === "src/components/foo/bar.stories.tsx")).toBe(true);
+	});
+
+	it("returns nothing when no changed file maps to a story", () => {
+		expect(matchStoriesToFiles(INDEX, ["src/components/unrelated.tsx"])).toEqual([]);
+	});
+
+	it("survives a malformed index", () => {
+		expect(matchStoriesToFiles({}, ["src/components/foo/bar.stories.tsx"])).toEqual([]);
+		expect(matchStoriesToFiles(null, ["src/components/foo/bar.stories.tsx"])).toEqual([]);
+	});
+});
+
+describe("renderComment", () => {
+	const baseArgs = {
+		repo: "gitu/pert.li",
+		prNumber: "42",
+		headSha: "deadbeef1234",
+		hasScreenshot: () => true,
+	};
+
+	it("groups stories by title and links to the raw image URL", () => {
+		const out = renderComment({
+			...baseArgs,
+			stories: [
+				{
+					id: "foo-bar--default",
+					title: "Foo/Bar",
+					name: "Default",
+					file: "src/components/foo/bar.stories.tsx",
+				},
+				{
+					id: "foo-bar--with-icon",
+					title: "Foo/Bar",
+					name: "With Icon",
+					file: "src/components/foo/bar.stories.tsx",
+				},
+			],
+		});
+		expect(out).toContain("### Foo/Bar");
+		expect(out).toContain("`src/components/foo/bar.stories.tsx`");
+		expect(out).toContain(
+			"https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--default.png",
+		);
+		expect(out).toContain(
+			"https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--with-icon.png",
+		);
+		// The title heading appears only once even though we have two
+		// stories under it.
+		expect(out.match(/### Foo\/Bar/g)).toHaveLength(1);
+	});
+
+	it("renders a fallback for stories whose screenshot is missing", () => {
+		const out = renderComment({
+			...baseArgs,
+			stories: [
+				{ id: "x--y", title: "X", name: "Y", file: "src/x.stories.tsx" },
+			],
+			hasScreenshot: () => false,
+		});
+		expect(out).toContain("_render failed");
+		expect(out).not.toMatch(/<img /);
+	});
+
+	it("renders the empty-state message when nothing changed", () => {
+		const out = renderComment({ ...baseArgs, stories: [] });
+		expect(out).toContain("No `*.stories.tsx` files changed");
+	});
+
+	it("trims the head sha to 7 chars in the footer", () => {
+		const out = renderComment({
+			...baseArgs,
+			stories: [{ id: "x--y", title: "X", name: "Y", file: "src/x.stories.tsx" }],
+		});
+		expect(out).toContain("updated for deadbee");
+	});
+});
