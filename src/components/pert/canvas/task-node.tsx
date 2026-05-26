@@ -3,6 +3,7 @@ import {
 	AlertOctagonIcon,
 	CheckCircle2Icon,
 	CircleDotIcon,
+	PlusIcon,
 	ZapIcon,
 } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
@@ -43,6 +44,13 @@ export type TaskNodeData = {
 	editing?: boolean;
 	onCommitEdit?: (next: { title: string; mostLikelyDays?: number }) => void;
 	onCancelEdit?: () => void;
+	// Radial quick-add: paired with the source/target handles on the right and
+	// left edges. When the user hovers (or selects) a node, small "+" buttons
+	// appear centred on each connector. Clicking spawns a new task and a
+	// dependency wiring it to this node (predecessor on the left, successor on
+	// the right). The canvas owns the actual mutation + selection follow-up.
+	onAddPredecessor?: () => void;
+	onAddSuccessor?: () => void;
 };
 
 // Custom React Flow node rendering a single task. Slack and critical state
@@ -82,6 +90,24 @@ function TaskNodeImpl(props: NodeProps) {
 				position={Position.Left}
 				className="!h-3 !w-3 !rounded-full !border-2 !border-background !bg-muted-foreground"
 			/>
+			{data.onAddPredecessor && (
+				<QuickAddHandleButton
+					side="left"
+					onClick={data.onAddPredecessor}
+					alwaysVisible={props.selected}
+					testId={`task-add-predecessor-${props.id}`}
+					label="Add predecessor task"
+				/>
+			)}
+			{data.onAddSuccessor && (
+				<QuickAddHandleButton
+					side="right"
+					onClick={data.onAddSuccessor}
+					alwaysVisible={props.selected}
+					testId={`task-add-successor-${props.id}`}
+					label="Add dependent task"
+				/>
+			)}
 			{data.onDelete && (
 				<NodeDeleteButton
 					onDelete={data.onDelete}
@@ -186,6 +212,47 @@ function TaskNodeImpl(props: NodeProps) {
 function fmt(n: number): string {
 	if (Number.isInteger(n)) return n.toString();
 	return n.toFixed(1);
+}
+
+// Radial "+" affordance pinned to the source/target connector on a leaf
+// node. Stays hidden until the parent card is hovered or selected, so the
+// canvas stays quiet at rest. Pushed half its width outside the card so it
+// sits centred on the existing handle dot rather than overlapping the
+// title; `nodrag` + stopPropagation keep React Flow from reading the click
+// as a node drag.
+function QuickAddHandleButton({
+	side,
+	onClick,
+	alwaysVisible,
+	testId,
+	label,
+}: {
+	side: "left" | "right";
+	onClick: () => void;
+	alwaysVisible?: boolean;
+	testId: string;
+	label: string;
+}) {
+	return (
+		<button
+			type="button"
+			data-testid={testId}
+			aria-label={label}
+			title={label}
+			className={cn(
+				"nodrag absolute top-1/2 z-20 grid size-6 -translate-y-1/2 place-items-center rounded-full border border-border bg-background/95 text-muted-foreground shadow-sm transition-opacity hover:border-primary hover:text-primary",
+				side === "left" ? "-left-7" : "-right-7",
+				alwaysVisible ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+			)}
+			onPointerDown={(e) => e.stopPropagation()}
+			onClick={(e) => {
+				e.stopPropagation();
+				onClick();
+			}}
+		>
+			<PlusIcon className="size-3.5" />
+		</button>
+	);
 }
 
 // Two-field inline editor rendered in place of the title/duration block when
