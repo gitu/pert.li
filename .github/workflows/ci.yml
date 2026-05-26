@@ -122,10 +122,11 @@ jobs:
         run: node scripts/check-db-back-compat.mjs
 
   docker-build:
-    # Runs on every push to main + every PR. The intent is just to catch
-    # Dockerfile breakage early — the image is built but NOT pushed; the
-    # docker.yml workflow handles publishing on tags. `cache-from: gha`
-    # reuses the layer cache populated by tag builds so PR runs stay fast.
+    # Runs on every push to main + every PR. The intent is to catch
+    # Dockerfile breakage early — the image is built and smoke-tested but
+    # NOT pushed; the docker.yml workflow handles publishing on tags.
+    # `cache-from: gha` reuses the layer cache populated by tag builds so
+    # PR runs stay fast.
     name: docker build (no publish)
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -136,15 +137,65 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build (no push)
+      - name: Build
         uses: docker/build-push-action@v6
         with:
           context: .
           push: false
-          load: false
+          # `load: true` materialises the image into the local docker
+          # daemon so the smoke step below can `docker run` it. This
+          # forces a single-arch build (the runner's, linux/amd64) —
+          # fine for a PR check; the multi-arch tag build lives in
+          # docker.yml.
+          load: true
           tags: pert-li:pr-${{ github.event.pull_request.number || github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Booting the image is the only way to catch bugs where the
+      # production bundle references a package that isn't in the prod
+      # node_modules (e.g. a devDep hoisted into a static import). The
+      # build stage can't see those — they fire at `node` module-load.
+      - name: Smoke test (boot + probe HTTP)
+        env:
+          IMAGE: pert-li:pr-${{ github.event.pull_request.number || github.sha }}
+        run: |
+          set -euo pipefail
+          docker run -d --name pert-li-smoke \
+            -p 18080:8080 \
+            -e BETTER_AUTH_SECRET=ci-only-not-secret-long-enough-- \
+            -e ANTHROPIC_API_KEY=ci-placeholder \
+            "$IMAGE"
+
+          # PGLite fallback path (no DATABASE_URL): the server needs to
+          # init the in-process Postgres + push the Drizzle schema before
+          # serving — give it up to 60s.
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:18080/privacy 2>/dev/null || echo 000)
+            if [ "$code" = "200" ]; then echo "ready after ${i}s"; break; fi
+            if ! docker ps --filter name=pert-li-smoke --format '{{.Status}}' | grep -q Up; then
+              echo "::error::Container crashed during startup"
+              docker logs pert-li-smoke 2>&1 | tail -50
+              exit 1
+            fi
+            sleep 1
+          done
+
+          # Probe a handful of representative surfaces. /api/auth is a
+          # server-handler route (Better Auth catch-all); / is SSR; the
+          # rest are static-ish routes. All must respond 200.
+          fail=0
+          for path in / /privacy /signin /api/auth/get-session; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:18080${path}")
+            echo "$path -> HTTP $code"
+            [ "$code" = "200" ] || fail=1
+          done
+
+          echo "--- container logs ---"
+          docker logs pert-li-smoke 2>&1 | tail -30
+
+          docker rm -f pert-li-smoke >/dev/null
+          exit "$fail"
 
   e2e:
     name: playwright e2e
