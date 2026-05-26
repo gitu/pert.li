@@ -150,11 +150,12 @@ steps:
   # `pnpm db:generate` and the generated `drizzle/NNNN_*.sql` file, not
   # via `drizzle-kit push` inferring from `src/db/schema.ts`.
   #
-  # If a deploy crashes at the migrate step with
-  # `42710 type "..." already exists` (e.g. a DB previously managed with
-  # `drizzle-kit push`), boot once with `BASELINE_MIGRATIONS=1` on the
-  # Cloud Run service to mark current journal entries as applied without
-  # re-running their SQL, then clear the flag.
+  # Migrations are rewritten to be re-applyable (see
+  # `scripts/db-make-idempotent.mjs`), so deploying against a DB whose
+  # schema already exists is a no-op — the migrator records the journal
+  # entries and exits. Set `BASELINE_MIGRATIONS=1` on the Cloud Run
+  # service for one boot to skip the SQL entirely (e.g. when restoring
+  # a schema dump).
 
   # 3. Push all tags — both the deployable ones (:SHA and :latest) and the
   #    per-stage cache images (:cache-deps, :cache-build, :cache-prod-deps)

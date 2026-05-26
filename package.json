@@ -20,7 +20,7 @@
     "check": "biome check",
     "secrets:check": "node scripts/check-secret-leak.mjs",
     "secrets:check:build": "pnpm build && node scripts/check-secret-leak.mjs",
-    "db:generate": "drizzle-kit generate",
+    "db:generate": "drizzle-kit generate && node scripts/db-make-idempotent.mjs",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:pull": "drizzle-kit pull",

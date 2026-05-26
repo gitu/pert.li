@@ -9,9 +9,12 @@
 #   SKIP_MIGRATE=1        → skip schema management entirely (handle it
 #                           out-of-band, e.g. as a separate k8s Job)
 #   BASELINE_MIGRATIONS=1 → mark every journal entry as applied without
-#                           running its SQL. Set this on a single boot
-#                           when switching an existing database from
-#                           `drizzle-kit push` to migrations, then clear it.
+#                           running any SQL. Use when restoring a schema
+#                           dump or otherwise know the DB is already in
+#                           sync. Migrations are also written to be
+#                           re-applyable (see db-make-idempotent.mjs),
+#                           so this is rarely needed — pointing a fresh
+#                           deploy at an already-populated DB Just Works.
 #   DATABASE_URL set      → run `node ./scripts/migrate.mjs` against that
 #                           database (applies migrations from ./drizzle/)
 #   DATABASE_URL unset    → no migration step (the server itself will boot

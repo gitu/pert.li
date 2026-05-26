@@ -65,20 +65,29 @@ Run on every push to `main`.
    done
    ```
 
-5. **Database schema.** No manual step on a fresh DB — the container
-   entrypoint (`scripts/docker-entrypoint.sh` → `scripts/migrate.mjs`)
-   applies versioned SQL migrations from `./drizzle/` against
-   `DATABASE_URL` on every boot and exits if any fail. Schema changes
-   ship as committed migration files (`pnpm db:generate` → commit the
+5. **Database schema.** No manual step. The container entrypoint
+   (`scripts/docker-entrypoint.sh` → `scripts/migrate.mjs`) applies
+   versioned SQL migrations from `./drizzle/` against `DATABASE_URL`
+   on every boot and exits if any fail. Schema changes ship as
+   committed migration files (`pnpm db:generate` → commit the
    generated `drizzle/NNNN_*.sql`), not via `drizzle-kit push`.
 
-   If you're pointing this deploy at an existing database that was
-   previously managed with `drizzle-kit push`, the schema is present
-   but `drizzle.__drizzle_migrations` is empty — migrate will crash
-   with `42710 ... already exists`. Recover by setting
-   `BASELINE_MIGRATIONS=1` on the Cloud Run service env vars and
-   deploying once; the entrypoint will record every journal entry as
-   applied without re-running its SQL. Clear the flag afterwards.
+   Migrations are written to be re-applyable: `pnpm db:generate` pipes
+   each migration through `scripts/db-make-idempotent.mjs` so every
+   `CREATE TABLE` becomes `CREATE TABLE IF NOT EXISTS`, every
+   `CREATE TYPE` and `ALTER TABLE ... ADD CONSTRAINT` is wrapped in
+   `DO $$ BEGIN ... EXCEPTION WHEN duplicate_object THEN null; END $$`,
+   etc. So pointing a deploy at a database whose schema is already
+   present (e.g. legacy `drizzle-kit push`-managed DBs, schema dump
+   restores) Just Works — the migrator records the journal entries
+   without erroring on existing objects.
+
+   For the unusual case where you want to mark migrations applied
+   *without* running any SQL at all (e.g. a schema dump from another
+   environment that you know is in sync), set `BASELINE_MIGRATIONS=1`
+   on the Cloud Run service env vars for one boot; the entrypoint
+   will populate `drizzle.__drizzle_migrations` from the journal and
+   exit. Clear the flag afterwards.
 
 6. **Create the Cloud Build trigger** pointing at your GitHub repo's
    `main` branch:
