@@ -1,5 +1,6 @@
 import { fetchServerSentEvents } from "@tanstack/ai-client";
 import { useChat } from "@tanstack/ai-react";
+import { useStore } from "@tanstack/react-store";
 import {
 	ArrowUpIcon,
 	BotIcon,
@@ -12,7 +13,7 @@ import {
 	WrenchIcon,
 	XIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import { Button } from "#/components/ui/button";
 import { ScrollArea } from "#/components/ui/scroll-area";
@@ -66,15 +67,26 @@ import {
 	useChatDockPendingPrompt,
 } from "#/lib/chat-dock";
 import {
+	type ChatBroadcast,
+	type ChatBroadcaster,
+	type ChatMessagesSnapshot,
 	createChatBroadcaster,
-	readChatMessages,
-	writeChatMessages,
+	DEFAULT_THREAD_TITLE,
+	deriveThreadTitle,
+	getScopeKey,
+	readThreadIndex,
+	readThreadMessages,
+	type ThreadIndex,
+	type ThreadMeta,
+	writeThreadIndex,
+	writeThreadMessages,
 } from "#/lib/chat-history";
 import type { ChangeFn } from "#/lib/pert/store";
 import { projectDocStore } from "#/lib/pert/store";
 import type { PertDoc } from "#/lib/pert/types";
 import { useIsMobile } from "#/lib/use-media-query";
 import { cn } from "#/lib/utils";
+import { ChatTabs } from "./chat-tabs";
 
 // Chat surface backed by the /api/chat SSE endpoint. The hook owns the
 // connection lifecycle (subscribe-on-mount, unsubscribe-on-unmount); we just
@@ -83,6 +95,14 @@ import { cn } from "#/lib/utils";
 // The connection is constructed once and frozen for the lifetime of the
 // component — useChat re-creates its internal client when the connection
 // reference changes, so a stable ref matters more than dependency hygiene.
+//
+// Threads
+// -------
+// The outer `ChatPanel` owns the tab strip and the per-scope thread index.
+// One inner `ChatThread` (keyed by activeThreadId) drives `useChat` for the
+// currently-visible conversation. Switching tabs remounts the inner thread,
+// which is the cleanest way to make `useChat` reload its initialMessages
+// without fighting its internal state.
 
 export type ChatPanelProps = {
 	className?: string;
@@ -113,6 +133,13 @@ const noActiveProject = {
 	error: "No active project. Open one from the sidebar first.",
 };
 
+// Imperative API exposed by ChatThread so the outer panel can route dock
+// pending prompts into the active thread without lifting useChat state up.
+type ChatThreadAPI = {
+	sendMessage(text: string): void;
+	setInput(text: string): void;
+};
+
 export function ChatPanel({
 	className,
 	endpoint = "/api/chat",
@@ -120,7 +147,179 @@ export function ChatPanel({
 	autoSendInitial = false,
 	showDockControls = false,
 }: ChatPanelProps) {
-	const connectionRef = useRef(fetchServerSentEvents(endpoint));
+	const projectId = useStore(projectDocStore, (s) => s.projectId);
+	const scopeKey = getScopeKey(projectId);
+
+	// Thread index for the current scope. Seeded from localStorage on first
+	// access; re-read whenever the scope changes (e.g. user opens a different
+	// project). The seed call guarantees `threads.length >= 1`.
+	const [index, setIndex] = useState<ThreadIndex>(() =>
+		readThreadIndex(scopeKey),
+	);
+	useEffect(() => {
+		setIndex(readThreadIndex(scopeKey));
+	}, [scopeKey]);
+
+	const activeThreadId = index.activeThreadId;
+	// Per-thread snapshot of message counts — populated by ChatThread via
+	// `onMessagesChanged`. Used to suppress the close-confirm prompt when a
+	// thread is still empty.
+	const messageCountsRef = useRef<Map<string, number>>(new Map());
+
+	// Broadcaster is shared across the panel's lifetime. Inner ChatThread
+	// subscribes/unsubscribes around its own message channel; we subscribe
+	// here for index events so adding/renaming a thread in another tab shows
+	// up live.
+	const broadcasterRef = useRef<ChatBroadcaster | null>(null);
+	if (broadcasterRef.current === null) {
+		broadcasterRef.current = createChatBroadcaster();
+	}
+	useEffect(() => {
+		const bus = broadcasterRef.current;
+		return () => {
+			bus?.close();
+			broadcasterRef.current = null;
+		};
+	}, []);
+
+	// Apply remote index changes from other tabs in the same scope. The
+	// storage-event fallback also produces these. Same-tab posts are skipped
+	// via the serial dedupe so we don't apply our own broadcasts.
+	const lastIndexSerialRef = useRef<string | null>(null);
+	useEffect(() => {
+		const bus = broadcasterRef.current;
+		if (!bus) return;
+		const unsub = bus.subscribe((payload) => {
+			if (payload.type !== "index") return;
+			if (payload.scopeKey !== scopeKey) return;
+			const serial = JSON.stringify(payload.index);
+			if (serial === lastIndexSerialRef.current) return;
+			lastIndexSerialRef.current = serial;
+			setIndex(payload.index);
+		});
+		return () => {
+			unsub();
+		};
+	}, [scopeKey]);
+
+	const persistIndex = useCallback(
+		(next: ThreadIndex) => {
+			const serial = JSON.stringify(next);
+			lastIndexSerialRef.current = serial;
+			writeThreadIndex(scopeKey, next);
+			broadcasterRef.current?.post({
+				type: "index",
+				scopeKey,
+				index: next,
+			});
+		},
+		[scopeKey],
+	);
+
+	const updateIndex = useCallback(
+		(updater: (prev: ThreadIndex) => ThreadIndex) => {
+			setIndex((prev) => {
+				const next = updater(prev);
+				persistIndex(next);
+				return next;
+			});
+		},
+		[persistIndex],
+	);
+
+	const onSelectThread = useCallback(
+		(id: string) => {
+			updateIndex((prev) => {
+				if (prev.activeThreadId === id) return prev;
+				return { ...prev, activeThreadId: id };
+			});
+		},
+		[updateIndex],
+	);
+
+	const onCreateThread = useCallback(() => {
+		updateIndex((prev) => {
+			const now = Date.now();
+			const newId =
+				typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+					? crypto.randomUUID()
+					: `t_${Math.random().toString(36).slice(2)}_${now.toString(36)}`;
+			const meta: ThreadMeta = {
+				id: newId,
+				title: DEFAULT_THREAD_TITLE,
+				createdAt: now,
+				updatedAt: now,
+			};
+			return {
+				activeThreadId: newId,
+				threads: [...prev.threads, meta],
+			};
+		});
+	}, [updateIndex]);
+
+	const onCloseThread = useCallback(
+		(id: string) => {
+			updateIndex((prev) => {
+				if (prev.threads.length <= 1) return prev;
+				const idx = prev.threads.findIndex((t) => t.id === id);
+				if (idx < 0) return prev;
+				const nextThreads = prev.threads.filter((t) => t.id !== id);
+				let nextActive = prev.activeThreadId;
+				if (prev.activeThreadId === id) {
+					const neighbor =
+						nextThreads[idx] ?? nextThreads[idx - 1] ?? nextThreads[0];
+					nextActive = neighbor.id;
+				}
+				return { activeThreadId: nextActive, threads: nextThreads };
+			});
+			messageCountsRef.current.delete(id);
+		},
+		[updateIndex],
+	);
+
+	const onRenameThread = useCallback(
+		(id: string, title: string) => {
+			updateIndex((prev) => {
+				const next = prev.threads.map((t) =>
+					t.id === id ? { ...t, title, updatedAt: Date.now() } : t,
+				);
+				return { ...prev, threads: next };
+			});
+		},
+		[updateIndex],
+	);
+
+	// Bubble auto-title up when the inner thread sees its first user message.
+	// We only overwrite the placeholder; user-renamed titles are preserved.
+	const onAutoTitle = useCallback(
+		(id: string, derived: string) => {
+			updateIndex((prev) => {
+				const target = prev.threads.find((t) => t.id === id);
+				if (!target) return prev;
+				if (target.title !== DEFAULT_THREAD_TITLE) return prev;
+				const next = prev.threads.map((t) =>
+					t.id === id ? { ...t, title: derived, updatedAt: Date.now() } : t,
+				);
+				return { ...prev, threads: next };
+			});
+		},
+		[updateIndex],
+	);
+
+	const onMessagesChanged = useCallback((id: string, count: number) => {
+		messageCountsRef.current.set(id, count);
+	}, []);
+
+	const isThreadEmpty = useCallback((id: string) => {
+		const count = messageCountsRef.current.get(id);
+		if (count === undefined) {
+			// Fall back to inspecting localStorage so closing an unmounted thread
+			// (e.g. one that was opened in a previous session) is still smooth.
+			const snap = readThreadMessages(id);
+			return !snap || snap.length === 0;
+		}
+		return count === 0;
+	}, []);
 
 	// Tools are stable for the lifetime of the panel — useChat re-creates the
 	// underlying client on identity changes, which would drop the chat.
@@ -304,11 +503,100 @@ export function ChatPanel({
 		[],
 	);
 
+	// Imperative handle into the active ChatThread; used by the dock pending-
+	// prompt effect below. ChatThread reports its API on mount via the
+	// registerAPI prop and tears it down on unmount.
+	const threadApiRef = useRef<ChatThreadAPI | null>(null);
+	const registerThreadAPI = useCallback((api: ChatThreadAPI | null) => {
+		threadApiRef.current = api;
+	}, []);
+
+	const dockPending = useChatDockPendingPrompt();
+	useEffect(() => {
+		if (!dockPending) return;
+		chatDock.consumePendingPrompt();
+		const api = threadApiRef.current;
+		if (!api) return;
+		if (dockPending.autoSend) {
+			api.sendMessage(dockPending.text);
+		} else {
+			api.setInput(dockPending.text);
+		}
+	}, [dockPending]);
+
+	return (
+		<div
+			data-testid="chat-panel"
+			className={cn("flex h-full min-h-0 flex-col", className)}
+		>
+			<header className="flex shrink-0 items-center gap-2 border-b bg-card/40 px-3 py-2">
+				<BotIcon className="size-3.5 text-muted-foreground" />
+				<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+					Chat
+				</div>
+				<div className="ml-auto flex items-center gap-1">
+					{showDockControls && <ChatDockControls />}
+				</div>
+			</header>
+			<ChatTabs
+				threads={index.threads}
+				activeThreadId={activeThreadId}
+				onSelect={onSelectThread}
+				onCreate={onCreateThread}
+				onClose={onCloseThread}
+				onRename={onRenameThread}
+				isThreadEmpty={isThreadEmpty}
+			/>
+			<ChatThread
+				key={activeThreadId}
+				threadId={activeThreadId}
+				scopeKey={scopeKey}
+				endpoint={endpoint}
+				initialPrompt={initialPrompt}
+				autoSendInitial={autoSendInitial}
+				tools={tools}
+				broadcaster={broadcasterRef.current}
+				registerAPI={registerThreadAPI}
+				onAutoTitle={(derived) => onAutoTitle(activeThreadId, derived)}
+				onMessagesChanged={(count) => onMessagesChanged(activeThreadId, count)}
+			/>
+		</div>
+	);
+}
+
+type ChatThreadProps = {
+	threadId: string;
+	scopeKey: string;
+	endpoint: string;
+	initialPrompt?: string;
+	autoSendInitial: boolean;
+	// biome-ignore lint/suspicious/noExplicitAny: tools array is opaque to us — useChat owns the shape.
+	tools: ReadonlyArray<any>;
+	broadcaster: ChatBroadcaster | null;
+	registerAPI(api: ChatThreadAPI | null): void;
+	onAutoTitle(derived: string): void;
+	onMessagesChanged(count: number): void;
+};
+
+function ChatThread({
+	threadId,
+	scopeKey,
+	endpoint,
+	initialPrompt,
+	autoSendInitial,
+	tools,
+	broadcaster,
+	registerAPI,
+	onAutoTitle,
+	onMessagesChanged,
+}: ChatThreadProps) {
+	const connectionRef = useRef(fetchServerSentEvents(endpoint));
+
 	// Hydrate from localStorage on mount so the chat survives a reload. The
 	// snapshot is opaque to us — useChat's UIMessage shape can change between
 	// library versions and we'd rather hand it back unchanged than try to
 	// keep our types in sync. Worst case (malformed payload) we drop it.
-	const initialMessagesRef = useRef(readChatMessages() ?? undefined);
+	const initialMessagesRef = useRef(readThreadMessages(threadId) ?? undefined);
 
 	const { messages, sendMessage, isLoading, error, stop, setMessages } =
 		useChat({
@@ -323,57 +611,72 @@ export function ChatPanel({
 	// Skip the very first effect run when the array matches what we just
 	// hydrated, otherwise an empty initial useChat state can wipe a saved
 	// transcript on mount.
-	const broadcasterRef = useRef<ReturnType<
-		typeof createChatBroadcaster
-	> | null>(null);
-	if (broadcasterRef.current === null) {
-		broadcasterRef.current = createChatBroadcaster();
-	}
 	const lastBroadcastSerialRef = useRef<string | null>(null);
 	useEffect(() => {
-		if (!broadcasterRef.current) return;
+		if (!broadcaster) return;
 		try {
 			const serial = JSON.stringify(messages);
 			if (serial === lastBroadcastSerialRef.current) return;
 			lastBroadcastSerialRef.current = serial;
-			writeChatMessages(messages as unknown as unknown[]);
-			broadcasterRef.current.post(messages as unknown as unknown[]);
+			const snapshot = messages as unknown as ChatMessagesSnapshot;
+			writeThreadMessages(threadId, snapshot);
+			broadcaster.post({
+				type: "messages",
+				scopeKey,
+				threadId,
+				snapshot,
+			});
 		} catch {
 			// non-serialisable payload (cyclical objects, functions in args) —
 			// drop persistence rather than crashing the chat.
 		}
-	}, [messages]);
+	}, [broadcaster, messages, scopeKey, threadId]);
+
+	// Auto-derive a thread title from the first user message and report message
+	// count up to the parent so the close-confirm can stay silent on empties.
+	useEffect(() => {
+		onMessagesChanged(messages.length);
+		const snapshot = messages as unknown as ChatMessagesSnapshot;
+		const derived = deriveThreadTitle(snapshot);
+		if (derived) onAutoTitle(derived);
+	}, [messages, onAutoTitle, onMessagesChanged]);
 
 	// Remote tabs writing into the same channel get applied here. The
 	// serial-tracking ref also dedupes our own broadcasts so we don't loop.
 	useEffect(() => {
-		const bus = broadcasterRef.current;
-		if (!bus) return;
-		const unsub = bus.subscribe((snapshot) => {
-			const serial = JSON.stringify(snapshot);
+		if (!broadcaster) return;
+		const unsub = broadcaster.subscribe((payload: ChatBroadcast) => {
+			if (payload.type !== "messages") return;
+			if (payload.threadId !== threadId) return;
+			const serial = JSON.stringify(payload.snapshot);
 			if (serial === lastBroadcastSerialRef.current) return;
 			lastBroadcastSerialRef.current = serial;
 			// biome-ignore lint/suspicious/noExplicitAny: see initialMessagesRef.
-			setMessages(snapshot as any);
+			setMessages(payload.snapshot as any);
 		});
 		return () => {
 			unsub();
 		};
-	}, [setMessages]);
-
-	useEffect(() => {
-		const bus = broadcasterRef.current;
-		return () => {
-			bus?.close();
-			broadcasterRef.current = null;
-		};
-	}, []);
+	}, [broadcaster, setMessages, threadId]);
 
 	const [input, setInput] = useState(
 		autoSendInitial ? "" : (initialPrompt ?? ""),
 	);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const autoSentRef = useRef(false);
+
+	// Expose imperative API to the outer panel for dock pending prompts.
+	useEffect(() => {
+		registerAPI({
+			sendMessage: (text) => {
+				void sendMessage(text);
+			},
+			setInput: (text) => {
+				setInput(text);
+			},
+		});
+		return () => registerAPI(null);
+	}, [registerAPI, sendMessage]);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: deps here are the trigger, not the read set — we want to auto-scroll on every message or streaming-state change.
 	useEffect(() => {
@@ -397,20 +700,6 @@ export function ChatPanel({
 		void sendMessage(initialPrompt);
 	}, [autoSendInitial, initialPrompt, sendMessage]);
 
-	// Dock-driven prompts (tutorial CTAs, "Ask the assistant" affordances).
-	// These can arrive at any time during the chat's life and append to the
-	// existing transcript — the user's previous conversation is preserved.
-	const dockPending = useChatDockPendingPrompt();
-	useEffect(() => {
-		if (!dockPending) return;
-		chatDock.consumePendingPrompt();
-		if (dockPending.autoSend) {
-			void sendMessage(dockPending.text);
-		} else {
-			setInput(dockPending.text);
-		}
-	}, [dockPending, sendMessage]);
-
 	const submit = () => {
 		const trimmed = input.trim();
 		if (!trimmed || isLoading) return;
@@ -433,31 +722,21 @@ export function ChatPanel({
 	};
 
 	return (
-		<div
-			data-testid="chat-panel"
-			className={cn("flex h-full min-h-0 flex-col", className)}
-		>
-			<header className="flex shrink-0 items-center gap-2 border-b bg-card/40 px-3 py-2">
-				<BotIcon className="size-3.5 text-muted-foreground" />
-				<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-					Chat
+		<>
+			{isLoading && (
+				<div className="flex shrink-0 items-center justify-end border-b bg-card/40 px-3 py-1">
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						className="h-6 gap-1 px-2 text-[10px]"
+						onClick={() => stop()}
+						data-testid="chat-stop"
+					>
+						<SquareIcon className="size-3" /> Stop
+					</Button>
 				</div>
-				<div className="ml-auto flex items-center gap-1">
-					{isLoading && (
-						<Button
-							type="button"
-							size="sm"
-							variant="ghost"
-							className="h-7 gap-1 px-2 text-[10px]"
-							onClick={() => stop()}
-							data-testid="chat-stop"
-						>
-							<SquareIcon className="size-3" /> Stop
-						</Button>
-					)}
-					{showDockControls && <ChatDockControls />}
-				</div>
-			</header>
+			)}
 			<ScrollArea className="min-h-0 flex-1" data-testid="chat-scroll">
 				<div ref={scrollRef} className="space-y-3 p-3">
 					{messages.length === 0 && (
@@ -527,7 +806,7 @@ export function ChatPanel({
 					</Button>
 				</div>
 			</div>
-		</div>
+		</>
 	);
 }
 

@@ -32,6 +32,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        # `scripts/compute-version.mjs` runs `git describe --tags` to derive
+        # the build version baked into the bundle. The default shallow
+        # checkout has only HEAD, so without full history the version would
+        # always fall back to `0.0.0-dev`.
+        with:
+          fetch-depth: 0
+
+      - name: Resolve APP_VERSION
+        id: version
+        run: echo "value=$(node scripts/compute-version.mjs)" >> "$GITHUB_OUTPUT"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -56,7 +66,7 @@ jobs:
       # them across runs skips the cold-start dep optimization in both
       # `pnpm test` (vitest's first transform) and `pnpm build`.
       - name: Cache Vite / Vitest deps
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             node_modules/.vite
@@ -80,6 +90,11 @@ jobs:
         run: pnpm test
 
       - name: Build
+        env:
+          # vite.config.ts → compute-version.mjs prefers this env value over
+          # `git describe`, so the artefact e2e consumes matches what the
+          # docker-build / docker.yml jobs publish.
+          APP_VERSION: ${{ steps.version.outputs.value }}
         run: pnpm build
 
       # The e2e job consumes this artefact instead of running `vite dev`.
@@ -88,7 +103,7 @@ jobs:
       # `node .output/server/index.mjs`. ~30 MB; 1-day retention because
       # nothing outside this run needs it.
       - name: Upload built server
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-output
           path: .output
@@ -100,10 +115,11 @@ jobs:
 
   db-back-compat:
     # PR-only: confirm the Drizzle schema in this branch doesn't drop any
-    # tables / columns that exist on the merge target. Because Cloud Build
-    # runs `db:push` before swapping the image, an older revision can still
-    # be live when the new schema lands — dropped columns would surface as
-    # "column does not exist" errors against the in-flight requests.
+    # tables / columns that exist on the merge target. The new container
+    # migrates on boot before it starts serving, so during a rollout the
+    # old revision keeps taking traffic against the freshly-migrated DB —
+    # dropped columns would surface as "column does not exist" errors
+    # against the in-flight requests.
     name: db schema backward compatibility
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -133,12 +149,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        # `git describe --tags` (resolved below) needs full history; default
+        # shallow clone has only HEAD.
+        with:
+          fetch-depth: 0
+
+      - name: Resolve APP_VERSION
+        id: version
+        run: echo "value=$(node scripts/compute-version.mjs)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: false
@@ -149,6 +173,8 @@ jobs:
           # docker.yml.
           load: true
           tags: pert-li:pr-${{ github.event.pull_request.number || github.sha }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -245,7 +271,7 @@ jobs:
       # ~30s and guarantees the e2e suite runs against the same bytes the
       # deploy will ship.
       - name: Download built server
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: build-output
           path: .output
@@ -258,7 +284,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
@@ -288,7 +314,7 @@ jobs:
         # per-test timings and step traces. The HTML report is small
         # enough that 14-day retention costs nothing meaningful.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report
           path: playwright-report
@@ -299,7 +325,7 @@ jobs:
         # we only keep them when something failed and a human is going
         # to open them.
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-traces
           path: test-results
@@ -318,6 +344,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        # The storybook vite config calls scripts/compute-version.mjs, which
+        # runs `git describe --tags`. Default shallow clone has only HEAD,
+        # so the VersionFooter story would render the fallback.
+        with:
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -348,7 +379,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
@@ -460,7 +491,7 @@ jobs:
       - name: Cache Playwright browsers
         if: steps.diff.outputs.has_changes == 'true'
         id: pw-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           # Same cache key as the e2e + storybook jobs so all three share
@@ -544,7 +575,7 @@ jobs:
 
       - name: Post / update sticky PR comment
         if: steps.match.outputs.matched != '' && steps.match.outputs.matched != '0'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: pr-screenshots
           path: comment.md
@@ -555,14 +586,14 @@ jobs:
         # tree was touched. Either way, wipe any stale comment so the PR
         # doesn't keep showing screenshots from a prior commit.
         if: steps.diff.outputs.has_changes != 'true' || steps.match.outputs.matched == '0'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: pr-screenshots
           delete: true
 
       - name: Upload screenshots artifact (debug)
         if: steps.diff.outputs.has_changes == 'true' && always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pr-screenshots
           path: pr-screenshots

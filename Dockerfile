@@ -42,6 +42,14 @@ RUN pnpm install --offline --frozen-lockfile
 ARG NODE_ENV=production
 ENV NODE_ENV=${NODE_ENV}
 
+# CI passes `git describe --tags --always` here so the build can bake the
+# version into the client bundle (see scripts/compute-version.mjs + the
+# `process.env.VITE_APP_VERSION` line in vite.config.ts). Defaults to a
+# clearly-fake string so a plain `docker build .` without --build-arg still
+# ships, just without a precise version.
+ARG APP_VERSION=0.0.0-unknown
+ENV APP_VERSION=${APP_VERSION}
+
 RUN pnpm build
 
 # ---------- prod-deps ----------
@@ -65,6 +73,14 @@ ENV NODE_ENV=production
 # respects it automatically.
 ENV PORT=8080
 ENV AUTOMERGE_STORAGE=postgres
+# Re-declare so the runner stage receives the build-arg too (ARGs don't
+# carry across FROM lines). Exposed as ENV + OCI labels so ops can read
+# the version with `docker inspect` or `printenv` without spelunking the
+# bundled JS — the in-app footer already covers user-facing reads.
+ARG APP_VERSION=0.0.0-unknown
+ENV APP_VERSION=${APP_VERSION}
+LABEL org.opencontainers.image.title="pert.li"
+LABEL org.opencontainers.image.version="${APP_VERSION}"
 
 USER node
 

@@ -1,5 +1,6 @@
 import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { LayersIcon } from "lucide-react";
+import { VersionFooter } from "#/components/legal/version-footer";
 import { getPrivacySettings } from "#/server/legal";
 
 export const Route = createFileRoute("/privacy")({
@@ -141,10 +142,11 @@ function PrivacyPage() {
 					</p>
 				</article>
 
-				<div className="mt-10 text-xs text-muted-foreground">
+				<div className="mt-10 flex items-center justify-between gap-3 text-xs text-muted-foreground">
 					<Link to="/" className="hover:text-foreground">
 						← back to home
 					</Link>
+					<VersionFooter className="text-xs text-muted-foreground/70 tabular-nums" />
 				</div>
 			</main>
 		</div>

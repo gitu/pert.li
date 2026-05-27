@@ -12,10 +12,6 @@ CREATE TABLE "workspace_invitation" (
 	CONSTRAINT "workspace_invitation_token_unique" UNIQUE("token")
 );
 --> statement-breakpoint
--- Backfills a column that was added to the schema but never captured in a
--- migration. Skipped automatically in baselined envs (BASELINE_MIGRATIONS=1)
--- where the column already exists; runs fresh in local PGLite / new Neon DBs.
-ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "isAdmin" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE "workspace_invitation" ADD CONSTRAINT "workspace_invitation_workspace_id_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspace"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "workspace_invitation" ADD CONSTRAINT "workspace_invitation_created_by_user_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."user"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "workspace_invitation_workspace_idx" ON "workspace_invitation" USING btree ("workspace_id");

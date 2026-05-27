@@ -65,15 +65,20 @@ Run on every push to `main`.
    done
    ```
 
-5. **Push the database schema** (one-time, from a workstation with the
-   prod `DATABASE_URL`):
+5. **Database schema.** No manual step. The container entrypoint
+   (`scripts/docker-entrypoint.sh` → `scripts/migrate.mjs`) applies
+   versioned SQL migrations from `./drizzle/` against `DATABASE_URL`
+   on every boot and exits if any fail. Schema changes ship as
+   committed migration files (`pnpm db:generate` → commit the
+   generated `drizzle/NNNN_*.sql`), not via `drizzle-kit push`.
 
-   ```bash
-   DATABASE_URL='postgres://...prod...' pnpm db:push
-   ```
-
-   This adds the `automerge_storage` table the production sync server
-   needs. The dev DB the Neon Vite plugin provisions is separate.
+   If you're pointing this deploy at an existing database that was
+   previously managed with `drizzle-kit push`, the schema is present
+   but `drizzle.__drizzle_migrations` is empty — migrate will crash
+   with `42710 ... already exists`. Set `BASELINE_MIGRATIONS=1` on
+   the Cloud Run service env vars and deploy once; the entrypoint
+   will record every journal entry as applied without re-running its
+   SQL. Clear the flag afterwards.
 
 6. **Create the Cloud Build trigger** pointing at your GitHub repo's
    `main` branch:

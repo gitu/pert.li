@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { z } from "zod";
+import { VersionFooter } from "#/components/legal/version-footer";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
@@ -98,172 +99,175 @@ function SignInPage() {
 
 	return (
 		<div className="min-h-svh grid place-items-center bg-background p-6">
-			<form
-				onSubmit={onSubmit}
-				className="w-full max-w-sm space-y-5 rounded-lg border bg-card p-6 shadow-sm"
-			>
-				<div className="space-y-1">
-					<h1 className="text-xl font-semibold tracking-tight">
-						{mode === "signin"
-							? "Sign in"
-							: mode === "signup"
-								? "Create an account"
-								: "Email me a sign-in link"}
-					</h1>
-					<p className="text-sm text-muted-foreground">
-						{mode === "signin"
-							? "Welcome back to pert.li."
-							: mode === "signup"
-								? "Pick a name and an email to get started. Prefer not to set a password? Use a sign-in link instead."
-								: "We'll email a one-time link. Works for new accounts too — no password ever required."}
-					</p>
-				</div>
-
-				{oidcButton && mode !== "link" && (
-					<>
-						<Button
-							type="button"
-							variant="outline"
-							className="w-full"
-							onClick={startOauth}
-							disabled={oauthPending || pending}
-						>
-							{oauthPending
-								? "Redirecting…"
-								: `Continue with ${oidcButton.displayName}`}
-						</Button>
-						<div className="flex items-center gap-2 text-xs text-muted-foreground">
-							<span className="h-px flex-1 bg-border" />
-							or
-							<span className="h-px flex-1 bg-border" />
-						</div>
-					</>
-				)}
-
-				{mode === "signup" && (
-					<div className="space-y-2">
-						<Label htmlFor="name">Name</Label>
-						<Input
-							id="name"
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-							required
-							autoComplete="name"
-						/>
+			<div className="flex w-full max-w-sm flex-col items-stretch gap-4">
+				<form
+					onSubmit={onSubmit}
+					className="w-full space-y-5 rounded-lg border bg-card p-6 shadow-sm"
+				>
+					<div className="space-y-1">
+						<h1 className="text-xl font-semibold tracking-tight">
+							{mode === "signin"
+								? "Sign in"
+								: mode === "signup"
+									? "Create an account"
+									: "Email me a sign-in link"}
+						</h1>
+						<p className="text-sm text-muted-foreground">
+							{mode === "signin"
+								? "Welcome back to pert.li."
+								: mode === "signup"
+									? "Pick a name and an email to get started. Prefer not to set a password? Use a sign-in link instead."
+									: "We'll email a one-time link. Works for new accounts too — no password ever required."}
+						</p>
 					</div>
-				)}
 
-				<div className="space-y-2">
-					<Label htmlFor="email">Email</Label>
-					<Input
-						id="email"
-						type="email"
-						value={email}
-						onChange={(e) => setEmail(e.target.value)}
-						required
-						autoComplete="email"
-					/>
-				</div>
-
-				{mode !== "link" && (
-					<div className="space-y-2">
-						<Label htmlFor="password">Password</Label>
-						<Input
-							id="password"
-							type="password"
-							value={password}
-							onChange={(e) => setPassword(e.target.value)}
-							required
-							minLength={8}
-							autoComplete={
-								mode === "signin" ? "current-password" : "new-password"
-							}
-						/>
-					</div>
-				)}
-
-				{error && <p className="text-sm text-destructive">{error}</p>}
-				{info && <p className="text-sm text-muted-foreground">{info}</p>}
-
-				<Button type="submit" disabled={pending} className="w-full">
-					{pending
-						? "Working…"
-						: mode === "signin"
-							? "Sign in"
-							: mode === "signup"
-								? "Create account"
-								: "Send sign-in link"}
-				</Button>
-
-				<div className="space-y-2 text-center text-sm text-muted-foreground">
-					{mode === "link" ? (
-						<button
-							type="button"
-							onClick={() => {
-								setMode("signin");
-								setInfo(null);
-								setError(null);
-							}}
-							className="text-foreground underline-offset-4 hover:underline"
-						>
-							← back to password sign-in
-						</button>
-					) : (
+					{oidcButton && mode !== "link" && (
 						<>
-							<div>
-								{mode === "signin" ? (
-									<>
-										No account?{" "}
-										<button
-											type="button"
-											onClick={() => setMode("signup")}
-											className="text-foreground underline-offset-4 hover:underline"
-										>
-											Sign up
-										</button>
-									</>
-								) : (
-									<>
-										Already have one?{" "}
-										<button
-											type="button"
-											onClick={() => setMode("signin")}
-											className="text-foreground underline-offset-4 hover:underline"
-										>
-											Sign in
-										</button>
-									</>
-								)}
-							</div>
-							<div>
-								<button
-									type="button"
-									onClick={() => {
-										setMode("link");
-										setInfo(null);
-										setError(null);
-									}}
-									className="text-foreground underline-offset-4 hover:underline"
-								>
-									{mode === "signup"
-										? "Skip the password — email me a sign-in link"
-										: "Email me a sign-in link instead"}
-								</button>
+							<Button
+								type="button"
+								variant="outline"
+								className="w-full"
+								onClick={startOauth}
+								disabled={oauthPending || pending}
+							>
+								{oauthPending
+									? "Redirecting…"
+									: `Continue with ${oidcButton.displayName}`}
+							</Button>
+							<div className="flex items-center gap-2 text-xs text-muted-foreground">
+								<span className="h-px flex-1 bg-border" />
+								or
+								<span className="h-px flex-1 bg-border" />
 							</div>
 						</>
 					)}
-				</div>
 
-				<div className="flex items-center justify-center gap-3 text-center text-xs text-muted-foreground">
-					<Link to="/" className="hover:text-foreground">
-						← back to home
-					</Link>
-					<span aria-hidden>·</span>
-					<Link to="/privacy" className="hover:text-foreground">
-						Privacy
-					</Link>
-				</div>
-			</form>
+					{mode === "signup" && (
+						<div className="space-y-2">
+							<Label htmlFor="name">Name</Label>
+							<Input
+								id="name"
+								value={name}
+								onChange={(e) => setName(e.target.value)}
+								required
+								autoComplete="name"
+							/>
+						</div>
+					)}
+
+					<div className="space-y-2">
+						<Label htmlFor="email">Email</Label>
+						<Input
+							id="email"
+							type="email"
+							value={email}
+							onChange={(e) => setEmail(e.target.value)}
+							required
+							autoComplete="email"
+						/>
+					</div>
+
+					{mode !== "link" && (
+						<div className="space-y-2">
+							<Label htmlFor="password">Password</Label>
+							<Input
+								id="password"
+								type="password"
+								value={password}
+								onChange={(e) => setPassword(e.target.value)}
+								required
+								minLength={8}
+								autoComplete={
+									mode === "signin" ? "current-password" : "new-password"
+								}
+							/>
+						</div>
+					)}
+
+					{error && <p className="text-sm text-destructive">{error}</p>}
+					{info && <p className="text-sm text-muted-foreground">{info}</p>}
+
+					<Button type="submit" disabled={pending} className="w-full">
+						{pending
+							? "Working…"
+							: mode === "signin"
+								? "Sign in"
+								: mode === "signup"
+									? "Create account"
+									: "Send sign-in link"}
+					</Button>
+
+					<div className="space-y-2 text-center text-sm text-muted-foreground">
+						{mode === "link" ? (
+							<button
+								type="button"
+								onClick={() => {
+									setMode("signin");
+									setInfo(null);
+									setError(null);
+								}}
+								className="text-foreground underline-offset-4 hover:underline"
+							>
+								← back to password sign-in
+							</button>
+						) : (
+							<>
+								<div>
+									{mode === "signin" ? (
+										<>
+											No account?{" "}
+											<button
+												type="button"
+												onClick={() => setMode("signup")}
+												className="text-foreground underline-offset-4 hover:underline"
+											>
+												Sign up
+											</button>
+										</>
+									) : (
+										<>
+											Already have one?{" "}
+											<button
+												type="button"
+												onClick={() => setMode("signin")}
+												className="text-foreground underline-offset-4 hover:underline"
+											>
+												Sign in
+											</button>
+										</>
+									)}
+								</div>
+								<div>
+									<button
+										type="button"
+										onClick={() => {
+											setMode("link");
+											setInfo(null);
+											setError(null);
+										}}
+										className="text-foreground underline-offset-4 hover:underline"
+									>
+										{mode === "signup"
+											? "Skip the password — email me a sign-in link"
+											: "Email me a sign-in link instead"}
+									</button>
+								</div>
+							</>
+						)}
+					</div>
+
+					<div className="flex items-center justify-center gap-3 text-center text-xs text-muted-foreground">
+						<Link to="/" className="hover:text-foreground">
+							← back to home
+						</Link>
+						<span aria-hidden>·</span>
+						<Link to="/privacy" className="hover:text-foreground">
+							Privacy
+						</Link>
+					</div>
+				</form>
+				<VersionFooter />
+			</div>
 		</div>
 	);
 }

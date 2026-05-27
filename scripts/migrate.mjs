@@ -17,6 +17,16 @@
 // with `42710 type "<...>" already exists`. Set `BASELINE_MIGRATIONS=1`
 // on a single boot to mark every journal entry as applied without running
 // its SQL, then clear the flag.
+//
+// Hash drift: drizzle's runtime migrator skips already-applied migrations
+// by comparing `created_at` (not the recorded hash) against the journal's
+// `when`. So if a migration is edited on disk after being applied —
+// hand-fix, idempotization rewrite, accidental commit — the new SQL is
+// never executed but the old hash sits in `__drizzle_migrations`. We
+// detect this after every successful migrate() and log a warning per
+// affected migration. Informational only; the warning itself is the
+// signal. Operators can decide whether the on-disk edit was harmless
+// (typo, comment, idempotization wrapper) or needs a follow-up migration.
 
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -73,6 +83,88 @@ async function baseline(pool, migrationsFolder) {
 	}
 }
 
+/** Pure comparison between rows from `drizzle.__drizzle_migrations` and
+ * the on-disk journal. Returns drift records, sorted by createdAt asc:
+ *
+ *   { kind: "hash-mismatch", tag, recordedHash, currentHash } — entry
+ *      was applied, but its SQL file has changed since.
+ *   { kind: "orphan-db-row", recordedHash, createdAt } — DB has a row
+ *      with no matching journal entry (entry was deleted from disk).
+ *
+ * Journal entries present on disk but absent from the DB are not drift —
+ * they're just not yet applied, which is the normal state for any new
+ * migration. */
+export function computeDrift(applied, entries) {
+	const byMillis = new Map(entries.map((e) => [Number(e.folderMillis), e]));
+	const drifts = [];
+	for (const { hash, created_at } of applied) {
+		const journal = byMillis.get(Number(created_at));
+		if (!journal) {
+			drifts.push({
+				kind: "orphan-db-row",
+				recordedHash: hash,
+				createdAt: Number(created_at),
+			});
+			continue;
+		}
+		if (journal.hash !== hash) {
+			drifts.push({
+				kind: "hash-mismatch",
+				tag: journal.tag,
+				recordedHash: hash,
+				currentHash: journal.hash,
+			});
+		}
+	}
+	return drifts;
+}
+
+async function readAppliedMigrations(queryable) {
+	try {
+		const res = await queryable.query(
+			"SELECT hash, created_at FROM drizzle.__drizzle_migrations ORDER BY created_at ASC",
+		);
+		return res.rows;
+	} catch (err) {
+		// 42P01 = relation does not exist. Pre-first-apply, nothing to compare.
+		if (err?.code === "42P01") return [];
+		throw err;
+	}
+}
+
+/** Compare the hash drizzle recorded in `drizzle.__drizzle_migrations`
+ * against the current on-disk hash for each applied journal entry.
+ * Returns drift records (see `computeDrift`) or `[]` if the migration
+ * table doesn't exist yet (fresh DB). Pure read; no writes. */
+export async function checkHashDrift(pool, migrationsFolder) {
+	const client = await pool.connect();
+	try {
+		const applied = await readAppliedMigrations(client);
+		return computeDrift(applied, readJournal(migrationsFolder));
+	} finally {
+		client.release();
+	}
+}
+
+function logHashDrift(drifts) {
+	if (drifts.length === 0) return;
+	console.warn(
+		`[migrate] ⚠ ${drifts.length} migration(s) drifted from their recorded hash. The on-disk SQL changed after being applied — the new SQL has not been executed:`,
+	);
+	for (const drift of drifts) {
+		if (drift.kind === "hash-mismatch") {
+			console.warn(`[migrate]   - ${drift.tag}: db=${drift.recordedHash.slice(0, 12)}… disk=${drift.currentHash.slice(0, 12)}…`);
+		} else {
+			console.warn(
+				`[migrate]   - orphan row (created_at=${drift.createdAt}, db=${drift.recordedHash.slice(0, 12)}…) has no matching journal entry`,
+			);
+		}
+	}
+	console.warn(
+		"[migrate]   Inspect the diff; if the change was intended (typo, comment, idempotization), it's harmless. If it added new SQL, write a follow-up migration to apply it.",
+	);
+}
+
 function isAlreadyExistsError(err) {
 	const code = err?.cause?.code ?? err?.code;
 	return code === "42710" || code === "42P07";
@@ -105,6 +197,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 			console.log(`[migrate] Applying migrations from ${migrationsFolder}`);
 			await migrate(db, { migrationsFolder });
 			console.log("[migrate] Done");
+			logHashDrift(await checkHashDrift(pool, migrationsFolder));
 		}
 	} catch (err) {
 		console.error("[migrate] Failed:", err);
