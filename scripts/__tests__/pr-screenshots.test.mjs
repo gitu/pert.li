@@ -95,7 +95,7 @@ describe("renderComment", () => {
 		hasScreenshot: () => true,
 	};
 
-	it("groups stories by title and renders markdown links to the raw image URL", () => {
+	it("groups stories by title and renders markdown links to the image on github.com", () => {
 		const out = renderComment({
 			...baseArgs,
 			stories: [
@@ -115,15 +115,16 @@ describe("renderComment", () => {
 		});
 		expect(out).toContain("### Foo/Bar");
 		expect(out).toContain("`src/components/foo/bar.stories.tsx`");
-		// Each story is a markdown link (so the reviewer's auth handles
-		// raw.githubusercontent.com on click) — NOT an `<img>` tag (which
-		// Camo would 404 on private repos).
+		// Links must point at github.com/<repo>/blob/... — NOT
+		// raw.githubusercontent.com, which 404s under browser sessions
+		// for a private repo. And NOT an `<img>` tag (Camo would 404).
 		expect(out).toContain(
-			"- [Default](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--default.png)",
+			"- [Default](https://github.com/gitu/pert.li/blob/screenshots/pr-42/foo-bar--default.png)",
 		);
 		expect(out).toContain(
-			"- [With Icon](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--with-icon.png)",
+			"- [With Icon](https://github.com/gitu/pert.li/blob/screenshots/pr-42/foo-bar--with-icon.png)",
 		);
+		expect(out).not.toContain("raw.githubusercontent.com");
 		expect(out).not.toMatch(/<img /);
 		// The title heading appears only once even though we have two
 		// stories under it.

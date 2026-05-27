@@ -1,6 +1,16 @@
 import { z } from "zod";
 import { pertExchangeSchema } from "#/lib/pert/exchange";
 
+export const createWorkspaceInput = z.object({
+	name: z.string().trim().min(1, "Name is required").max(80),
+});
+export type CreateWorkspaceInput = z.infer<typeof createWorkspaceInput>;
+
+export const listProjectsInput = z.object({
+	workspaceId: z.string().uuid().optional(),
+});
+export type ListProjectsInput = z.infer<typeof listProjectsInput>;
+
 export const createProjectInput = z.object({
 	title: z.string().trim().min(1, "Title is required").max(120),
 	workspaceId: z.string().uuid().optional(),
@@ -39,3 +49,33 @@ export const inviteMemberInput = z.object({
 });
 
 export type InviteMemberInput = z.infer<typeof inviteMemberInput>;
+
+// Owner-only inputs for the share-link CRUD. `expiresAt` arrives as an ISO
+// string (JSON-safe). `maxUses` is capped to keep abuse blast-radius bounded.
+// "viewer" is intentionally NOT grantable here — see JoinLinkRole.
+export const createJoinLinkInput = z.object({
+	workspaceId: z.string().uuid(),
+	role: z.enum(["editor"]).default("editor"),
+	expiresAt: z.string().datetime().nullable().optional(),
+	maxUses: z.number().int().positive().max(10_000).nullable().optional(),
+});
+export type CreateJoinLinkInput = z.infer<typeof createJoinLinkInput>;
+
+export const listJoinLinksInput = z.object({
+	workspaceId: z.string().uuid(),
+});
+export type ListJoinLinksInput = z.infer<typeof listJoinLinksInput>;
+
+export const revokeJoinLinkInput = z.object({
+	workspaceId: z.string().uuid(),
+	invitationId: z.string().uuid(),
+});
+export type RevokeJoinLinkInput = z.infer<typeof revokeJoinLinkInput>;
+
+// Tokens are base64url'd 24-byte randoms — 32 chars. Don't hard-code the
+// length (future rotations may change it), but cap to a sensible upper bound
+// to reject obviously malformed input fast.
+export const joinTokenInput = z.object({
+	token: z.string().min(16).max(128),
+});
+export type JoinTokenInput = z.infer<typeof joinTokenInput>;

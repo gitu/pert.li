@@ -13,6 +13,7 @@ import {
 } from "#/components/ui/dialog";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
+import { useActiveWorkspaceId } from "#/lib/active-workspace";
 import {
 	EXCHANGE_FILE_EXTENSION,
 	type PertExchange,
@@ -37,6 +38,7 @@ export function ImportProjectDialog({
 }: ImportProjectDialogProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const activeWorkspaceId = useActiveWorkspaceId();
 	const fileInputId = useId();
 	const titleInputId = useId();
 	const fileInputRef = useRef<HTMLInputElement>(null);
@@ -58,6 +60,7 @@ export function ImportProjectDialog({
 				data: {
 					exchange: pick.exchange,
 					...(titleOverride.trim() ? { title: titleOverride.trim() } : {}),
+					...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
 				},
 			});
 		},
