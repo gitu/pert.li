@@ -1,10 +1,16 @@
 import { createServerFn } from "@tanstack/react-start";
 import { fromExchange } from "#/lib/pert/exchange";
 import {
+	createJoinLinkInput,
 	createProjectInput,
+	createWorkspaceInput,
 	getProjectInput,
 	importProjectInput,
 	inviteMemberInput,
+	joinTokenInput,
+	listJoinLinksInput,
+	listProjectsInput,
+	revokeJoinLinkInput,
 } from "#/types/workspace-schemas";
 
 // Server-only helpers are loaded lazily so the depscanner never walks their
@@ -29,19 +35,49 @@ export const ensureWorkspace = createServerFn({ method: "POST" }).handler(
 	},
 );
 
-export const listProjects = createServerFn({ method: "GET" }).handler(
-	async () => {
+export const listProjects = createServerFn({ method: "GET" })
+	.inputValidator(listProjectsInput)
+	.handler(async ({ data }) => {
 		const {
 			requireSession,
 			ensurePersonalWorkspace,
+			getWorkspaceRole,
 			listProjectsForWorkspace,
 		} = await helpers();
 		const session = await requireSession();
-		const workspaceId = await ensurePersonalWorkspace(
-			session.userId,
-			session.name,
-		);
+		// Without an explicit workspaceId we fall back to the user's personal
+		// workspace (auto-created on first call). With one, we check membership
+		// so passing a foreign id can't expose another workspace's projects.
+		const workspaceId = data?.workspaceId
+			? data.workspaceId
+			: await ensurePersonalWorkspace(session.userId, session.name);
+		if (data?.workspaceId) {
+			const role = await getWorkspaceRole(session.userId, workspaceId);
+			if (!role) throw new Error("Not a member of this workspace");
+		}
 		return listProjectsForWorkspace(workspaceId);
+	});
+
+export const createWorkspace = createServerFn({ method: "POST" })
+	.inputValidator(createWorkspaceInput)
+	.handler(async ({ data }) => {
+		const { requireSession, createWorkspaceForUser } = await helpers();
+		const session = await requireSession();
+		return createWorkspaceForUser({
+			userId: session.userId,
+			name: data.name,
+		});
+	});
+
+export const listMyWorkspaces = createServerFn({ method: "GET" }).handler(
+	async () => {
+		const { requireSession, ensurePersonalWorkspace, listMembershipsForUser } =
+			await helpers();
+		const session = await requireSession();
+		// Touch the personal workspace so first-time visitors always see at
+		// least one entry — same lazy-create behaviour as listProjects.
+		await ensurePersonalWorkspace(session.userId, session.name);
+		return listMembershipsForUser(session.userId);
 	},
 );
 
@@ -138,3 +174,73 @@ export const getOrCreateUserWorkspaceDoc = createServerFn({
 	);
 	return { automergeDocUrl };
 });
+
+// ----- Shareable join links -------------------------------------------------
+
+export const createJoinLink = createServerFn({ method: "POST" })
+	.inputValidator(createJoinLinkInput)
+	.handler(async ({ data }) => {
+		const { requireSession, getWorkspaceRole, createWorkspaceInvitation } =
+			await helpers();
+		const session = await requireSession();
+		const role = await getWorkspaceRole(session.userId, data.workspaceId);
+		if (role !== "owner") {
+			throw new Error("Only workspace owners can create join links");
+		}
+		return createWorkspaceInvitation({
+			workspaceId: data.workspaceId,
+			createdBy: session.userId,
+			role: data.role,
+			expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
+			maxUses: data.maxUses ?? null,
+		});
+	});
+
+export const listJoinLinks = createServerFn({ method: "POST" })
+	.inputValidator(listJoinLinksInput)
+	.handler(async ({ data }) => {
+		const { requireSession, getWorkspaceRole, listWorkspaceInvitations } =
+			await helpers();
+		const session = await requireSession();
+		const role = await getWorkspaceRole(session.userId, data.workspaceId);
+		if (role !== "owner") {
+			throw new Error("Only workspace owners can manage join links");
+		}
+		return listWorkspaceInvitations(data.workspaceId);
+	});
+
+export const revokeJoinLink = createServerFn({ method: "POST" })
+	.inputValidator(revokeJoinLinkInput)
+	.handler(async ({ data }) => {
+		const { requireSession, getWorkspaceRole, revokeWorkspaceInvitation } =
+			await helpers();
+		const session = await requireSession();
+		const role = await getWorkspaceRole(session.userId, data.workspaceId);
+		if (role !== "owner") {
+			throw new Error("Only workspace owners can revoke join links");
+		}
+		return revokeWorkspaceInvitation({
+			invitationId: data.invitationId,
+			workspaceId: data.workspaceId,
+		});
+	});
+
+// Public — used by the /join/$token landing page before the user is signed
+// in. Returns just the workspace name + status, never anything sensitive.
+export const getJoinLinkPreview = createServerFn({ method: "GET" })
+	.inputValidator(joinTokenInput)
+	.handler(async ({ data }) => {
+		const { getInvitationPreviewByToken } = await helpers();
+		return getInvitationPreviewByToken(data.token);
+	});
+
+export const acceptJoinLink = createServerFn({ method: "POST" })
+	.inputValidator(joinTokenInput)
+	.handler(async ({ data }) => {
+		const { requireSession, acceptInvitationByToken } = await helpers();
+		const session = await requireSession();
+		return acceptInvitationByToken({
+			token: data.token,
+			userId: session.userId,
+		});
+	});

@@ -1,19 +1,36 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
+import { z } from "zod";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { authClient } from "#/lib/auth-client";
 import { getOidcButton } from "#/server/oidc";
 
+// Same-origin relative path only — reject `//evil.com`, full URLs, or any
+// other scheme to keep this from being abused as an open-redirect.
+const callbackUrlSchema = z
+	.string()
+	.regex(/^\/(?!\/)/, "Must be a relative path starting with /")
+	.max(2048)
+	.optional()
+	.catch(undefined);
+
+const signinSearchSchema = z.object({
+	callbackURL: callbackUrlSchema,
+});
+
 export const Route = createFileRoute("/signin")({
 	component: SignInPage,
 	loader: () => getOidcButton(),
+	validateSearch: signinSearchSchema,
 });
 
 function SignInPage() {
 	const navigate = useNavigate();
 	const oidcButton = Route.useLoaderData();
+	const { callbackURL } = Route.useSearch();
+	const callback = callbackURL ?? "/";
 	const [mode, setMode] = useState<"signin" | "signup" | "link">("signin");
 	const [name, setName] = useState("");
 	const [email, setEmail] = useState("");
@@ -34,7 +51,7 @@ function SignInPage() {
 			// page is about to navigate away.
 			await authClient.signIn.oauth2({
 				providerId: oidcButton.providerId,
-				callbackURL: "/",
+				callbackURL: callback,
 			});
 		} catch (err) {
 			setOauthPending(false);
@@ -51,7 +68,7 @@ function SignInPage() {
 			if (mode === "link") {
 				const result = await authClient.signIn.magicLink({
 					email,
-					callbackURL: "/",
+					callbackURL: callback,
 				});
 				if (result.error) {
 					setError(result.error.message ?? "Could not send sign-in link");
@@ -68,7 +85,10 @@ function SignInPage() {
 				setError(result.error.message ?? "Something went wrong");
 				return;
 			}
-			navigate({ to: "/" });
+			// Email/password flows don't bounce through an IdP, so we have to
+			// honor `callbackURL` ourselves. The path was validated to be
+			// same-origin relative by the route's search schema.
+			navigate({ href: callback });
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Unexpected error");
 		} finally {

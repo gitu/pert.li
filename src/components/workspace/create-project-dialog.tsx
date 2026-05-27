@@ -12,6 +12,7 @@ import {
 } from "#/components/ui/dialog";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
+import { useActiveWorkspaceId } from "#/lib/active-workspace";
 import { createProject } from "#/server/workspace.ts";
 
 export type CreateProjectDialogProps = {
@@ -25,11 +26,20 @@ export function CreateProjectDialog({
 }: CreateProjectDialogProps) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const activeWorkspaceId = useActiveWorkspaceId();
 	const [title, setTitle] = useState("");
 	const [error, setError] = useState<string | null>(null);
 
 	const mutation = useMutation({
-		mutationFn: (data: { title: string }) => createProject({ data }),
+		mutationFn: (data: { title: string }) =>
+			createProject({
+				data: {
+					title: data.title,
+					// Without an explicit selection the server lands the project in
+					// the personal workspace (ensurePersonalWorkspace).
+					...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
+				},
+			}),
 		onSuccess: async (result) => {
 			await queryClient.invalidateQueries({ queryKey: ["projects"] });
 			onOpenChange(false);

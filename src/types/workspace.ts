@@ -22,3 +22,46 @@ export type ProjectSummary = {
 };
 
 export type WorkspaceRole = "owner" | "editor" | "viewer";
+
+// Roles a join link is allowed to grant. Owners are excluded — promotion to
+// owner stays a manual operation.
+export type JoinLinkRole = Exclude<WorkspaceRole, "owner">;
+
+export type WorkspaceInvitationSummary = {
+	id: string;
+	workspaceId: string;
+	token: string;
+	role: JoinLinkRole;
+	createdBy: string;
+	createdAt: string;
+	expiresAt: string | null;
+	maxUses: number | null;
+	useCount: number;
+	revokedAt: string | null;
+};
+
+export type WorkspaceInvitationPreview = {
+	token: string;
+	workspaceId: string;
+	workspaceName: string;
+	role: JoinLinkRole;
+	expiresAt: string | null;
+	maxUses: number | null;
+	useCount: number;
+	// Set when the link is unusable. Callers render a tailored error message.
+	invalidReason: "revoked" | "expired" | "exhausted" | null;
+};
+
+export type WorkspaceMembershipSummary = {
+	workspaceId: string;
+	name: string;
+	slug: string;
+	role: WorkspaceRole;
+	createdAt: string;
+};
+
+export type AcceptInvitationResult = {
+	workspaceId: string;
+	workspaceName: string;
+	alreadyMember: boolean;
+};

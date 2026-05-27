@@ -12,6 +12,7 @@ import {
 	SheetTitle,
 } from "#/components/ui/sheet";
 import { ProjectList } from "#/components/workspace/project-list";
+import { useActiveWorkspaceId } from "#/lib/active-workspace";
 import { listProjects } from "#/server/workspace.ts";
 
 // Phone equivalent of the desktop LeftNav sidebar — wraps the same Project
@@ -29,9 +30,13 @@ export function MobileProjectsSheet({
 	onOpenChange,
 	onNewProject,
 }: Props) {
+	const activeWorkspaceId = useActiveWorkspaceId();
 	const projectsQuery = useQuery({
-		queryKey: ["projects"],
-		queryFn: () => listProjects(),
+		queryKey: ["projects", activeWorkspaceId],
+		queryFn: () =>
+			listProjects({
+				data: activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {},
+			}),
 	});
 	const params = useParams({ strict: false }) as { projectId?: string };
 

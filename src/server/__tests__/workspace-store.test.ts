@@ -27,6 +27,13 @@ const {
 	getWorkspaceRole,
 	addMemberByEmail,
 	listProjectsForWorkspace,
+	createWorkspaceInvitation,
+	listWorkspaceInvitations,
+	revokeWorkspaceInvitation,
+	getInvitationPreviewByToken,
+	acceptInvitationByToken,
+	createWorkspaceForUser,
+	listMembershipsForUser,
 } = await import("#/server/workspace-store.server");
 
 async function seedUser(
@@ -139,6 +146,239 @@ describe("workspace store (against PGLite)", () => {
 					role: "editor",
 				}),
 			).rejects.toThrow(/No registered user/);
+		});
+	});
+
+	describe("createWorkspaceForUser + listMembershipsForUser", () => {
+		it("creates a new workspace with the user as owner", async () => {
+			const userId = await seedUser();
+			const result = await createWorkspaceForUser({
+				userId,
+				name: "Acme Planning",
+			});
+			expect(result.workspaceId).toMatch(/^[0-9a-f-]{36}$/);
+			expect(result.name).toBe("Acme Planning");
+			expect(await getWorkspaceRole(userId, result.workspaceId)).toBe("owner");
+		});
+
+		it("trims the name and rejects an empty string", async () => {
+			const userId = await seedUser();
+			const created = await createWorkspaceForUser({
+				userId,
+				name: "  Padded  ",
+			});
+			expect(created.name).toBe("Padded");
+			await expect(
+				createWorkspaceForUser({ userId, name: "   " }),
+			).rejects.toThrow(/required/i);
+		});
+
+		it("lists every workspace the user belongs to, with their role", async () => {
+			const userId = await seedUser("ada@example.com", "Ada");
+			const otherOwnerId = await seedUser("bob@example.com", "Bob");
+			const personalId = await ensurePersonalWorkspace(userId, "Ada");
+			const owned = await createWorkspaceForUser({ userId, name: "Owned" });
+			// A workspace the user is invited into as editor.
+			const otherWs = await createWorkspaceForUser({
+				userId: otherOwnerId,
+				name: "Other",
+			});
+			await addMemberByEmail({
+				workspaceId: otherWs.workspaceId,
+				email: "ada@example.com",
+				role: "editor",
+			});
+			const list = await listMembershipsForUser(userId);
+			const byId = new Map(list.map((m) => [m.workspaceId, m]));
+			expect(byId.get(personalId)?.role).toBe("owner");
+			expect(byId.get(owned.workspaceId)?.role).toBe("owner");
+			expect(byId.get(otherWs.workspaceId)?.role).toBe("editor");
+			// Bob's third workspace isn't listed for Ada.
+			expect(list.length).toBe(3);
+		});
+	});
+
+	describe("workspace invitations (share links)", () => {
+		it("creates a link with a token, role, and zero usage", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			const invitation = await createWorkspaceInvitation({
+				workspaceId,
+				createdBy: ownerId,
+				role: "editor",
+			});
+			expect(invitation.token).toMatch(/^[A-Za-z0-9_-]{32,}$/);
+			expect(invitation.role).toBe("editor");
+			expect(invitation.useCount).toBe(0);
+			expect(invitation.revokedAt).toBeNull();
+			expect(invitation.expiresAt).toBeNull();
+			expect(invitation.maxUses).toBeNull();
+		});
+
+		it("lists invitations newest-first and round-trips dates as ISO", async () => {
+			const ownerId = await seedUser();
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Ada");
+			const first = await createWorkspaceInvitation({
+				workspaceId,
+				createdBy: ownerId,
+				role: "viewer",
+			});
+			// Small delay so created_at definitely differs.
+			await new Promise((r) => setTimeout(r, 10));
+			const second = await createWorkspaceInvitation({
+				workspaceId,
+				createdBy: ownerId,
+				role: "editor",
+			});
+			const list = await listWorkspaceInvitations(workspaceId);
+			expect(list.map((l) => l.id)).toEqual([second.id, first.id]);
+		});
+
+		it("preview reports null for an unknown token", async () => {
+			expect(await getInvitationPreviewByToken("nope-not-a-token")).toBeNull();
+		});
+
+		it("preview surfaces revoked / expired / exhausted states", async () => {
+			const ownerId = await seedUser();
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Ada");
+
+			const revoked = await createWorkspaceInvitation({
+				workspaceId,
+				createdBy: ownerId,
+				role: "editor",
+			});
+			await revokeWorkspaceInvitation({
+				invitationId: revoked.id,
+				workspaceId,
+			});
+			const revokedPreview = await getInvitationPreviewByToken(revoked.token);
+			expect(revokedPreview?.invalidReason).toBe("revoked");
+
+			const expired = await createWorkspaceInvitation({
+				workspaceId,
+				createdBy: ownerId,
+				role: "editor",
+				expiresAt: new Date(Date.now() - 60_000),
+			});
+			const expiredPreview = await getInvitationPreviewByToken(expired.token);
+			expect(expiredPreview?.invalidReason).toBe("expired");
+
+			const capped = await createWorkspaceInvitation({
+				workspaceId,
+				createdBy: ownerId,
+				role: "editor",
+				maxUses: 1,
+			});
+			// Accept once to consume the only slot.
+			const joinerId = await seedUser("joiner@example.com", "Joiner");
+			await acceptInvitationByToken({
+				token: capped.token,
+				userId: joinerId,
+			});
+			const cappedPreview = await getInvitationPreviewByToken(capped.token);
+			expect(cappedPreview?.invalidReason).toBe("exhausted");
+		});
+
+		it("accept adds the user with the link's role and bumps useCount", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const joinerId = await seedUser("joiner@example.com", "Joiner");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			const invitation = await createWorkspaceInvitation({
+				workspaceId,
+				createdBy: ownerId,
+				role: "viewer",
+			});
+			const result = await acceptInvitationByToken({
+				token: invitation.token,
+				userId: joinerId,
+			});
+			expect(result).toEqual({
+				workspaceId,
+				workspaceName: result.workspaceName,
+				alreadyMember: false,
+			});
+			expect(await getWorkspaceRole(joinerId, workspaceId)).toBe("viewer");
+			const [refreshed] = await listWorkspaceInvitations(workspaceId);
+			expect(refreshed.useCount).toBe(1);
+		});
+
+		it("accept is idempotent for an existing member and doesn't bump useCount", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const joinerId = await seedUser("joiner@example.com", "Joiner");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			const invitation = await createWorkspaceInvitation({
+				workspaceId,
+				createdBy: ownerId,
+				role: "editor",
+			});
+			await acceptInvitationByToken({
+				token: invitation.token,
+				userId: joinerId,
+			});
+			const second = await acceptInvitationByToken({
+				token: invitation.token,
+				userId: joinerId,
+			});
+			expect(second.alreadyMember).toBe(true);
+			const [refreshed] = await listWorkspaceInvitations(workspaceId);
+			// One distinct user joined → useCount stays at 1.
+			expect(refreshed.useCount).toBe(1);
+		});
+
+		it("accept rejects revoked / expired / exhausted invitations", async () => {
+			const ownerId = await seedUser();
+			const joinerId = await seedUser("joiner@example.com", "Joiner");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Ada");
+
+			const revoked = await createWorkspaceInvitation({
+				workspaceId,
+				createdBy: ownerId,
+				role: "editor",
+			});
+			await revokeWorkspaceInvitation({
+				invitationId: revoked.id,
+				workspaceId,
+			});
+			await expect(
+				acceptInvitationByToken({ token: revoked.token, userId: joinerId }),
+			).rejects.toThrow(/revoked/i);
+
+			const expired = await createWorkspaceInvitation({
+				workspaceId,
+				createdBy: ownerId,
+				role: "editor",
+				expiresAt: new Date(Date.now() - 60_000),
+			});
+			await expect(
+				acceptInvitationByToken({ token: expired.token, userId: joinerId }),
+			).rejects.toThrow(/expired/i);
+		});
+
+		it("revoke only affects the matching workspace+id pair and is idempotent", async () => {
+			const ownerId = await seedUser();
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Ada");
+			const invitation = await createWorkspaceInvitation({
+				workspaceId,
+				createdBy: ownerId,
+				role: "editor",
+			});
+			const first = await revokeWorkspaceInvitation({
+				invitationId: invitation.id,
+				workspaceId,
+			});
+			expect(first.revoked).toBe(true);
+			// Already revoked → second call reports no change.
+			const second = await revokeWorkspaceInvitation({
+				invitationId: invitation.id,
+				workspaceId,
+			});
+			expect(second.revoked).toBe(false);
+			// Foreign workspace id can't revoke.
+			const third = await revokeWorkspaceInvitation({
+				invitationId: invitation.id,
+				workspaceId: "00000000-0000-0000-0000-000000000000",
+			});
+			expect(third.revoked).toBe(false);
 		});
 	});
 });
