@@ -545,7 +545,7 @@ jobs:
 
       - name: Post / update sticky PR comment
         if: steps.match.outputs.matched != '' && steps.match.outputs.matched != '0'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: pr-screenshots
           path: comment.md
@@ -556,7 +556,7 @@ jobs:
         # tree was touched. Either way, wipe any stale comment so the PR
         # doesn't keep showing screenshots from a prior commit.
         if: steps.diff.outputs.has_changes != 'true' || steps.match.outputs.matched == '0'
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: pr-screenshots
           delete: true
