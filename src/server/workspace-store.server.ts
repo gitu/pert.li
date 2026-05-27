@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { AutomergeUrl } from "@automerge/automerge-repo";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { db } from "#/db";
 import {
 	project,
@@ -380,16 +380,12 @@ export async function acceptInvitationByToken(opts: {
 	token: string;
 	userId: string;
 }): Promise<AcceptInvitationResult> {
-	// Re-fetch inside the same logical flow to avoid TOCTOU between a
-	// preview render and the accept click (e.g. owner revoked in between).
+	// Look up the invitation + workspace name first. This is just for the
+	// returned result and for the already-member fast path; the authoritative
+	// validity check happens inside the conditional UPDATE below so we don't
+	// race with concurrent accepts.
 	const preview = await getInvitationPreviewByToken(opts.token);
 	if (!preview) throw new Error("Invitation not found");
-	if (preview.invalidReason === "revoked")
-		throw new Error("This invitation has been revoked");
-	if (preview.invalidReason === "expired")
-		throw new Error("This invitation has expired");
-	if (preview.invalidReason === "exhausted")
-		throw new Error("This invitation has reached its usage limit");
 
 	const existing = await db
 		.select({ id: workspaceMember.id })
@@ -410,18 +406,63 @@ export async function acceptInvitationByToken(opts: {
 		};
 	}
 
-	await db.insert(workspaceMember).values({
-		id: randomUUID(),
-		workspaceId: preview.workspaceId,
-		userId: opts.userId,
-		role: preview.role,
-	});
-	// Increment use count after a real join (idempotent re-joins don't bump
-	// the counter, so max-uses caps the number of *distinct* accepting users).
-	await db
+	// Atomically reserve a slot: bump use_count only if the invitation is
+	// still revocable / not expired / under the max-uses cap. Two simultaneous
+	// accepts can't both succeed past a max_uses=1 link because only one of
+	// the UPDATEs will satisfy `use_count < max_uses`. We use the returning
+	// rowcount as the gate for inserting membership.
+	const claimed = await db
 		.update(workspaceInvitation)
-		.set({ useCount: preview.useCount + 1 })
-		.where(eq(workspaceInvitation.token, opts.token));
+		.set({ useCount: sql`${workspaceInvitation.useCount} + 1` })
+		.where(
+			and(
+				eq(workspaceInvitation.token, opts.token),
+				isNull(workspaceInvitation.revokedAt),
+				or(
+					isNull(workspaceInvitation.expiresAt),
+					gt(workspaceInvitation.expiresAt, new Date()),
+				),
+				or(
+					isNull(workspaceInvitation.maxUses),
+					sql`${workspaceInvitation.useCount} < ${workspaceInvitation.maxUses}`,
+				),
+			),
+		)
+		.returning({ id: workspaceInvitation.id });
+
+	if (claimed.length === 0) {
+		// Re-fetch to surface a precise reason (revoked / expired / exhausted)
+		// for the error message — the conditional UPDATE collapsed all three.
+		const fresh = await getInvitationPreviewByToken(opts.token);
+		if (!fresh) throw new Error("Invitation not found");
+		if (fresh.invalidReason === "revoked")
+			throw new Error("This invitation has been revoked");
+		if (fresh.invalidReason === "expired")
+			throw new Error("This invitation has expired");
+		if (fresh.invalidReason === "exhausted")
+			throw new Error("This invitation has reached its usage limit");
+		// Shouldn't happen: claim failed but the link reads as valid. Treat as
+		// a transient race and surface a generic error.
+		throw new Error("Could not accept invitation, please retry");
+	}
+
+	try {
+		await db.insert(workspaceMember).values({
+			id: randomUUID(),
+			workspaceId: preview.workspaceId,
+			userId: opts.userId,
+			role: preview.role,
+		});
+	} catch (err) {
+		// Roll back our reserved slot so the count keeps reflecting real joins
+		// (e.g. a concurrent accept by the same user just won the unique index
+		// race and the membership row already exists).
+		await db
+			.update(workspaceInvitation)
+			.set({ useCount: sql`${workspaceInvitation.useCount} - 1` })
+			.where(eq(workspaceInvitation.token, opts.token));
+		throw err;
+	}
 
 	return {
 		workspaceId: preview.workspaceId,

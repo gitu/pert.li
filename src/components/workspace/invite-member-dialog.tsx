@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckIcon, CopyIcon, Trash2Icon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "#/components/ui/button";
 import {
 	Dialog,
@@ -44,6 +44,16 @@ export function InviteMemberDialog({
 	open,
 	onOpenChange,
 }: InviteMemberDialogProps) {
+	// Each open cycle gets a fresh epoch. Used as the React key on Tabs so the
+	// EmailInvitePane / ShareLinkPane subtrees remount on every open, wiping
+	// transient state (input values, success/error toasts) from the previous
+	// session. Closing via Esc / outside-click triggers onOpenChange just like
+	// the explicit Close button, so the reset is unconditional.
+	const [openEpoch, setOpenEpoch] = useState(0);
+	useEffect(() => {
+		if (open) setOpenEpoch((n) => n + 1);
+	}, [open]);
+
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent className="sm:max-w-lg">
@@ -53,7 +63,7 @@ export function InviteMemberDialog({
 						Add a registered user by email, or share a join link anyone can use.
 					</DialogDescription>
 				</DialogHeader>
-				<Tabs defaultValue="link" className="gap-3">
+				<Tabs key={openEpoch} defaultValue="link" className="gap-3">
 					<TabsList className="w-full">
 						<TabsTrigger value="link" className="flex-1">
 							Share link

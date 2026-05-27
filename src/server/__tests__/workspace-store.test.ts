@@ -354,6 +354,30 @@ describe("workspace store (against PGLite)", () => {
 			).rejects.toThrow(/expired/i);
 		});
 
+		it("two concurrent accepts on a max_uses=1 link only let one through", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const aId = await seedUser("a@example.com", "A");
+			const bId = await seedUser("b@example.com", "B");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			const invitation = await createWorkspaceInvitation({
+				workspaceId,
+				createdBy: ownerId,
+				role: "editor",
+				maxUses: 1,
+			});
+			const results = await Promise.allSettled([
+				acceptInvitationByToken({ token: invitation.token, userId: aId }),
+				acceptInvitationByToken({ token: invitation.token, userId: bId }),
+			]);
+			const wins = results.filter((r) => r.status === "fulfilled");
+			const losses = results.filter((r) => r.status === "rejected");
+			expect(wins.length).toBe(1);
+			expect(losses.length).toBe(1);
+			const [refreshed] = await listWorkspaceInvitations(workspaceId);
+			// Counter never exceeds the cap even with two simultaneous attempts.
+			expect(refreshed.useCount).toBe(1);
+		});
+
 		it("revoke only affects the matching workspace+id pair and is idempotent", async () => {
 			const ownerId = await seedUser();
 			const workspaceId = await ensurePersonalWorkspace(ownerId, "Ada");
