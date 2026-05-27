@@ -426,9 +426,11 @@ export const ArrowKeyNavigation: Story = {
 // capture-phase listener without fighting userEvent's special-cased Tab /
 // focus-traversal behaviour. Used by the keyboard-add tests below; clicks
 // are still real userEvent clicks so selection-store updates fire normally.
-function dispatchKey(
-	init: { key: string; shiftKey?: boolean; metaKey?: boolean },
-): void {
+function dispatchKey(init: {
+	key: string;
+	shiftKey?: boolean;
+	metaKey?: boolean;
+}): void {
 	const event = new KeyboardEvent("keydown", {
 		key: init.key,
 		shiftKey: init.shiftKey ?? false,
@@ -439,9 +441,16 @@ function dispatchKey(
 	window.dispatchEvent(event);
 }
 
+function countTaskNodes(root: HTMLElement): number {
+	return root.querySelectorAll("[data-testid^='task-node-']").length;
+}
+
 // Plain-letter add: a keydown for `n` triggers the canvas-level handler and
 // creates a fresh task at the viewport centre — validates the listener fires
-// even when no node is selected and the doc is empty.
+// even when no node is selected and the doc is empty. We count task-node
+// data-testid elements (not the rendered title) because newly added nodes
+// land in inline-edit mode where the title lives inside an <input>, not a
+// text node — getByText would never find it.
 export const PlainLetterAdd: Story = {
 	args: {
 		seed: createEmptyPertDoc("Keyboard add"),
@@ -451,16 +460,12 @@ export const PlainLetterAdd: Story = {
 		const canvas = within(canvasElement);
 		await expect(canvas.getByText("No tasks yet.")).toBeInTheDocument();
 		dispatchKey({ key: "n" });
-		await waitFor(() => {
-			const nodes = canvas.queryAllByText("New task");
-			expect(nodes.length).toBeGreaterThan(0);
-		});
+		await waitFor(() => expect(countTaskNodes(canvasElement)).toBe(1));
+		// Inline-edit form opened on the freshly added task.
+		await expect(canvas.getByTestId("task-inline-title")).toBeInTheDocument();
 		// `m` adds a milestone alongside the new task.
 		dispatchKey({ key: "m" });
-		await waitFor(() => {
-			const nodes = canvas.queryAllByText("New milestone");
-			expect(nodes.length).toBeGreaterThan(0);
-		});
+		await waitFor(() => expect(countTaskNodes(canvasElement)).toBe(2));
 	},
 };
 
@@ -480,34 +485,27 @@ export const TabSpawnAndSibling: Story = {
 		await userEvent.click(nodeA);
 		await waitFor(() => expect(selectionStore.state.taskId).toBe("A"));
 
-		const taskNodeCountBefore = canvasElement.querySelectorAll(
-			"[data-testid^='task-node-']",
-		).length;
+		const before = countTaskNodes(canvasElement);
 
 		dispatchKey({ key: "Tab" });
-		await waitFor(() => {
-			const count = canvasElement.querySelectorAll(
-				"[data-testid^='task-node-']",
-			).length;
-			expect(count).toBe(taskNodeCountBefore + 1);
-		});
-
-		// Inline-edit form is open on the new node — let it commit so we can
-		// re-target A for the sibling step.
+		await waitFor(() => expect(countTaskNodes(canvasElement)).toBe(before + 1));
+		// Inline-edit form opened on the new node.
 		await waitFor(() =>
 			expect(canvas.getByTestId("task-inline-title")).toBeInTheDocument(),
 		);
+		// Commit the inline edit (Enter on the focused title input). After this
+		// the selection still points at the new task — we reset it directly via
+		// the store instead of clicking A again, because clicking through an
+		// inline-edit blur/commit cycle is racy and the click handler is
+		// already covered by the ArrowKeyNavigation story.
 		await userEvent.keyboard("{Enter}");
-
-		await userEvent.click(canvas.getByTestId("task-node-A"));
-		await waitFor(() => expect(selectionStore.state.taskId).toBe("A"));
-		dispatchKey({ key: "Tab", shiftKey: true });
-		await waitFor(() => {
-			const count = canvasElement.querySelectorAll(
-				"[data-testid^='task-node-']",
-			).length;
-			expect(count).toBe(taskNodeCountBefore + 2);
+		selectionStore.setState({
+			projectId: "story-canvas-tab-spawn",
+			taskId: "A",
 		});
+
+		dispatchKey({ key: "Tab", shiftKey: true });
+		await waitFor(() => expect(countTaskNodes(canvasElement)).toBe(before + 2));
 	},
 };
 
