@@ -12,7 +12,8 @@ import { CreateProjectDialog } from "#/components/workspace/create-project-dialo
 import { ImportProjectDialog } from "#/components/workspace/import-project-dialog";
 import { InviteMemberDialog } from "#/components/workspace/invite-member-dialog";
 import { TutorialCard } from "#/components/workspace/tutorial-card";
-import { listProjects } from "#/server/workspace.ts";
+import { useActiveWorkspaceId } from "#/lib/active-workspace";
+import { listMyWorkspaces, listProjects } from "#/server/workspace.ts";
 
 // Beginner-friendly tutorial CTA is prominent while the workspace is sparse
 // (0-2 projects). Past that, the user has presumably found their footing and
@@ -27,12 +28,28 @@ function WorkspaceHome() {
 	const [createOpen, setCreateOpen] = useState(false);
 	const [importOpen, setImportOpen] = useState(false);
 	const [inviteOpen, setInviteOpen] = useState(false);
+	const activeWorkspaceId = useActiveWorkspaceId();
+	const workspacesQuery = useQuery({
+		queryKey: ["my-workspaces"],
+		queryFn: () => listMyWorkspaces(),
+	});
 	const projectsQuery = useQuery({
-		queryKey: ["projects"],
-		queryFn: () => listProjects(),
+		queryKey: ["projects", activeWorkspaceId],
+		queryFn: () =>
+			listProjects({
+				data: activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {},
+			}),
 	});
 	const projects = projectsQuery.data ?? [];
-	const workspaceId = projects[0]?.workspaceId;
+	// Resolve the workspace independently of the projects list so a fresh
+	// (empty) workspace still wires the Invite button.
+	const workspaces = workspacesQuery.data ?? [];
+	const workspaceId =
+		(activeWorkspaceId &&
+			workspaces.find((w) => w.workspaceId === activeWorkspaceId)
+				?.workspaceId) ||
+		workspaces[0]?.workspaceId ||
+		projects[0]?.workspaceId;
 	const showTutorialProminent =
 		!projectsQuery.isPending && projects.length < TUTORIAL_PROMINENT_THRESHOLD;
 

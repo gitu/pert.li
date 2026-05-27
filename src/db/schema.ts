@@ -3,6 +3,7 @@ import {
 	boolean,
 	customType,
 	index,
+	integer,
 	jsonb,
 	pgEnum,
 	pgTable,
@@ -121,6 +122,31 @@ export const workspaceMember = pgTable(
 			t.userId,
 		),
 	],
+);
+
+// Shareable join links. A workspace owner generates a token; anyone who hits
+// /join/<token> with a session is added as a member at the link's preset role
+// (editor or viewer — owner promotion stays manual). Optional expiry and
+// max-uses; manual revoke clears active links without dropping the audit row.
+export const workspaceInvitation = pgTable(
+	"workspace_invitation",
+	{
+		id: text("id").primaryKey(),
+		workspaceId: text("workspace_id")
+			.notNull()
+			.references(() => workspace.id, { onDelete: "cascade" }),
+		token: text("token").notNull().unique(),
+		role: workspaceRole("role").notNull().default("editor"),
+		createdBy: text("created_by")
+			.notNull()
+			.references(() => user.id, { onDelete: "restrict" }),
+		createdAt: timestamp("created_at").notNull().defaultNow(),
+		expiresAt: timestamp("expires_at"),
+		maxUses: integer("max_uses"),
+		useCount: integer("use_count").notNull().default(0),
+		revokedAt: timestamp("revoked_at"),
+	},
+	(t) => [index("workspace_invitation_workspace_idx").on(t.workspaceId)],
 );
 
 export const project = pgTable("project", {
