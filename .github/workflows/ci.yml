@@ -32,6 +32,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        # `scripts/compute-version.mjs` runs `git describe --tags` to derive
+        # the build version baked into the bundle. The default shallow
+        # checkout has only HEAD, so without full history the version would
+        # always fall back to `0.0.0-dev`.
+        with:
+          fetch-depth: 0
+
+      - name: Resolve APP_VERSION
+        id: version
+        run: echo "value=$(node scripts/compute-version.mjs)" >> "$GITHUB_OUTPUT"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -80,6 +90,11 @@ jobs:
         run: pnpm test
 
       - name: Build
+        env:
+          # vite.config.ts → compute-version.mjs prefers this env value over
+          # `git describe`, so the artefact e2e consumes matches what the
+          # docker-build / docker.yml jobs publish.
+          APP_VERSION: ${{ steps.version.outputs.value }}
         run: pnpm build
 
       # The e2e job consumes this artefact instead of running `vite dev`.
@@ -134,6 +149,14 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        # `git describe --tags` (resolved below) needs full history; default
+        # shallow clone has only HEAD.
+        with:
+          fetch-depth: 0
+
+      - name: Resolve APP_VERSION
+        id: version
+        run: echo "value=$(node scripts/compute-version.mjs)" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -150,6 +173,8 @@ jobs:
           # docker.yml.
           load: true
           tags: pert-li:pr-${{ github.event.pull_request.number || github.sha }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.value }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -319,6 +344,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        # The storybook vite config calls scripts/compute-version.mjs, which
+        # runs `git describe --tags`. Default shallow clone has only HEAD,
+        # so the VersionFooter story would render the fallback.
+        with:
+          fetch-depth: 0
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
