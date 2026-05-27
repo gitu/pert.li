@@ -14,6 +14,7 @@ import { Route as SigninRouteImport } from './routes/signin'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as ShareTokenRouteImport } from './routes/share.$token'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as AppAdminRouteImport } from './routes/_app/admin'
@@ -43,6 +44,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AppRoute,
+} as any)
+const ShareTokenRoute = ShareTokenRouteImport.update({
+  id: '/share/$token',
+  path: '/share/$token',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const JoinTokenRoute = JoinTokenRouteImport.update({
   id: '/join/$token',
@@ -78,6 +84,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AppAdminRoute
   '/api/chat': typeof ApiChatRoute
   '/join/$token': typeof JoinTokenRoute
+  '/share/$token': typeof ShareTokenRoute
   '/p/$projectId': typeof AppPProjectIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
@@ -88,6 +95,7 @@ export interface FileRoutesByTo {
   '/admin': typeof AppAdminRoute
   '/api/chat': typeof ApiChatRoute
   '/join/$token': typeof JoinTokenRoute
+  '/share/$token': typeof ShareTokenRoute
   '/': typeof AppIndexRoute
   '/p/$projectId': typeof AppPProjectIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -101,6 +109,7 @@ export interface FileRoutesById {
   '/_app/admin': typeof AppAdminRoute
   '/api/chat': typeof ApiChatRoute
   '/join/$token': typeof JoinTokenRoute
+  '/share/$token': typeof ShareTokenRoute
   '/_app/': typeof AppIndexRoute
   '/_app/p/$projectId': typeof AppPProjectIdRoute
   '/api/auth/$': typeof ApiAuthSplatRoute
@@ -115,6 +124,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/api/chat'
     | '/join/$token'
+    | '/share/$token'
     | '/p/$projectId'
     | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
@@ -125,6 +135,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/api/chat'
     | '/join/$token'
+    | '/share/$token'
     | '/'
     | '/p/$projectId'
     | '/api/auth/$'
@@ -137,6 +148,7 @@ export interface FileRouteTypes {
     | '/_app/admin'
     | '/api/chat'
     | '/join/$token'
+    | '/share/$token'
     | '/_app/'
     | '/_app/p/$projectId'
     | '/api/auth/$'
@@ -149,6 +161,7 @@ export interface RootRouteChildren {
   WelcomeRoute: typeof WelcomeRoute
   ApiChatRoute: typeof ApiChatRoute
   JoinTokenRoute: typeof JoinTokenRoute
+  ShareTokenRoute: typeof ShareTokenRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
 }
 
@@ -188,6 +201,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/share/$token': {
+      id: '/share/$token'
+      path: '/share/$token'
+      fullPath: '/share/$token'
+      preLoaderRoute: typeof ShareTokenRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/join/$token': {
       id: '/join/$token'
@@ -248,6 +268,7 @@ const rootRouteChildren: RootRouteChildren = {
   WelcomeRoute: WelcomeRoute,
   ApiChatRoute: ApiChatRoute,
   JoinTokenRoute: JoinTokenRoute,
+  ShareTokenRoute: ShareTokenRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
 }
 export const routeTree = rootRouteImport

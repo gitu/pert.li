@@ -5,6 +5,33 @@ import {
 	type PeerLike,
 	PeerSocket,
 } from "./automerge-server.server.ts";
+import { resolveShareByToken } from "./project-share-store.server.ts";
+
+type ShareAuth = {
+	kind: "share";
+	shareDocUrl: string;
+	shareMode: "view" | "edit";
+};
+
+type UserAuth = { kind: "user"; userId: string };
+
+function extractShareToken(peer: unknown): string | null {
+	const p = peer as {
+		request?: { url?: string };
+		url?: string;
+	};
+	const raw = p.request?.url ?? p.url;
+	if (!raw) return null;
+	try {
+		// raw can be either a full URL or a path+query starting with "/sync?…".
+		const url = raw.startsWith("http")
+			? new URL(raw)
+			: new URL(raw, "http://placeholder");
+		return url.searchParams.get("share");
+	} catch {
+		return null;
+	}
+}
 
 // crossws may give us a fresh `peer.context` object per hook invocation, so
 // thread the PeerSocket through a module-level Map keyed by peer.id instead.
@@ -19,18 +46,31 @@ function getPeerId(peer: unknown): string {
 	return String((peer as { id?: unknown }).id ?? "");
 }
 
-// Validate the Better Auth session from the upgrade headers. crossws hands us
-// the underlying request via `peer.request` (Node) — fall back to building a
-// minimal Headers from `peer.headers` when only the latter is available.
+// Validate the connecting peer. Two paths:
+//   1. Better Auth cookie session → authenticated user peer (full repo access).
+//   2. `?share=<token>` query string → share-link peer scoped to one doc.
+// crossws hands us the underlying request via `peer.request` (Node) — fall
+// back to building a minimal Headers from `peer.headers` when only the
+// latter is available.
 async function authenticatePeer(
 	peer: unknown,
-): Promise<{ userId: string } | null> {
+): Promise<ShareAuth | UserAuth | null> {
+	const shareToken = extractShareToken(peer);
+	if (shareToken) {
+		const resolved = await resolveShareByToken(shareToken);
+		if (!resolved) return null;
+		return {
+			kind: "share",
+			shareDocUrl: resolved.automergeDocUrl,
+			shareMode: resolved.mode,
+		};
+	}
 	const headers = extractRequestHeaders(peer);
 	if (!headers) return null;
 	try {
 		const session = await auth.api.getSession({ headers });
 		if (!session?.user?.id) return null;
-		return { userId: session.user.id };
+		return { kind: "user", userId: session.user.id };
 	} catch {
 		return null;
 	}
@@ -60,14 +100,21 @@ export default defineWebSocketHandler({
 
 	async open(peer) {
 		const id = getPeerId(peer);
-		const session = await authenticatePeer(peer);
-		if (!session) {
+		const auth = await authenticatePeer(peer);
+		if (!auth) {
 			pendingMessages.delete(id);
 			peer.close();
 			return;
 		}
 		const sock = new PeerSocket(peer as unknown as PeerLike);
-		sock.userId = session.userId;
+		if (auth.kind === "user") {
+			sock.userId = auth.userId;
+		} else {
+			// Synthetic userId distinguishes share peers in logs / future hooks.
+			sock.userId = `share:${auth.shareMode}`;
+			sock.shareDocUrl = auth.shareDocUrl;
+			sock.shareMode = auth.shareMode;
+		}
 		peerSockets.set(id, sock);
 		const { wss } = getServerRepoBundle();
 		wss.clients.add(sock);

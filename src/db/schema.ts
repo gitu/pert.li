@@ -187,6 +187,31 @@ export const automergeStorage = pgTable(
 	(t) => [index("automerge_storage_key_idx").on(t.key)],
 );
 
+// Public share links for a single project. A row grants anyone holding the
+// token access to one project's Automerge document — read-only or editable,
+// optionally bounded by `expiresAt`. Revoking sets `revokedAt`; the row is
+// kept for audit/extend rather than being deleted.
+export const projectShareMode = pgEnum("project_share_mode", ["view", "edit"]);
+
+export const projectShare = pgTable(
+	"project_share",
+	{
+		id: text("id").primaryKey(),
+		projectId: text("project_id")
+			.notNull()
+			.references(() => project.id, { onDelete: "cascade" }),
+		token: text("token").notNull().unique(),
+		mode: projectShareMode("mode").notNull(),
+		expiresAt: timestamp("expires_at"),
+		createdBy: text("created_by")
+			.notNull()
+			.references(() => user.id, { onDelete: "restrict" }),
+		createdAt: timestamp("created_at").notNull().defaultNow(),
+		revokedAt: timestamp("revoked_at"),
+	},
+	(t) => [index("project_share_project_idx").on(t.projectId)],
+);
+
 export const auditLog = pgTable("audit_log", {
 	id: text("id").primaryKey(),
 	workspaceId: text("workspace_id").references(() => workspace.id, {

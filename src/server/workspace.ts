@@ -3,14 +3,19 @@ import { fromExchange } from "#/lib/pert/exchange";
 import {
 	createJoinLinkInput,
 	createProjectInput,
+	createShareInput,
 	createWorkspaceInput,
+	extendShareInput,
 	getProjectInput,
 	importProjectInput,
 	inviteMemberInput,
 	joinTokenInput,
 	listJoinLinksInput,
 	listProjectsInput,
+	listSharesInput,
+	resolveShareInput,
 	revokeJoinLinkInput,
+	shareIdInput,
 } from "#/types/workspace-schemas";
 
 // Server-only helpers are loaded lazily so the depscanner never walks their
@@ -19,6 +24,14 @@ async function helpers() {
 	const [{ requireSession }, store] = await Promise.all([
 		import("./auth-context.server.ts"),
 		import("./workspace-store.server.ts"),
+	]);
+	return { requireSession, ...store };
+}
+
+async function shareHelpers() {
+	const [{ requireSession }, store] = await Promise.all([
+		import("./auth-context.server.ts"),
+		import("./project-share-store.server.ts"),
 	]);
 	return { requireSession, ...store };
 }
@@ -175,7 +188,7 @@ export const getOrCreateUserWorkspaceDoc = createServerFn({
 	return { automergeDocUrl };
 });
 
-// ----- Shareable join links -------------------------------------------------
+// ----- Shareable workspace join links ---------------------------------------
 
 export const createJoinLink = createServerFn({ method: "POST" })
 	.inputValidator(createJoinLinkInput)
@@ -243,4 +256,68 @@ export const acceptJoinLink = createServerFn({ method: "POST" })
 			token: data.token,
 			userId: session.userId,
 		});
+	});
+
+// --- Per-project share links -----------------------------------------------
+
+export const createProjectShare = createServerFn({ method: "POST" })
+	.inputValidator(createShareInput)
+	.handler(async ({ data }) => {
+		const { requireSession, assertProjectAccess, createShare } =
+			await shareHelpers();
+		const session = await requireSession();
+		await assertProjectAccess({
+			projectId: data.projectId,
+			userId: session.userId,
+		});
+		return createShare({
+			projectId: data.projectId,
+			mode: data.mode,
+			expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
+			createdBy: session.userId,
+		});
+	});
+
+export const listProjectShares = createServerFn({ method: "GET" })
+	.inputValidator(listSharesInput)
+	.handler(async ({ data }) => {
+		const { requireSession, assertProjectAccess, listSharesForProject } =
+			await shareHelpers();
+		const session = await requireSession();
+		await assertProjectAccess({
+			projectId: data.projectId,
+			userId: session.userId,
+		});
+		return listSharesForProject(data.projectId);
+	});
+
+export const revokeProjectShare = createServerFn({ method: "POST" })
+	.inputValidator(shareIdInput)
+	.handler(async ({ data }) => {
+		const { requireSession, revokeShare } = await shareHelpers();
+		const session = await requireSession();
+		await revokeShare({ shareId: data.shareId, userId: session.userId });
+		return { ok: true };
+	});
+
+export const extendProjectShare = createServerFn({ method: "POST" })
+	.inputValidator(extendShareInput)
+	.handler(async ({ data }) => {
+		const { requireSession, extendShare } = await shareHelpers();
+		const session = await requireSession();
+		return extendShare({
+			shareId: data.shareId,
+			expiresAt: data.expiresAt ? new Date(data.expiresAt) : null,
+			userId: session.userId,
+		});
+	});
+
+// Public — no auth gate. Resolves a share token into doc info for the
+// /share/$token route's loader. Returns `null` for missing/expired/revoked
+// tokens so the route can render a generic "invalid link" message.
+export const resolveProjectShare = createServerFn({ method: "GET" })
+	.inputValidator(resolveShareInput)
+	.handler(async ({ data }) => {
+		const { resolveShareByToken } = await shareHelpers();
+		return resolveShareByToken(data.token);
 	});

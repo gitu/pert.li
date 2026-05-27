@@ -29,6 +29,14 @@ export class PeerSocket extends EventEmitter {
 	binaryType: "nodebuffer" | "arraybuffer" = "nodebuffer";
 	isAlive = true;
 	userId: string | null = null;
+	// Share-link peers are scoped to a single document; `shareDocUrl` holds
+	// the only Automerge URL they're allowed to subscribe to. `shareMode`
+	// controls whether the client UI exposes edit affordances. Server-side
+	// write enforcement is intentionally minimal in this iteration — the
+	// share dialog warns owners that view-mode trusts the recipient not to
+	// bypass the UI.
+	shareDocUrl: string | null = null;
+	shareMode: "view" | "edit" | null = null;
 	constructor(private peer: PeerLike) {
 		super();
 	}
@@ -80,9 +88,14 @@ function buildBundle(): ServerRepoBundle {
 		peerId: `sync-server-${process.pid}` as PeerId,
 		sharePolicy: async (peerId, documentId) => {
 			if (!documentId) return false;
-			const userId = lookupUserIdForPeer(adapter, peerId);
-			if (!userId) return false;
-			return userCanAccessDoc(userId, documentId);
+			const socket = adapter.sockets[peerId] as PeerSocket | undefined;
+			if (!socket) return false;
+			// Share-link peer: only ever expose the one doc they hold a token for.
+			if (socket.shareDocUrl) {
+				return `automerge:${documentId}` === socket.shareDocUrl;
+			}
+			if (!socket.userId) return false;
+			return userCanAccessDoc(socket.userId, documentId);
 		},
 	});
 
@@ -132,6 +145,8 @@ export function getServerRepo(): Repo {
 
 // --- sharePolicy helpers --------------------------------------------------
 
+// Kept for potential future use; sharePolicy now reads the socket directly to
+// also see share-mode peers.
 function lookupUserIdForPeer(
 	adapter: WebSocketServerAdapter,
 	peerId: PeerId,
@@ -139,6 +154,7 @@ function lookupUserIdForPeer(
 	const socket = adapter.sockets[peerId] as PeerSocket | undefined;
 	return socket?.userId ?? null;
 }
+void lookupUserIdForPeer;
 
 async function userCanAccessDoc(
 	userId: string,
