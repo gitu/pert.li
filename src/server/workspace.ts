@@ -263,10 +263,10 @@ export const acceptJoinLink = createServerFn({ method: "POST" })
 export const createProjectShare = createServerFn({ method: "POST" })
 	.inputValidator(createShareInput)
 	.handler(async ({ data }) => {
-		const { requireSession, assertProjectAccess, createShare } =
+		const { requireSession, assertProjectShareAdmin, createShare } =
 			await shareHelpers();
 		const session = await requireSession();
-		await assertProjectAccess({
+		await assertProjectShareAdmin({
 			projectId: data.projectId,
 			userId: session.userId,
 		});

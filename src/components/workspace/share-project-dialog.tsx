@@ -171,7 +171,9 @@ export function ShareProjectDialog({
 					<DialogTitle>Share this project</DialogTitle>
 					<DialogDescription>
 						Anyone with a link can open the project without signing in. Edit
-						links let them collaborate live; view links keep them read-only.
+						links let them collaborate live alongside your team. View links hide
+						every edit control in the UI &mdash; share them only with recipients
+						you trust not to bypass it.
 					</DialogDescription>
 				</DialogHeader>
 

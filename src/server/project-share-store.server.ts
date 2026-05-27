@@ -8,6 +8,7 @@ import type {
 	ProjectShareSummary,
 	ResolvedShare,
 } from "#/types/workspace";
+import { closeShareSockets } from "./share-sockets.server";
 
 // 32 random bytes → 43-char base64url string. Far past the threshold for
 // brute-force feasibility (256 bits of entropy), URL-safe, no padding.
@@ -35,17 +36,18 @@ function toSummary(row: {
 	};
 }
 
-// Authorization: the caller must be a member of the project's workspace AND
-// either own the share (createdBy) or be an owner of the workspace. Returns
-// the workspaceId on success, throws otherwise. Centralised here so every
-// mutation funnels through the same gate.
+// Read-side: caller must be a member of the project's workspace in any role.
+// Used to gate listing existing shares; viewers shouldn't see hidden
+// projects but seeing the share list of a project they can already open
+// adds no privilege.
 export async function assertProjectAccess(opts: {
 	projectId: string;
 	userId: string;
-}): Promise<{ workspaceId: string }> {
+}): Promise<{ workspaceId: string; role: "owner" | "editor" | "viewer" }> {
 	const rows = await db
 		.select({
 			workspaceId: project.workspaceId,
+			role: workspaceMember.role,
 		})
 		.from(project)
 		.innerJoin(
@@ -60,7 +62,26 @@ export async function assertProjectAccess(opts: {
 		)
 		.limit(1);
 	if (rows.length === 0) throw new Error("Project not found");
-	return { workspaceId: rows[0].workspaceId };
+	return {
+		workspaceId: rows[0].workspaceId,
+		role: rows[0].role as "owner" | "editor" | "viewer",
+	};
+}
+
+// Mutation-side: minting, revoking, or extending a share grants public
+// anonymous access to a project doc — that's an authorization boundary
+// only workspace owners should cross. Matches the existing inviteMember
+// "owner-only" rule rather than the looser "any editor can edit" rule,
+// since share links bypass the audit trail of a named workspace member.
+export async function assertProjectShareAdmin(opts: {
+	projectId: string;
+	userId: string;
+}): Promise<{ workspaceId: string }> {
+	const { workspaceId, role } = await assertProjectAccess(opts);
+	if (role !== "owner") {
+		throw new Error("Only workspace owners can manage share links");
+	}
+	return { workspaceId };
 }
 
 export async function createShare(opts: {
@@ -126,7 +147,7 @@ export async function revokeShare(opts: {
 		.where(eq(projectShare.id, opts.shareId))
 		.limit(1);
 	if (rows.length === 0) throw new Error("Share not found");
-	await assertProjectAccess({
+	await assertProjectShareAdmin({
 		projectId: rows[0].projectId,
 		userId: opts.userId,
 	});
@@ -134,6 +155,10 @@ export async function revokeShare(opts: {
 		.update(projectShare)
 		.set({ revokedAt: new Date() })
 		.where(eq(projectShare.id, opts.shareId));
+	// Disconnect any peers still holding this token — without this, an
+	// already-connected share recipient would keep syncing until their
+	// socket happens to drop, because `sharePolicy` reads cached state.
+	closeShareSockets(opts.shareId);
 }
 
 export async function extendShare(opts: {
@@ -147,7 +172,7 @@ export async function extendShare(opts: {
 		.where(eq(projectShare.id, opts.shareId))
 		.limit(1);
 	if (rows.length === 0) throw new Error("Share not found");
-	await assertProjectAccess({
+	await assertProjectShareAdmin({
 		projectId: rows[0].projectId,
 		userId: opts.userId,
 	});

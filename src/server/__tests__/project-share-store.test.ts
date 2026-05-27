@@ -29,7 +29,9 @@ const {
 	extendShare,
 	resolveShareByToken,
 	assertProjectAccess,
+	assertProjectShareAdmin,
 } = await import("#/server/project-share-store.server");
+const { registerShareSocket } = await import("#/server/share-sockets.server");
 
 async function seedProject(opts?: { archived?: boolean }): Promise<{
 	userId: string;
@@ -114,6 +116,24 @@ describe("project-share-store (against PGLite)", () => {
 			await revokeShare({ shareId: share.id, userId });
 			const list = await listSharesForProject(projectId);
 			expect(list).toHaveLength(0);
+		});
+
+		it("closes any connected share sockets when a share is revoked", async () => {
+			const { userId, projectId } = await seedProject();
+			const share = await createShare({
+				projectId,
+				mode: "edit",
+				expiresAt: null,
+				createdBy: userId,
+			});
+			let closed = false;
+			registerShareSocket(share.id, {
+				close: () => {
+					closed = true;
+				},
+			});
+			await revokeShare({ shareId: share.id, userId });
+			expect(closed).toBe(true);
 		});
 	});
 
@@ -207,8 +227,31 @@ describe("project-share-store (against PGLite)", () => {
 		});
 	});
 
-	describe("assertProjectAccess", () => {
-		it("rejects a user who isn't a member of the project's workspace", async () => {
+	describe("authorization", () => {
+		async function seedExtraMember(
+			workspaceId: string,
+			role: "owner" | "editor" | "viewer",
+		): Promise<string> {
+			const userId = `usr_${randomUUID()}`;
+			const now = new Date();
+			await testDb.insert(userTable).values({
+				id: userId,
+				email: `${userId}@example.com`,
+				name: role,
+				emailVerified: true,
+				createdAt: now,
+				updatedAt: now,
+			});
+			await testDb.insert(workspaceMember).values({
+				id: randomUUID(),
+				workspaceId,
+				userId,
+				role,
+			});
+			return userId;
+		}
+
+		it("rejects assertProjectAccess for a user who isn't a member", async () => {
 			const { projectId } = await seedProject();
 			const outsider = `usr_${randomUUID()}`;
 			const now = new Date();
@@ -225,7 +268,52 @@ describe("project-share-store (against PGLite)", () => {
 			).rejects.toThrow(/Project not found/);
 		});
 
-		it("rejects revoke from a non-member", async () => {
+		it("returns the member's role from assertProjectAccess", async () => {
+			const { userId, workspaceId, projectId } = await seedProject();
+			const editor = await seedExtraMember(workspaceId, "editor");
+			const ownerAccess = await assertProjectAccess({ projectId, userId });
+			expect(ownerAccess.role).toBe("owner");
+			const editorAccess = await assertProjectAccess({
+				projectId,
+				userId: editor,
+			});
+			expect(editorAccess.role).toBe("editor");
+		});
+
+		it("assertProjectShareAdmin lets owners through", async () => {
+			const { userId, projectId } = await seedProject();
+			await expect(
+				assertProjectShareAdmin({ projectId, userId }),
+			).resolves.toBeDefined();
+		});
+
+		it("assertProjectShareAdmin blocks editors and viewers", async () => {
+			const { workspaceId, projectId } = await seedProject();
+			const editor = await seedExtraMember(workspaceId, "editor");
+			const viewer = await seedExtraMember(workspaceId, "viewer");
+			await expect(
+				assertProjectShareAdmin({ projectId, userId: editor }),
+			).rejects.toThrow(/Only workspace owners/);
+			await expect(
+				assertProjectShareAdmin({ projectId, userId: viewer }),
+			).rejects.toThrow(/Only workspace owners/);
+		});
+
+		it("revoke is rejected for non-owner workspace members", async () => {
+			const { userId, workspaceId, projectId } = await seedProject();
+			const share = await createShare({
+				projectId,
+				mode: "view",
+				expiresAt: null,
+				createdBy: userId,
+			});
+			const editor = await seedExtraMember(workspaceId, "editor");
+			await expect(
+				revokeShare({ shareId: share.id, userId: editor }),
+			).rejects.toThrow(/Only workspace owners/);
+		});
+
+		it("revoke is rejected for outsiders", async () => {
 			const { userId, projectId } = await seedProject();
 			const share = await createShare({
 				projectId,

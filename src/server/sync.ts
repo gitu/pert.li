@@ -6,11 +6,17 @@ import {
 	PeerSocket,
 } from "./automerge-server.server.ts";
 import { resolveShareByToken } from "./project-share-store.server.ts";
+import {
+	registerShareSocket,
+	unregisterShareSocket,
+} from "./share-sockets.server.ts";
 
 type ShareAuth = {
 	kind: "share";
+	shareId: string;
 	shareDocUrl: string;
 	shareMode: "view" | "edit";
+	shareExpiresAt: Date | null;
 };
 
 type UserAuth = { kind: "user"; userId: string };
@@ -61,8 +67,10 @@ async function authenticatePeer(
 		if (!resolved) return null;
 		return {
 			kind: "share",
+			shareId: resolved.shareId,
 			shareDocUrl: resolved.automergeDocUrl,
 			shareMode: resolved.mode,
+			shareExpiresAt: resolved.expiresAt ? new Date(resolved.expiresAt) : null,
 		};
 	}
 	const headers = extractRequestHeaders(peer);
@@ -112,8 +120,11 @@ export default defineWebSocketHandler({
 		} else {
 			// Synthetic userId distinguishes share peers in logs / future hooks.
 			sock.userId = `share:${auth.shareMode}`;
+			sock.shareId = auth.shareId;
 			sock.shareDocUrl = auth.shareDocUrl;
 			sock.shareMode = auth.shareMode;
+			sock.shareExpiresAt = auth.shareExpiresAt;
+			registerShareSocket(auth.shareId, sock);
 		}
 		peerSockets.set(id, sock);
 		const { wss } = getServerRepoBundle();
@@ -147,6 +158,7 @@ export default defineWebSocketHandler({
 		const sock = peerSockets.get(id);
 		if (!sock) return;
 		peerSockets.delete(id);
+		if (sock.shareId) unregisterShareSocket(sock.shareId, sock);
 		const { wss } = getServerRepoBundle();
 		wss.clients.delete(sock);
 		sock.emit("close");

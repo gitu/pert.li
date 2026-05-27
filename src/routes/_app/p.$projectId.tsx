@@ -340,8 +340,11 @@ export function PertProjectPanel({
 			!doc.interfacesByContainerId ||
 			!doc.viewsById);
 	useEffect(() => {
-		if (!needsMigration) return;
-		changeDoc((d) => {
+		// Skip in read-only modes (mobile-readonly, view-mode share). The
+		// next authenticated editor to open the doc runs the migration; a
+		// public viewer must not write to the project they're only viewing.
+		if (!needsMigration || !effectiveChangeDoc) return;
+		effectiveChangeDoc((d) => {
 			const legacy = d as unknown as Record<string, unknown>;
 			legacy.tasksById ??= {};
 			legacy.dependenciesById ??= {};
@@ -349,7 +352,7 @@ export function PertProjectPanel({
 			legacy.viewsById ??= {};
 			if ("count" in legacy) delete legacy.count;
 		});
-	}, [needsMigration, changeDoc]);
+	}, [needsMigration, effectiveChangeDoc]);
 
 	// Pre-rework containers were created without default Entry/Exit interfaces.
 	// Backfill them once on first load so cross-boundary edges have a port to
@@ -370,15 +373,18 @@ export function PertProjectPanel({
 		.map((t) => t.id)
 		.join(",");
 	useEffect(() => {
-		if (needsMigration || containerBackfillKey === "") return;
-		changeDoc((d) => {
+		// Same read-only guard as the schema migration above — a view-only
+		// recipient must not write container backfills to the project.
+		if (needsMigration || containerBackfillKey === "" || !effectiveChangeDoc)
+			return;
+		effectiveChangeDoc((d) => {
 			for (const id of containerBackfillKey.split(",")) {
 				if (d.tasksById[id]?.kind === "container") {
 					ensureContainerInterfaces(d, id);
 				}
 			}
 		});
-	}, [needsMigration, containerBackfillKey, changeDoc]);
+	}, [needsMigration, containerBackfillKey, effectiveChangeDoc]);
 
 	// Lift the active doc + handle into the cross-pane store so the right
 	// inspector, history drawer, and presence overlays (which live in the
