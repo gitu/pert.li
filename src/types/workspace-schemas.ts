@@ -34,13 +34,18 @@ export const getProjectInput = z.object({
 
 export type GetProjectInput = z.infer<typeof getProjectInput>;
 
+// Only owner/editor are grantable through the API. The "viewer" enum value
+// still exists in the DB for forward-compat with a future real read-only
+// sync story, but Automerge has no read-only peer mode today, so admitting a
+// viewer to the sync server would silently grant full edit (see
+// userCanWriteDoc). Until that lands, viewer is unreachable via this path.
 export const inviteMemberInput = z.object({
 	workspaceId: z.string().uuid(),
 	email: z.preprocess(
 		(v) => (typeof v === "string" ? v.trim().toLowerCase() : v),
 		z.string().email(),
 	),
-	role: z.enum(["owner", "editor", "viewer"]).default("editor"),
+	role: z.enum(["owner", "editor"]).default("editor"),
 });
 
 export type InviteMemberInput = z.infer<typeof inviteMemberInput>;
@@ -48,9 +53,10 @@ export type InviteMemberInput = z.infer<typeof inviteMemberInput>;
 // --- Workspace join links --------------------------------------------------
 // Owner-only inputs for the join-link CRUD. `expiresAt` arrives as an ISO
 // string (JSON-safe). `maxUses` is capped to keep abuse blast-radius bounded.
+// "viewer" is intentionally NOT grantable here — see JoinLinkRole.
 export const createJoinLinkInput = z.object({
 	workspaceId: z.string().uuid(),
-	role: z.enum(["editor", "viewer"]).default("editor"),
+	role: z.enum(["editor"]).default("editor"),
 	expiresAt: z.string().datetime().nullable().optional(),
 	maxUses: z.number().int().positive().max(10_000).nullable().optional(),
 });

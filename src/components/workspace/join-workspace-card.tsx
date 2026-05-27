@@ -87,7 +87,9 @@ function JoinBody({
 		);
 	}
 
-	const roleLabel = preview.role === "editor" ? "editor" : "viewer";
+	// JoinLinkRole is currently always "editor"; keeping a derived label so
+	// future roles plug in here without restructuring the surrounding copy.
+	const roleLabel: string = preview.role;
 
 	if (sessionPending) {
 		return (

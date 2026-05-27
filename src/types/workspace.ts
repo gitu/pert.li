@@ -25,8 +25,10 @@ export type WorkspaceRole = "owner" | "editor" | "viewer";
 
 // --- Workspace join links --------------------------------------------------
 // Roles a join link is allowed to grant. Owners are excluded — promotion to
-// owner stays a manual operation.
-export type JoinLinkRole = Exclude<WorkspaceRole, "owner">;
+// owner stays a manual operation. "viewer" is excluded too, until the sync
+// server can actually enforce read-only access (Automerge has no read-only
+// peer mode today; admitting a viewer to sync silently grants full edit).
+export type JoinLinkRole = "editor";
 
 export type WorkspaceInvitationSummary = {
 	id: string;

@@ -69,19 +69,19 @@ describe("inviteMemberInput", () => {
 		expect(parsed.role).toBe("editor");
 	});
 
-	it("accepts owner/editor/viewer and rejects others", () => {
-		for (const role of ["owner", "editor", "viewer"] as const) {
+	it("accepts owner/editor and rejects everything else", () => {
+		for (const role of ["owner", "editor"] as const) {
 			expect(() =>
 				inviteMemberInput.parse({ workspaceId, email: "a@b.io", role }),
 			).not.toThrow();
 		}
-		expect(() =>
-			inviteMemberInput.parse({
-				workspaceId,
-				email: "a@b.io",
-				role: "admin",
-			}),
-		).toThrow();
+		// "viewer" was removed because the sync server can't enforce read-only
+		// — see workspace-schemas.ts for the rationale.
+		for (const role of ["viewer", "admin"]) {
+			expect(() =>
+				inviteMemberInput.parse({ workspaceId, email: "a@b.io", role }),
+			).toThrow();
+		}
 	});
 
 	it("rejects malformed emails", () => {

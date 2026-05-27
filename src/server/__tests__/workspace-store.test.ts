@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { user as userTable } from "#/db/schema";
+import {
+	project as projectTable,
+	user as userTable,
+	userWorkspaceDoc as userWorkspaceDocTable,
+	workspaceMember as workspaceMemberTable,
+} from "#/db/schema";
 import { createTestDb, type TestDb } from "#/test/with-pglite";
 
 // Inject a per-test PGLite DB into the singleton db proxy at #/db. The
@@ -25,8 +30,10 @@ vi.mock("#/server/automerge-server.server", () => ({
 const {
 	ensurePersonalWorkspace,
 	getWorkspaceRole,
+	getWritableWorkspaceRole,
 	addMemberByEmail,
 	listProjectsForWorkspace,
+	userCanWriteDoc,
 	createWorkspaceInvitation,
 	listWorkspaceInvitations,
 	revokeWorkspaceInvitation,
@@ -149,6 +156,147 @@ describe("workspace store (against PGLite)", () => {
 		});
 	});
 
+	describe("getWritableWorkspaceRole", () => {
+		it("returns the role for an owner or editor", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const editorId = await seedUser("editor@example.com", "Editor");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			await addMemberByEmail({
+				workspaceId,
+				email: "editor@example.com",
+				role: "editor",
+			});
+			expect(await getWritableWorkspaceRole(ownerId, workspaceId)).toBe(
+				"owner",
+			);
+			expect(await getWritableWorkspaceRole(editorId, workspaceId)).toBe(
+				"editor",
+			);
+		});
+
+		it("returns null for a viewer (no write access)", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const viewerId = await seedUser("viewer@example.com", "Viewer");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			// Insert a viewer row directly — the inviteMemberInput schema no
+			// longer surfaces "viewer", but pre-existing DB rows are exactly
+			// the case this check needs to keep covering.
+			await testDb.insert(workspaceMemberTable).values({
+				id: `mem_${Math.random().toString(36).slice(2, 10)}`,
+				workspaceId,
+				userId: viewerId,
+				role: "viewer",
+			});
+			expect(await getWorkspaceRole(viewerId, workspaceId)).toBe("viewer");
+			expect(await getWritableWorkspaceRole(viewerId, workspaceId)).toBeNull();
+		});
+
+		it("returns null for a non-member", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const outsiderId = await seedUser("rando@example.com", "Outsider");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			expect(
+				await getWritableWorkspaceRole(outsiderId, workspaceId),
+			).toBeNull();
+		});
+	});
+
+	describe("userCanWriteDoc", () => {
+		// Seed a workspace + project, return the doc URL plus member ids for
+		// the cases below.
+		async function seedWorkspaceWithProject(memberRoles: {
+			ownerEmail: string;
+			editorEmail?: string;
+			viewerEmail?: string;
+		}) {
+			const ownerId = await seedUser(memberRoles.ownerEmail, "Owner");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			const docUrl = `automerge:${Math.random().toString(36).slice(2, 14)}`;
+			await testDb.insert(projectTable).values({
+				id: `prj_${Math.random().toString(36).slice(2, 10)}`,
+				workspaceId,
+				title: "Test",
+				automergeDocUrl: docUrl,
+				createdBy: ownerId,
+			});
+			let editorId: string | undefined;
+			if (memberRoles.editorEmail) {
+				editorId = await seedUser(memberRoles.editorEmail, "Editor");
+				await addMemberByEmail({
+					workspaceId,
+					email: memberRoles.editorEmail,
+					role: "editor",
+				});
+			}
+			let viewerId: string | undefined;
+			if (memberRoles.viewerEmail) {
+				viewerId = await seedUser(memberRoles.viewerEmail, "Viewer");
+				await testDb.insert(workspaceMemberTable).values({
+					id: `mem_${Math.random().toString(36).slice(2, 10)}`,
+					workspaceId,
+					userId: viewerId,
+					role: "viewer",
+				});
+			}
+			return { ownerId, editorId, viewerId, workspaceId, docUrl };
+		}
+
+		it("allows owner and editor on a workspace project", async () => {
+			const { ownerId, editorId, docUrl } = await seedWorkspaceWithProject({
+				ownerEmail: "o@e.com",
+				editorEmail: "e@e.com",
+			});
+			if (!editorId) throw new Error("test setup: editor not seeded");
+			expect(await userCanWriteDoc(ownerId, docUrl)).toBe(true);
+			expect(await userCanWriteDoc(editorId, docUrl)).toBe(true);
+		});
+
+		it("blocks a viewer on a workspace project", async () => {
+			const { viewerId, docUrl } = await seedWorkspaceWithProject({
+				ownerEmail: "o@e.com",
+				viewerEmail: "v@e.com",
+			});
+			if (!viewerId) throw new Error("test setup: viewer not seeded");
+			expect(await userCanWriteDoc(viewerId, docUrl)).toBe(false);
+		});
+
+		it("blocks a non-member", async () => {
+			const { docUrl } = await seedWorkspaceWithProject({
+				ownerEmail: "o@e.com",
+			});
+			const outsiderId = await seedUser("rando@example.com", "Outsider");
+			expect(await userCanWriteDoc(outsiderId, docUrl)).toBe(false);
+		});
+
+		it("blocks access to an unrelated doc URL", async () => {
+			const { ownerId } = await seedWorkspaceWithProject({
+				ownerEmail: "o@e.com",
+			});
+			expect(await userCanWriteDoc(ownerId, "automerge:other-doc")).toBe(false);
+		});
+
+		it("allows the personal workspace-doc owner without a role check", async () => {
+			const userId = await seedUser("solo@example.com", "Solo");
+			const docUrl = `automerge:${Math.random().toString(36).slice(2, 14)}`;
+			await testDb.insert(userWorkspaceDocTable).values({
+				userId,
+				automergeDocUrl: docUrl,
+			});
+			expect(await userCanWriteDoc(userId, docUrl)).toBe(true);
+		});
+
+		it("doesn't leak another user's personal workspace doc", async () => {
+			const aliceId = await seedUser("alice@example.com", "Alice");
+			const bobId = await seedUser("bob@example.com", "Bob");
+			const docUrl = `automerge:${Math.random().toString(36).slice(2, 14)}`;
+			await testDb.insert(userWorkspaceDocTable).values({
+				userId: aliceId,
+				automergeDocUrl: docUrl,
+			});
+			expect(await userCanWriteDoc(bobId, docUrl)).toBe(false);
+		});
+	});
+
 	describe("createWorkspaceForUser + listMembershipsForUser", () => {
 		it("creates a new workspace with the user as owner", async () => {
 			const userId = await seedUser();
@@ -221,7 +369,7 @@ describe("workspace store (against PGLite)", () => {
 			const first = await createWorkspaceInvitation({
 				workspaceId,
 				createdBy: ownerId,
-				role: "viewer",
+				role: "editor",
 			});
 			// Small delay so created_at definitely differs.
 			await new Promise((r) => setTimeout(r, 10));
@@ -286,7 +434,7 @@ describe("workspace store (against PGLite)", () => {
 			const invitation = await createWorkspaceInvitation({
 				workspaceId,
 				createdBy: ownerId,
-				role: "viewer",
+				role: "editor",
 			});
 			const result = await acceptInvitationByToken({
 				token: invitation.token,
@@ -297,9 +445,37 @@ describe("workspace store (against PGLite)", () => {
 				workspaceName: result.workspaceName,
 				alreadyMember: false,
 			});
-			expect(await getWorkspaceRole(joinerId, workspaceId)).toBe("viewer");
+			expect(await getWorkspaceRole(joinerId, workspaceId)).toBe("editor");
 			const [refreshed] = await listWorkspaceInvitations(workspaceId);
 			expect(refreshed.useCount).toBe(1);
+		});
+
+		it("refuses to redeem a viewer-role link (defense-in-depth)", async () => {
+			// JoinLinkRole no longer admits "viewer" at the input layer, but
+			// pre-existing DB rows (or any future code path that inserts one)
+			// must not materialise into a workspace_member: acceptInvitationByToken
+			// rejects them explicitly before bumping use_count.
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const joinerId = await seedUser("joiner@example.com", "Joiner");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			// Bypass createWorkspaceInvitation's typed surface to insert a
+			// viewer-role row directly — simulating an old DB record.
+			const { workspaceInvitation } = await import("#/db/schema");
+			await testDb.insert(workspaceInvitation).values({
+				id: `inv_${Math.random().toString(36).slice(2, 10)}`,
+				workspaceId,
+				token: "viewer-link-test-token",
+				role: "viewer",
+				createdBy: ownerId,
+			});
+			await expect(
+				acceptInvitationByToken({
+					token: "viewer-link-test-token",
+					userId: joinerId,
+				}),
+			).rejects.toThrow(/unsupported role/i);
+			// And the user wasn't added either.
+			expect(await getWorkspaceRole(joinerId, workspaceId)).toBeNull();
 		});
 
 		it("accept is idempotent for an existing member and doesn't bump useCount", async () => {

@@ -37,7 +37,11 @@ export type InviteMemberDialogProps = {
 	onOpenChange: (open: boolean) => void;
 };
 
-type Role = "editor" | "viewer";
+// Only "editor" is surfaced in the UI: "viewer" was removed when we found
+// the sync server couldn't actually enforce read-only access (Automerge has
+// no read-only peer mode); promotion to "owner" stays a deliberate manual
+// step rather than a dropdown option.
+type Role = "editor";
 
 export function InviteMemberDialog({
 	workspaceId,
@@ -158,7 +162,6 @@ function EmailInvitePane({
 					</SelectTrigger>
 					<SelectContent>
 						<SelectItem value="editor">Editor — can edit projects</SelectItem>
-						<SelectItem value="viewer">Viewer — read-only</SelectItem>
 					</SelectContent>
 				</Select>
 			</div>
@@ -256,8 +259,8 @@ function ShareLinkPane({
 	return (
 		<div className="space-y-4">
 			<p className="text-xs text-muted-foreground">
-				Anyone with the link can join until you revoke it. Owner promotion stays
-				manual — links can grant editor or viewer only.
+				Anyone with the link can join as an editor until you revoke it. Owner
+				promotion stays manual.
 			</p>
 			<div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
 				<div className="space-y-1.5">
@@ -272,7 +275,6 @@ function ShareLinkPane({
 						</SelectTrigger>
 						<SelectContent>
 							<SelectItem value="editor">Editor</SelectItem>
-							<SelectItem value="viewer">Viewer</SelectItem>
 						</SelectContent>
 					</Select>
 				</div>
