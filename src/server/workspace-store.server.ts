@@ -60,6 +60,22 @@ export async function getWorkspaceRole(
 	return rows.length === 0 ? null : (rows[0].role as WorkspaceRole);
 }
 
+export type WritableWorkspaceRole = "owner" | "editor";
+
+// Returns the user's role on the workspace only if it grants write access.
+// "viewer" and non-membership both collapse to null. Used by every server fn
+// that mutates workspace-scoped state, and by the Automerge sharePolicy —
+// Automerge has no read-only peer mode, so admitting a viewer to sync would
+// effectively grant them full edit. Until a real read-only sync story lands,
+// viewers are gated out of both write paths and the sync server.
+export async function getWritableWorkspaceRole(
+	userId: string,
+	workspaceId: string,
+): Promise<WritableWorkspaceRole | null> {
+	const role = await getWorkspaceRole(userId, workspaceId);
+	return role === "owner" || role === "editor" ? role : null;
+}
+
 export async function listProjectsForWorkspace(
 	workspaceId: string,
 ): Promise<ProjectSummary[]> {
@@ -192,6 +208,45 @@ export async function addMemberByEmail(opts: {
 		role: opts.role,
 	});
 	return { alreadyMember: false };
+}
+
+// Authorizes Automerge sync for a (user, doc) pair. Returns true iff the user
+// is the owner of a personal workspace doc with this URL, OR is an
+// owner/editor on a workspace whose project points at this URL. Viewers and
+// non-members both collapse to false — see getWritableWorkspaceRole for why.
+export async function userCanWriteDoc(
+	userId: string,
+	docUrl: string,
+): Promise<boolean> {
+	const owned = await db
+		.select({ url: userWorkspaceDoc.automergeDocUrl })
+		.from(userWorkspaceDoc)
+		.where(
+			and(
+				eq(userWorkspaceDoc.userId, userId),
+				eq(userWorkspaceDoc.automergeDocUrl, docUrl),
+			),
+		)
+		.limit(1);
+	if (owned.length > 0) return true;
+
+	const projectAccess = await db
+		.select({ role: workspaceMember.role })
+		.from(project)
+		.innerJoin(
+			workspaceMember,
+			eq(workspaceMember.workspaceId, project.workspaceId),
+		)
+		.where(
+			and(
+				eq(workspaceMember.userId, userId),
+				eq(project.automergeDocUrl, docUrl),
+			),
+		)
+		.limit(1);
+	if (projectAccess.length === 0) return false;
+	const role = projectAccess[0].role;
+	return role === "owner" || role === "editor";
 }
 
 export async function getOrCreatePersonalWorkspaceDocUrl(

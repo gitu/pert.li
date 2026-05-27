@@ -7,6 +7,7 @@ import {
 } from "@tanstack/ai";
 import dotenv from "dotenv";
 import { type ProviderEnv, selectTextAdapter } from "#/lib/ai/provider";
+import { requireSessionFromHeaders } from "#/server/auth-context.server";
 
 // Vite's environment runner sandboxes `process.env` inside the dev worker —
 // dotenv parses our .env files but the writes don't reach `globalThis.process.env`
@@ -386,6 +387,16 @@ const SYSTEM_PROMPT = [
 ].join("\n");
 
 export async function handleChatRequest(request: Request): Promise<Response> {
+	// Gate every call on an authenticated session: the LLM adapter below uses
+	// server-held provider keys, so any anonymous caller would be spending the
+	// operator's API budget. Throws UnauthorizedError (401) when there's no
+	// session — handled below so the route can return a 401 response instead
+	// of a 500.
+	try {
+		await requireSessionFromHeaders(request.headers);
+	} catch {
+		return new Response("Unauthorized", { status: 401 });
+	}
 	const params = await chatParamsFromRequest(request);
 	const { adapter, config } = selectTextAdapter(SERVER_ENV);
 	// All chat tools are client-executed (they mutate the browser-side

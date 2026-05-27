@@ -24,13 +24,18 @@ export const getProjectInput = z.object({
 
 export type GetProjectInput = z.infer<typeof getProjectInput>;
 
+// Only owner/editor are grantable through the API. The "viewer" enum value
+// still exists in the DB for forward-compat with a future real read-only
+// sync story, but Automerge has no read-only peer mode today, so admitting a
+// viewer to the sync server would silently grant full edit (see
+// userCanWriteDoc). Until that lands, viewer is unreachable via this path.
 export const inviteMemberInput = z.object({
 	workspaceId: z.string().uuid(),
 	email: z.preprocess(
 		(v) => (typeof v === "string" ? v.trim().toLowerCase() : v),
 		z.string().email(),
 	),
-	role: z.enum(["owner", "editor", "viewer"]).default("editor"),
+	role: z.enum(["owner", "editor"]).default("editor"),
 });
 
 export type InviteMemberInput = z.infer<typeof inviteMemberInput>;

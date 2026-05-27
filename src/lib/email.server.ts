@@ -123,5 +123,19 @@ export function createEmailTransport(
 	if (smtp) return makeSmtpTransport(smtp);
 	const resendKey = env.RESEND_API_KEY;
 	if (resendKey) return makeResendTransport(resendKey, defaultFrom);
+	// Fail closed in production: the console fallback writes the message
+	// body (which for magic-link emails includes a fully-authenticating URL)
+	// to stdout. In any non-dev environment that is a credential leak, so
+	// refuse to boot. Set ALLOW_CONSOLE_EMAIL_IN_PROD=1 only if you really
+	// do want stdout to be the transport — e.g. an air-gapped tester logging
+	// links from a private container.
+	if (
+		env.NODE_ENV === "production" &&
+		env.ALLOW_CONSOLE_EMAIL_IN_PROD !== "1"
+	) {
+		throw new Error(
+			"[email] No email transport configured in production. Set SMTP_HOST or RESEND_API_KEY, or set ALLOW_CONSOLE_EMAIL_IN_PROD=1 to opt in to stdout delivery.",
+		);
+	}
 	return makeConsoleTransport();
 }

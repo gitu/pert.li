@@ -26,7 +26,11 @@ export type InviteMemberDialogProps = {
 	onOpenChange: (open: boolean) => void;
 };
 
-type Role = "editor" | "viewer";
+// Only "editor" is surfaced in the UI: "viewer" was removed when we found
+// the sync server couldn't actually enforce read-only access (Automerge has
+// no read-only peer mode); promotion to "owner" stays a deliberate manual
+// step rather than a dropdown option.
+type Role = "editor";
 
 export function InviteMemberDialog({
 	workspaceId,
@@ -110,7 +114,6 @@ export function InviteMemberDialog({
 								<SelectItem value="editor">
 									Editor — can edit projects
 								</SelectItem>
-								<SelectItem value="viewer">Viewer — read-only</SelectItem>
 							</SelectContent>
 						</Select>
 					</div>

@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { user as userTable } from "#/db/schema";
+import {
+	project as projectTable,
+	user as userTable,
+	userWorkspaceDoc as userWorkspaceDocTable,
+	workspaceMember as workspaceMemberTable,
+} from "#/db/schema";
 import { createTestDb, type TestDb } from "#/test/with-pglite";
 
 // Inject a per-test PGLite DB into the singleton db proxy at #/db. The
@@ -25,8 +30,10 @@ vi.mock("#/server/automerge-server.server", () => ({
 const {
 	ensurePersonalWorkspace,
 	getWorkspaceRole,
+	getWritableWorkspaceRole,
 	addMemberByEmail,
 	listProjectsForWorkspace,
+	userCanWriteDoc,
 } = await import("#/server/workspace-store.server");
 
 async function seedUser(
@@ -139,6 +146,147 @@ describe("workspace store (against PGLite)", () => {
 					role: "editor",
 				}),
 			).rejects.toThrow(/No registered user/);
+		});
+	});
+
+	describe("getWritableWorkspaceRole", () => {
+		it("returns the role for an owner or editor", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const editorId = await seedUser("editor@example.com", "Editor");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			await addMemberByEmail({
+				workspaceId,
+				email: "editor@example.com",
+				role: "editor",
+			});
+			expect(await getWritableWorkspaceRole(ownerId, workspaceId)).toBe(
+				"owner",
+			);
+			expect(await getWritableWorkspaceRole(editorId, workspaceId)).toBe(
+				"editor",
+			);
+		});
+
+		it("returns null for a viewer (no write access)", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const viewerId = await seedUser("viewer@example.com", "Viewer");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			// Insert a viewer row directly — the inviteMemberInput schema no
+			// longer surfaces "viewer", but pre-existing DB rows are exactly
+			// the case this check needs to keep covering.
+			await testDb.insert(workspaceMemberTable).values({
+				id: `mem_${Math.random().toString(36).slice(2, 10)}`,
+				workspaceId,
+				userId: viewerId,
+				role: "viewer",
+			});
+			expect(await getWorkspaceRole(viewerId, workspaceId)).toBe("viewer");
+			expect(await getWritableWorkspaceRole(viewerId, workspaceId)).toBeNull();
+		});
+
+		it("returns null for a non-member", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const outsiderId = await seedUser("rando@example.com", "Outsider");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			expect(
+				await getWritableWorkspaceRole(outsiderId, workspaceId),
+			).toBeNull();
+		});
+	});
+
+	describe("userCanWriteDoc", () => {
+		// Seed a workspace + project, return the doc URL plus member ids for
+		// the cases below.
+		async function seedWorkspaceWithProject(memberRoles: {
+			ownerEmail: string;
+			editorEmail?: string;
+			viewerEmail?: string;
+		}) {
+			const ownerId = await seedUser(memberRoles.ownerEmail, "Owner");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			const docUrl = `automerge:${Math.random().toString(36).slice(2, 14)}`;
+			await testDb.insert(projectTable).values({
+				id: `prj_${Math.random().toString(36).slice(2, 10)}`,
+				workspaceId,
+				title: "Test",
+				automergeDocUrl: docUrl,
+				createdBy: ownerId,
+			});
+			let editorId: string | undefined;
+			if (memberRoles.editorEmail) {
+				editorId = await seedUser(memberRoles.editorEmail, "Editor");
+				await addMemberByEmail({
+					workspaceId,
+					email: memberRoles.editorEmail,
+					role: "editor",
+				});
+			}
+			let viewerId: string | undefined;
+			if (memberRoles.viewerEmail) {
+				viewerId = await seedUser(memberRoles.viewerEmail, "Viewer");
+				await testDb.insert(workspaceMemberTable).values({
+					id: `mem_${Math.random().toString(36).slice(2, 10)}`,
+					workspaceId,
+					userId: viewerId,
+					role: "viewer",
+				});
+			}
+			return { ownerId, editorId, viewerId, workspaceId, docUrl };
+		}
+
+		it("allows owner and editor on a workspace project", async () => {
+			const { ownerId, editorId, docUrl } = await seedWorkspaceWithProject({
+				ownerEmail: "o@e.com",
+				editorEmail: "e@e.com",
+			});
+			if (!editorId) throw new Error("test setup: editor not seeded");
+			expect(await userCanWriteDoc(ownerId, docUrl)).toBe(true);
+			expect(await userCanWriteDoc(editorId, docUrl)).toBe(true);
+		});
+
+		it("blocks a viewer on a workspace project", async () => {
+			const { viewerId, docUrl } = await seedWorkspaceWithProject({
+				ownerEmail: "o@e.com",
+				viewerEmail: "v@e.com",
+			});
+			if (!viewerId) throw new Error("test setup: viewer not seeded");
+			expect(await userCanWriteDoc(viewerId, docUrl)).toBe(false);
+		});
+
+		it("blocks a non-member", async () => {
+			const { docUrl } = await seedWorkspaceWithProject({
+				ownerEmail: "o@e.com",
+			});
+			const outsiderId = await seedUser("rando@example.com", "Outsider");
+			expect(await userCanWriteDoc(outsiderId, docUrl)).toBe(false);
+		});
+
+		it("blocks access to an unrelated doc URL", async () => {
+			const { ownerId } = await seedWorkspaceWithProject({
+				ownerEmail: "o@e.com",
+			});
+			expect(await userCanWriteDoc(ownerId, "automerge:other-doc")).toBe(false);
+		});
+
+		it("allows the personal workspace-doc owner without a role check", async () => {
+			const userId = await seedUser("solo@example.com", "Solo");
+			const docUrl = `automerge:${Math.random().toString(36).slice(2, 14)}`;
+			await testDb.insert(userWorkspaceDocTable).values({
+				userId,
+				automergeDocUrl: docUrl,
+			});
+			expect(await userCanWriteDoc(userId, docUrl)).toBe(true);
+		});
+
+		it("doesn't leak another user's personal workspace doc", async () => {
+			const aliceId = await seedUser("alice@example.com", "Alice");
+			const bobId = await seedUser("bob@example.com", "Bob");
+			const docUrl = `automerge:${Math.random().toString(36).slice(2, 14)}`;
+			await testDb.insert(userWorkspaceDocTable).values({
+				userId: aliceId,
+				automergeDocUrl: docUrl,
+			});
+			expect(await userCanWriteDoc(bobId, docUrl)).toBe(false);
 		});
 	});
 });

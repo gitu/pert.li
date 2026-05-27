@@ -17,16 +17,21 @@ export class ForbiddenError extends Error {
 	}
 }
 
-export async function requireSession(): Promise<{
+export type AuthSession = {
 	userId: string;
 	email: string;
 	name: string | null;
 	isAdmin: boolean;
-}> {
-	const req = getRequest();
-	const session = await auth.api
-		.getSession({ headers: req.headers })
-		.catch(() => null);
+};
+
+// Validates a Better Auth session from raw request headers. Used by
+// `requireSession` (which reads them from the ambient TanStack Start
+// request) and by route handlers that already have the request in hand
+// (e.g. `server.handlers` POST handlers like `/api/chat`).
+export async function requireSessionFromHeaders(
+	headers: Headers,
+): Promise<AuthSession> {
+	const session = await auth.api.getSession({ headers }).catch(() => null);
 	if (!session?.user?.id) throw new UnauthorizedError();
 	// `isAdmin` is declared as an additional user field on the Better Auth
 	// instance, but it isn't part of the base typed user shape — read it
@@ -38,6 +43,11 @@ export async function requireSession(): Promise<{
 		name: session.user.name ?? null,
 		isAdmin: sessionUser.isAdmin === true,
 	};
+}
+
+export async function requireSession(): Promise<AuthSession> {
+	const req = getRequest();
+	return requireSessionFromHeaders(req.headers);
 }
 
 export async function requireAdmin(): Promise<{

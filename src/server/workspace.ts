@@ -51,15 +51,15 @@ export const createProject = createServerFn({ method: "POST" })
 		const {
 			requireSession,
 			ensurePersonalWorkspace,
-			getWorkspaceRole,
+			getWritableWorkspaceRole,
 			createProjectRow,
 		} = await helpers();
 		const session = await requireSession();
 		const workspaceId =
 			data.workspaceId ??
 			(await ensurePersonalWorkspace(session.userId, session.name));
-		const role = await getWorkspaceRole(session.userId, workspaceId);
-		if (!role) throw new Error("Not a member of this workspace");
+		const role = await getWritableWorkspaceRole(session.userId, workspaceId);
+		if (!role) throw new Error("Write access to this workspace is required");
 		return createProjectRow({
 			workspaceId,
 			title: data.title,
@@ -77,15 +77,15 @@ export const importProject = createServerFn({ method: "POST" })
 		const {
 			requireSession,
 			ensurePersonalWorkspace,
-			getWorkspaceRole,
+			getWritableWorkspaceRole,
 			createProjectRow,
 		} = await helpers();
 		const session = await requireSession();
 		const workspaceId =
 			data.workspaceId ??
 			(await ensurePersonalWorkspace(session.userId, session.name));
-		const role = await getWorkspaceRole(session.userId, workspaceId);
-		if (!role) throw new Error("Not a member of this workspace");
+		const role = await getWritableWorkspaceRole(session.userId, workspaceId);
+		if (!role) throw new Error("Write access to this workspace is required");
 		const title = (data.title ?? data.exchange.title).trim();
 		if (!title) throw new Error("Project title is required");
 		const initialDoc = fromExchange(data.exchange, { title });
