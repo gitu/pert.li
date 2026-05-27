@@ -9,6 +9,7 @@ import { defineConfig } from "vite";
 import wasm from "vite-plugin-wasm";
 import neon from "./neon-vite-plugin.ts";
 import pglitePreWarm from "./pglite-vite-plugin.ts";
+import { getAppVersion } from "./scripts/compute-version.mjs";
 
 // Vite only injects VITE_-prefixed env into the client. Server-side process.env
 // is whatever Node inherits, which doesn't include `.env.local` by default.
@@ -31,6 +32,13 @@ process.env.PROJECT_ROOT = process.cwd();
 // USE_NEON_PROVISION=1 (or just drop a DATABASE_URL into .env.local — the
 // neon plugin will detect it and skip).
 const useNeonProvisioning = process.env.USE_NEON_PROVISION === "1";
+
+// Surface the build version on `import.meta.env.VITE_APP_VERSION`. Vite auto-
+// exposes any `VITE_*`-prefixed value from process.env, so setting it here
+// before `defineConfig` runs is enough — no `define:` entry needed. CI sets
+// `APP_VERSION` from `git describe`; local dev computes it from the working
+// tree. See scripts/compute-version.mjs for the resolution order.
+process.env.VITE_APP_VERSION = getAppVersion();
 
 const config = defineConfig({
 	build: { target: ["chrome111", "edge111", "firefox114", "safari16.4"] },

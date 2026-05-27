@@ -74,4 +74,11 @@ test.describe("/signin", () => {
 		await page.getByRole("link", { name: "Privacy", exact: true }).click();
 		await expect(page).toHaveURL(/\/privacy$/);
 	});
+
+	test("surfaces the build version below the sign-in card", async ({ page }) => {
+		await page.goto("/signin");
+		const version = page.getByTestId("app-version");
+		await expect(version).toBeVisible();
+		await expect(version).toHaveText(/\S+/);
+	});
 });

@@ -20,4 +20,13 @@ test.describe("/privacy", () => {
 		await page.getByRole("link", { name: /back to home/i }).click();
 		await expect(page).toHaveURL(/\/$/);
 	});
+
+	test("surfaces the build version in the page footer", async ({ page }) => {
+		await page.goto("/privacy");
+		// The exact value depends on `git describe` at build time, so we don't
+		// pin it — we just confirm a non-empty version string lands in the DOM.
+		const version = page.getByTestId("app-version");
+		await expect(version).toBeVisible();
+		await expect(version).toHaveText(/\S+/);
+	});
 });
