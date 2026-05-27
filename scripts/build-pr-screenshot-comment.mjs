@@ -11,12 +11,18 @@
 //   argv[4]            — output markdown file (default: stdout)
 //
 // For each story in the input JSON, we render a plain markdown link to
-// the published raw image on the screenshots branch. We deliberately do
-// NOT use `<img>` tags: this repo is private, and GitHub's anonymous
-// Camo image proxy that fetches `<img src>` URLs in PR comments would
-// 404 against raw.githubusercontent.com. Plain `<a>` links sidestep
-// Camo entirely — when an authenticated reviewer clicks one, the image
-// opens in a new tab where their GitHub session handles auth.
+// the published image on the screenshots branch — pointing at
+// github.com/<repo>/blob/<branch>/<path>, NOT raw.githubusercontent.com.
+// Two reasons:
+//   1. The repo is private. raw.githubusercontent.com only authenticates
+//      via an Authorization header (token); browser sessions don't carry
+//      one against that subdomain, so the URL 404s when a reviewer
+//      clicks it. github.com/<repo>/blob/... works under the reviewer's
+//      existing session and renders the PNG inline in the file viewer.
+//   2. We also avoid `<img>` tags entirely: GitHub's Camo image proxy
+//      that fetches `<img src>` URLs in PR comments is anonymous and
+//      would 404 against either subdomain for a private repo. Plain
+//      `<a>` links sidestep Camo.
 // Stories whose PNG is missing on disk are listed as "(render failed)".
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -27,7 +33,7 @@ import path from "node:path";
 // unit test can exercise grouping / fallback behavior without touching
 // the filesystem.
 export function renderComment({ stories, repo, prNumber, branch = "screenshots", headSha = "", hasScreenshot }) {
-	const rawBase = `https://raw.githubusercontent.com/${repo}/${branch}/pr-${prNumber}`;
+	const urlBase = `https://github.com/${repo}/blob/${branch}/pr-${prNumber}`;
 	const lines = ["## 📸 PR screenshots", ""];
 
 	if (!stories || stories.length === 0) {
@@ -48,7 +54,7 @@ export function renderComment({ stories, repo, prNumber, branch = "screenshots",
 			lines.push("");
 			for (const story of group) {
 				if (hasScreenshot(story)) {
-					const url = `${rawBase}/${story.id}.png`;
+					const url = `${urlBase}/${story.id}.png`;
 					lines.push(`- [${story.name}](${url})`);
 				} else {
 					lines.push(`- **${story.name}** — _render failed_`);
