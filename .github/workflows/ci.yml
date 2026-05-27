@@ -100,10 +100,11 @@ jobs:
 
   db-back-compat:
     # PR-only: confirm the Drizzle schema in this branch doesn't drop any
-    # tables / columns that exist on the merge target. Because Cloud Build
-    # runs `db:push` before swapping the image, an older revision can still
-    # be live when the new schema lands — dropped columns would surface as
-    # "column does not exist" errors against the in-flight requests.
+    # tables / columns that exist on the merge target. The new container
+    # migrates on boot before it starts serving, so during a rollout the
+    # old revision keeps taking traffic against the freshly-migrated DB —
+    # dropped columns would surface as "column does not exist" errors
+    # against the in-flight requests.
     name: db schema backward compatibility
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
