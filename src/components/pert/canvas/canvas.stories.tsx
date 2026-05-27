@@ -1,9 +1,10 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useEffect, useState } from "react";
-import { expect, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import { TooltipProvider } from "#/components/ui/tooltip";
 import { clearProjectCollapse, setCollapsed } from "#/lib/pert/collapse";
 import { ensureContainerInterfaces } from "#/lib/pert/interfaces";
+import { selectionStore } from "#/lib/pert/store";
 import {
 	createEmptyPertDoc,
 	type Estimate,
@@ -375,6 +376,49 @@ export const ContainerCollapsedLegacy: Story = {
 		await expect(
 			canvas.getByTestId("container-collapsed-box"),
 		).toBeInTheDocument();
+	},
+};
+
+// Arrow-key navigation must (a) jump the selection through the dep graph and
+// (b) NOT shift the underlying React Flow node — React Flow's a11y handler
+// nudges focused nodes a few pixels on every arrow press unless our window
+// listener intercepts in the capture phase with stopPropagation.
+export const ArrowKeyNavigation: Story = {
+	args: {
+		seed: diamondDoc(),
+		projectId: "story-canvas-keynav",
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const nodeA = await canvas.findByTestId("task-node-A");
+
+		// Walk up to the React Flow node wrapper so we can read the
+		// transform that React Flow writes for positioning. Moving the
+		// node changes this transform; navigating doesn't.
+		const wrapperA = nodeA.closest(".react-flow__node") as HTMLElement;
+		await expect(wrapperA).not.toBeNull();
+		const before = wrapperA.style.transform;
+
+		await userEvent.click(nodeA);
+		await waitFor(() => expect(selectionStore.state.taskId).toBe("A"));
+
+		await userEvent.keyboard("{ArrowRight}");
+		// Diamond: A → {B, C}. closestByY tie-breaks on iteration order
+		// (ab before ac) so B wins.
+		await waitFor(() => expect(selectionStore.state.taskId).toBe("B"));
+		// A's React Flow node must not have been nudged by the arrow key.
+		await expect(wrapperA.style.transform).toBe(before);
+
+		// Bouncing off the right edge: D has no successor. The selection
+		// stays put AND the node still doesn't move.
+		await userEvent.keyboard("{ArrowRight}");
+		await waitFor(() => expect(selectionStore.state.taskId).toBe("D"));
+		const nodeD = canvas.getByTestId("task-node-D");
+		const wrapperD = nodeD.closest(".react-flow__node") as HTMLElement;
+		const dBefore = wrapperD.style.transform;
+		await userEvent.keyboard("{ArrowRight}");
+		await expect(selectionStore.state.taskId).toBe("D");
+		await expect(wrapperD.style.transform).toBe(dBefore);
 	},
 };
 
