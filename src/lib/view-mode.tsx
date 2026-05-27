@@ -52,7 +52,17 @@ function persistEditing(value: boolean) {
 	}
 }
 
-export function ViewModeProvider({ children }: { children: ReactNode }) {
+export function ViewModeProvider({
+	children,
+	forceReadOnly = false,
+}: {
+	children: ReactNode;
+	// Public share-link routes pass `forceReadOnly` for view-mode shares —
+	// the entire surface (desktop or mobile) reports as `mobile-readonly`,
+	// which is the existing flag every edit affordance already gates on.
+	// Keeping the value space tight avoids touching dozens of callsites.
+	forceReadOnly?: boolean;
+}) {
 	const isMobile = useIsMobile();
 	// SSR-safe: start `false`, then hydrate from sessionStorage in an effect.
 	const [editing, setEditingState] = useState(false);
@@ -67,15 +77,17 @@ export function ViewModeProvider({ children }: { children: ReactNode }) {
 
 	const value = useMemo<ViewModeContextValue>(
 		() => ({
-			mode: isMobile
-				? editing
-					? "mobile-editing"
-					: "mobile-readonly"
-				: "desktop",
+			mode: forceReadOnly
+				? "mobile-readonly"
+				: isMobile
+					? editing
+						? "mobile-editing"
+						: "mobile-readonly"
+					: "desktop",
 			isMobile,
 			setEditing,
 		}),
-		[isMobile, editing, setEditing],
+		[isMobile, editing, setEditing, forceReadOnly],
 	);
 	return (
 		<ViewModeContext.Provider value={value}>

@@ -45,7 +45,8 @@ export const inviteMemberInput = z.object({
 
 export type InviteMemberInput = z.infer<typeof inviteMemberInput>;
 
-// Owner-only inputs for the share-link CRUD. `expiresAt` arrives as an ISO
+// --- Workspace join links --------------------------------------------------
+// Owner-only inputs for the join-link CRUD. `expiresAt` arrives as an ISO
 // string (JSON-safe). `maxUses` is capped to keep abuse blast-radius bounded.
 export const createJoinLinkInput = z.object({
 	workspaceId: z.string().uuid(),
@@ -73,3 +74,42 @@ export const joinTokenInput = z.object({
 	token: z.string().min(16).max(128),
 });
 export type JoinTokenInput = z.infer<typeof joinTokenInput>;
+
+// --- Per-project share links ----------------------------------------------
+
+export const createShareInput = z.object({
+	projectId: z.string().uuid(),
+	mode: z.enum(["view", "edit"]),
+	// ISO-8601 timestamp; `null` means "no expiry".
+	expiresAt: z.string().datetime().nullable().optional(),
+});
+
+export type CreateShareInput = z.infer<typeof createShareInput>;
+
+export const listSharesInput = z.object({
+	projectId: z.string().uuid(),
+});
+
+export type ListSharesInput = z.infer<typeof listSharesInput>;
+
+export const shareIdInput = z.object({
+	shareId: z.string().uuid(),
+});
+
+export type ShareIdInput = z.infer<typeof shareIdInput>;
+
+export const extendShareInput = z.object({
+	shareId: z.string().uuid(),
+	// `null` clears the expiry (link becomes permanent).
+	expiresAt: z.string().datetime().nullable(),
+});
+
+export type ExtendShareInput = z.infer<typeof extendShareInput>;
+
+export const resolveShareInput = z.object({
+	// Tokens are 32-byte base64url strings — accept any 16-128 char string and
+	// let the server lookup decide validity.
+	token: z.string().min(16).max(128),
+});
+
+export type ResolveShareInput = z.infer<typeof resolveShareInput>;

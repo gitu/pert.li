@@ -23,6 +23,7 @@ export type ProjectSummary = {
 
 export type WorkspaceRole = "owner" | "editor" | "viewer";
 
+// --- Workspace join links --------------------------------------------------
 // Roles a join link is allowed to grant. Owners are excluded — promotion to
 // owner stays a manual operation.
 export type JoinLinkRole = Exclude<WorkspaceRole, "owner">;
@@ -64,4 +65,27 @@ export type AcceptInvitationResult = {
 	workspaceId: string;
 	workspaceName: string;
 	alreadyMember: boolean;
+};
+
+// --- Per-project share links ----------------------------------------------
+
+export type ProjectShareMode = "view" | "edit";
+
+export type ProjectShareSummary = {
+	id: string;
+	projectId: string;
+	token: string;
+	mode: ProjectShareMode;
+	expiresAt: string | null;
+	createdAt: string;
+	createdBy: string;
+};
+
+export type ResolvedShare = {
+	shareId: string;
+	projectId: string;
+	title: string;
+	automergeDocUrl: AutomergeUrl;
+	mode: ProjectShareMode;
+	expiresAt: string | null;
 };
