@@ -75,7 +75,9 @@ test.describe("/signin", () => {
 		await expect(page).toHaveURL(/\/privacy$/);
 	});
 
-	test("surfaces the build version below the sign-in card", async ({ page }) => {
+	test("surfaces the build version below the sign-in card", async ({
+		page,
+	}) => {
 		await page.goto("/signin");
 		const version = page.getByTestId("app-version");
 		await expect(version).toBeVisible();
