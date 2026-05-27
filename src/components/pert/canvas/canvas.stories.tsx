@@ -422,10 +422,26 @@ export const ArrowKeyNavigation: Story = {
 	},
 };
 
-// Plain-letter add: pressing `n` on the canvas (no node selected, no input
-// focused) adds a fresh task at the viewport centre and drops the user
-// straight into inline-edit. Validates that the capture-phase keydown
-// handler runs when nothing on the page has focus.
+// Send a raw keydown straight at the window so we exercise the canvas's
+// capture-phase listener without fighting userEvent's special-cased Tab /
+// focus-traversal behaviour. Used by the keyboard-add tests below; clicks
+// are still real userEvent clicks so selection-store updates fire normally.
+function dispatchKey(
+	init: { key: string; shiftKey?: boolean; metaKey?: boolean },
+): void {
+	const event = new KeyboardEvent("keydown", {
+		key: init.key,
+		shiftKey: init.shiftKey ?? false,
+		metaKey: init.metaKey ?? false,
+		bubbles: true,
+		cancelable: true,
+	});
+	window.dispatchEvent(event);
+}
+
+// Plain-letter add: a keydown for `n` triggers the canvas-level handler and
+// creates a fresh task at the viewport centre — validates the listener fires
+// even when no node is selected and the doc is empty.
 export const PlainLetterAdd: Story = {
 	args: {
 		seed: createEmptyPertDoc("Keyboard add"),
@@ -433,19 +449,14 @@ export const PlainLetterAdd: Story = {
 	},
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		// Empty state visible up front.
 		await expect(canvas.getByText("No tasks yet.")).toBeInTheDocument();
-		// Click the empty canvas pane to make sure focus isn't trapped in
-		// the toolbar buttons (which would swallow `n` as a button activator).
-		canvasElement.focus();
-		await userEvent.keyboard("n");
+		dispatchKey({ key: "n" });
 		await waitFor(() => {
 			const nodes = canvas.queryAllByText("New task");
 			expect(nodes.length).toBeGreaterThan(0);
 		});
-		// `m` adds a milestone — distinct kind, different default title.
-		await userEvent.keyboard("{Escape}");
-		await userEvent.keyboard("m");
+		// `m` adds a milestone alongside the new task.
+		dispatchKey({ key: "m" });
 		await waitFor(() => {
 			const nodes = canvas.queryAllByText("New milestone");
 			expect(nodes.length).toBeGreaterThan(0);
@@ -453,8 +464,11 @@ export const PlainLetterAdd: Story = {
 	},
 };
 
-// Tab-spawn from selection: select a node, press Tab, expect a new linked
-// downstream task. Shift+Tab adds a sibling sharing the seed's predecessors.
+// Tab-spawn from selection: select a node, dispatch a Tab keydown, expect a
+// new linked downstream task. Shift+Tab dispatches a Shift+Tab keydown and
+// adds a sibling sharing the seed's predecessors. We bypass userEvent
+// because it intercepts Tab as a focus-traversal command instead of firing
+// a keydown.
 export const TabSpawnAndSibling: Story = {
 	args: {
 		seed: diamondDoc(),
@@ -466,32 +480,33 @@ export const TabSpawnAndSibling: Story = {
 		await userEvent.click(nodeA);
 		await waitFor(() => expect(selectionStore.state.taskId).toBe("A"));
 
-		// Tab — should add a downstream linked task to A.
-		await userEvent.keyboard("{Tab}");
+		const taskNodeCountBefore = canvasElement.querySelectorAll(
+			"[data-testid^='task-node-']",
+		).length;
+
+		dispatchKey({ key: "Tab" });
 		await waitFor(() => {
-			const fresh = canvas.queryAllByText("New task");
-			expect(fresh.length).toBeGreaterThan(0);
+			const count = canvasElement.querySelectorAll(
+				"[data-testid^='task-node-']",
+			).length;
+			expect(count).toBe(taskNodeCountBefore + 1);
 		});
-		// Inline-edit form is open on the new node.
+
+		// Inline-edit form is open on the new node — let it commit so we can
+		// re-target A for the sibling step.
 		await waitFor(() =>
 			expect(canvas.getByTestId("task-inline-title")).toBeInTheDocument(),
 		);
-		// Commit the inline edit with Enter so subsequent keys reach the
-		// canvas handler again.
 		await userEvent.keyboard("{Enter}");
 
-		// Re-select A and press Shift+Tab → a sibling task at A's depth.
 		await userEvent.click(canvas.getByTestId("task-node-A"));
 		await waitFor(() => expect(selectionStore.state.taskId).toBe("A"));
-		await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+		dispatchKey({ key: "Tab", shiftKey: true });
 		await waitFor(() => {
-			// Two "New task" labels are now present (downstream + sibling) but
-			// the sibling label may already have committed; assert at least
-			// one node beyond A/B/C/D exists by counting task-node-*.
-			const allTaskNodes = canvas
-				.getAllByTestId(/task-node-/)
-				.filter((el) => !el.dataset.testid?.includes("delete"));
-			expect(allTaskNodes.length).toBeGreaterThanOrEqual(6);
+			const count = canvasElement.querySelectorAll(
+				"[data-testid^='task-node-']",
+			).length;
+			expect(count).toBe(taskNodeCountBefore + 2);
 		});
 	},
 };

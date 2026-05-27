@@ -1169,7 +1169,10 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 				</div>
 			</header>
 			<div className="flex-1 overflow-auto">
-				{visibleRows.length === 0 ? (
+				{visibleRows.length === 0 && !changeDoc ? (
+					// Read-only with nothing to show: keep the friendly empty
+					// state. When the view is editable we always render the table
+					// chrome below so the quick-add row stays reachable.
 					rows.length === 0 ? (
 						<EmptyList />
 					) : (
@@ -1213,25 +1216,56 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 							))}
 						</TableHeader>
 						<TableBody>
-							{grouped && groupedTree
-								? renderGroupedRows({
-										tree: groupedTree,
-										depth: 0,
-										collapsedGroups,
-										toggleGroup,
-										visibleRowById,
+							{visibleRows.length === 0 ? (
+								// Editable empty state — the quick-add row below is the
+								// affordance, so this just describes what's happening.
+								// `rows.length === 0` separates "no tasks at all" from
+								// "filter matched nothing"; the latter offers a clear-filter
+								// button so the user isn't stuck.
+								<TableRow data-testid="task-list-empty-placeholder">
+									<TableCell
+										colSpan={visibleColumnCount}
+										className="text-center text-xs text-muted-foreground"
+									>
+										{rows.length === 0 ? (
+											<span>
+												No tasks yet — use the quick-add row below to start.
+											</span>
+										) : (
+											<span className="inline-flex items-center gap-2">
+												No tasks match the filter.
+												<Button
+													variant="link"
+													className="h-auto p-0 text-xs"
+													onClick={() => setGlobalFilter("")}
+												>
+													Clear filter
+												</Button>
+											</span>
+										)}
+									</TableCell>
+								</TableRow>
+							) : grouped && groupedTree ? (
+								renderGroupedRows({
+									tree: groupedTree,
+									depth: 0,
+									collapsedGroups,
+									toggleGroup,
+									visibleRowById,
+									selectedTaskId,
+									projectId,
+									columnCount: visibleColumnCount,
+								})
+							) : (
+								visibleRows.map((row) =>
+									renderFlatTaskRow({
+										row,
 										selectedTaskId,
 										projectId,
-										columnCount: visibleColumnCount,
-									})
-								: visibleRows.map((row) =>
-										renderFlatTaskRow({
-											row,
-											selectedTaskId,
-											projectId,
-											indent: 0,
-										}),
-									)}
+										indent: 0,
+									}),
+								)
+							)}
 							{changeDoc && (
 								<TableRow
 									data-testid="task-list-quick-add"
