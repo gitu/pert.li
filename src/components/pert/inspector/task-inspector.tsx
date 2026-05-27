@@ -142,7 +142,10 @@ export function TaskInspector({ pane }: { pane?: InspectorPane } = {}) {
 		);
 
 	const body = pane ? (
-		renderPane(pane)
+		// Host containers (RightTabs / readonly wrapper) are `overflow-hidden`,
+		// so own the scroll here — otherwise tall panes overflow the right rail
+		// with no way to reach the bottom.
+		<div className="h-full min-h-0 overflow-auto">{renderPane(pane)}</div>
 	) : (
 		<Tabs
 			defaultValue="details"

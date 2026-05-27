@@ -581,6 +581,11 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	// new linked task in that direction — the keyboard mirror of the radial
 	// quick-add buttons on the node card. Bound once via a ref so the handler
 	// doesn't re-attach on every doc edit.
+	//
+	// Bound in the CAPTURE phase with stopPropagation so React Flow's
+	// built-in "move focused node with arrow keys" a11y handler never sees
+	// the event — otherwise the selected task gets nudged a few pixels on
+	// every keypress instead of (or in addition to) navigating.
 	const keyNavRef = useRef({ doc, projectId, onAddLinkedTask });
 	keyNavRef.current = { doc, projectId, onAddLinkedTask };
 	useEffect(() => {
@@ -617,6 +622,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			if (wantsCreate) {
 				if (key !== "ArrowLeft" && key !== "ArrowRight") return;
 				e.preventDefault();
+				e.stopPropagation();
 				current.onAddLinkedTask(
 					state.taskId,
 					key === "ArrowRight" ? "successor" : "predecessor",
@@ -625,6 +631,13 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				return;
 			}
 
+			// Own the arrow key as soon as a task is selected — even when no
+			// neighbor exists in that direction, the user's intent is
+			// "navigate", not "move the node by 5px". Without this, React
+			// Flow's node-move handler picks up the unhandled arrow and the
+			// selected task drifts off-grid.
+			e.preventDefault();
+			e.stopPropagation();
 			const dir =
 				key === "ArrowLeft"
 					? "left"
@@ -634,13 +647,10 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 							? "up"
 							: "down";
 			const next = findNeighborTaskId(current.doc, state.taskId, dir);
-			if (next) {
-				e.preventDefault();
-				selectTask(current.projectId, next);
-			}
+			if (next) selectTask(current.projectId, next);
 		}
-		window.addEventListener("keydown", handler);
-		return () => window.removeEventListener("keydown", handler);
+		window.addEventListener("keydown", handler, true);
+		return () => window.removeEventListener("keydown", handler, true);
 	}, []);
 
 	const resolvedTheme = useResolvedTheme();
