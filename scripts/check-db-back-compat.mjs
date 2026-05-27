@@ -3,8 +3,10 @@
 //
 // What "backward compatible" means here: a Cloud Run revision built from
 // `main` must keep running after the database has been migrated to the PR's
-// schema (we deploy `db:push` BEFORE the new image — see cloudbuild.yaml).
-// So removing or renaming a table/column is a hard break; the old code
+// schema. The new container migrates on boot (scripts/migrate.mjs) and only
+// starts serving once migrations succeed — so during a rollout the old
+// revision keeps taking traffic against the freshly-migrated DB. Removing
+// or renaming a table/column is therefore a hard break; the old code
 // running against the new DB will hit "column does not exist" errors at
 // query time.
 //
