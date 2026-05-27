@@ -113,29 +113,26 @@ export function MatrixView({ projectId, doc }: MatrixViewProps) {
 									key={`col-${col.id}`}
 									scope="col"
 									className={cn(
-										"sticky top-0 h-28 min-w-[36px] border-b bg-card align-bottom",
+										"sticky top-0 h-40 min-w-[28px] max-w-[28px] border-b bg-card p-0 align-bottom",
 										col.id === selectedTaskId && "bg-accent/40",
 										groupBoundaries.has(ci) &&
 											"border-l-2 border-l-foreground/30",
 									)}
 								>
-									{/* Position the rotated label so its origin sits at the
-									    column's bottom-CENTER. With -45° rotation around the
-									    button's bottom-left corner, the text then extends
-									    up-and-to-the-right *anchored to the column it labels*,
-									    instead of sliding sideways into the next column. */}
-									<div className="relative h-full w-full">
-										<button
-											type="button"
-											onClick={() => selectTask(projectId, col.id)}
-											className="absolute bottom-1 left-1/2 origin-bottom-left -rotate-45 whitespace-nowrap pl-1 text-[10px] hover:underline"
-											style={{ maxWidth: 140 }}
-											title={col.title || col.id}
-										>
-											{criticalSet.has(col.id) ? "⚡ " : ""}
-											{col.title || col.id}
-										</button>
-									</div>
+									{/* Upright column label: `vertical-rl` stacks the text
+									    vertically; the extra 180° rotation flips it so it
+									    reads bottom-to-top (tilt head left). Keeps the full
+									    title visible inside its own column without bleeding
+									    into the neighbours. */}
+									<button
+										type="button"
+										onClick={() => selectTask(projectId, col.id)}
+										className="flex h-full w-full items-end justify-center overflow-hidden whitespace-nowrap pb-1.5 text-[10px] hover:underline [transform:rotate(180deg)] [writing-mode:vertical-rl]"
+										title={col.title || col.id}
+									>
+										{criticalSet.has(col.id) ? "⚡ " : ""}
+										{col.title || col.id}
+									</button>
 								</th>
 							))}
 						</tr>
