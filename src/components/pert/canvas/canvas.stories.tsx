@@ -422,6 +422,102 @@ export const ArrowKeyNavigation: Story = {
 	},
 };
 
+// Plain-letter add: pressing `n` on the canvas (no node selected, no input
+// focused) adds a fresh task at the viewport centre and drops the user
+// straight into inline-edit. Validates that the capture-phase keydown
+// handler runs when nothing on the page has focus.
+export const PlainLetterAdd: Story = {
+	args: {
+		seed: createEmptyPertDoc("Keyboard add"),
+		projectId: "story-canvas-plain-add",
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// Empty state visible up front.
+		await expect(canvas.getByText("No tasks yet.")).toBeInTheDocument();
+		// Click the empty canvas pane to make sure focus isn't trapped in
+		// the toolbar buttons (which would swallow `n` as a button activator).
+		canvasElement.focus();
+		await userEvent.keyboard("n");
+		await waitFor(() => {
+			const nodes = canvas.queryAllByText("New task");
+			expect(nodes.length).toBeGreaterThan(0);
+		});
+		// `m` adds a milestone — distinct kind, different default title.
+		await userEvent.keyboard("{Escape}");
+		await userEvent.keyboard("m");
+		await waitFor(() => {
+			const nodes = canvas.queryAllByText("New milestone");
+			expect(nodes.length).toBeGreaterThan(0);
+		});
+	},
+};
+
+// Tab-spawn from selection: select a node, press Tab, expect a new linked
+// downstream task. Shift+Tab adds a sibling sharing the seed's predecessors.
+export const TabSpawnAndSibling: Story = {
+	args: {
+		seed: diamondDoc(),
+		projectId: "story-canvas-tab-spawn",
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const nodeA = await canvas.findByTestId("task-node-A");
+		await userEvent.click(nodeA);
+		await waitFor(() => expect(selectionStore.state.taskId).toBe("A"));
+
+		// Tab — should add a downstream linked task to A.
+		await userEvent.keyboard("{Tab}");
+		await waitFor(() => {
+			const fresh = canvas.queryAllByText("New task");
+			expect(fresh.length).toBeGreaterThan(0);
+		});
+		// Inline-edit form is open on the new node.
+		await waitFor(() =>
+			expect(canvas.getByTestId("task-inline-title")).toBeInTheDocument(),
+		);
+		// Commit the inline edit with Enter so subsequent keys reach the
+		// canvas handler again.
+		await userEvent.keyboard("{Enter}");
+
+		// Re-select A and press Shift+Tab → a sibling task at A's depth.
+		await userEvent.click(canvas.getByTestId("task-node-A"));
+		await waitFor(() => expect(selectionStore.state.taskId).toBe("A"));
+		await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+		await waitFor(() => {
+			// Two "New task" labels are now present (downstream + sibling) but
+			// the sibling label may already have committed; assert at least
+			// one node beyond A/B/C/D exists by counting task-node-*.
+			const allTaskNodes = canvas
+				.getAllByTestId(/task-node-/)
+				.filter((el) => !el.dataset.testid?.includes("delete"));
+			expect(allTaskNodes.length).toBeGreaterThanOrEqual(6);
+		});
+	},
+};
+
+// Keyboard help popover surfaces every binding the canvas accepts. Test
+// that opening it reveals the section headings — full row-by-row coverage
+// would just mirror the constant defined in keyboard-shortcuts-help.tsx.
+export const KeyboardHelpPopover: Story = {
+	args: {
+		seed: diamondDoc(),
+		projectId: "story-canvas-help",
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const helpButton = await canvas.findByTestId("canvas-keyboard-help");
+		await userEvent.click(helpButton);
+		// Popover content is portaled — search at the document body level.
+		await waitFor(() => {
+			const body = within(document.body);
+			expect(body.getByText("Add")).toBeInTheDocument();
+			expect(body.getByText("Navigate")).toBeInTheDocument();
+			expect(body.getByText(/Spawn downstream task/i)).toBeInTheDocument();
+		});
+	},
+};
+
 export const Cycle: Story = {
 	args: {
 		seed: cycleDoc(),
