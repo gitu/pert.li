@@ -401,6 +401,9 @@ export const ArrowKeyNavigation: Story = {
 
 		await userEvent.click(nodeA);
 		await waitFor(() => expect(selectionStore.state.taskId).toBe("A"));
+		await waitFor(() =>
+			expect(wrapperA.classList.contains("selected")).toBe(true),
+		);
 
 		await userEvent.keyboard("{ArrowRight}");
 		// Diamond: A → {B, C}. closestByY tie-breaks on iteration order
@@ -408,6 +411,17 @@ export const ArrowKeyNavigation: Story = {
 		await waitFor(() => expect(selectionStore.state.taskId).toBe("B"));
 		// A's React Flow node must not have been nudged by the arrow key.
 		await expect(wrapperA.style.transform).toBe(before);
+		// The selection marker must follow the keyboard nav — A loses
+		// `.selected`, B gains it. Regression: previously the ring stayed
+		// on the originally clicked node while only the inspector moved.
+		const nodeB = canvas.getByTestId("task-node-B");
+		const wrapperB = nodeB.closest(".react-flow__node") as HTMLElement;
+		await waitFor(() =>
+			expect(wrapperA.classList.contains("selected")).toBe(false),
+		);
+		await waitFor(() =>
+			expect(wrapperB.classList.contains("selected")).toBe(true),
+		);
 
 		// Bouncing off the right edge: D has no successor. The selection
 		// stays put AND the node still doesn't move.

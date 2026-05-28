@@ -547,6 +547,24 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		s.projectId === projectId ? s.taskId : null,
 	);
 
+	// Mirror the global selection into React Flow's local `selected` flag.
+	// onNodesChange only mirrors RF → store, so programmatic selections
+	// (arrow-key nav, Tab spawn, fresh add) update the store but leave the
+	// on-canvas ring stuck on the previously clicked node. Sync the other
+	// direction here so the marker follows the inspector.
+	useEffect(() => {
+		setNodes((current) => {
+			let changed = false;
+			const next = current.map((n) => {
+				const shouldBeSelected = n.id === selectedTaskId;
+				if (!!n.selected === shouldBeSelected) return n;
+				changed = true;
+				return { ...n, selected: shouldBeSelected };
+			});
+			return changed ? next : current;
+		});
+	}, [selectedTaskId]);
+
 	const handleAddTask = useCallback(
 		(kind: Task["kind"]) => {
 			const center = screenToFlowPosition({
