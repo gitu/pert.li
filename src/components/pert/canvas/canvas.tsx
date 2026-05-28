@@ -575,6 +575,53 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		};
 	}, [projectId]);
 
+	// Mirror the selected task id into React Flow's per-node `selected` flag,
+	// and pan the camera if the new selection isn't currently in view. React
+	// Flow tracks node selection in its own local state — without this, only
+	// the mouse-driven selection paints a ring, and keynav / programmatic
+	// selection leaves the visual marker on whatever the user last clicked.
+	// The visibility check uses real DOM rects so it accounts for the
+	// current zoom + viewport; if any part of the node overlaps the React
+	// Flow container we leave the camera alone (the user can see it).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: doc/reactFlow/setNodes are accessed through a ref so the effect only fires when the selection actually changes — re-running on doc would re-pan on every edit
+	useEffect(() => {
+		setNodes((current) =>
+			current.map((n) => {
+				const shouldSelect = n.id === selectedTaskId;
+				if (n.selected === shouldSelect) return n;
+				return { ...n, selected: shouldSelect };
+			}),
+		);
+		if (!selectedTaskId) return;
+		const task = doc.tasksById[selectedTaskId];
+		if (!task) return;
+		const pos = task.layout?.position;
+		if (!pos) return;
+		const handle = requestAnimationFrame(() => {
+			const nodeEl = document.querySelector(
+				`.react-flow__node[data-id="${CSS.escape(selectedTaskId)}"]`,
+			) as HTMLElement | null;
+			if (!nodeEl) return;
+			const flowEl = nodeEl.closest(".react-flow") as HTMLElement | null;
+			if (!flowEl) return;
+			const nodeRect = nodeEl.getBoundingClientRect();
+			const flowRect = flowEl.getBoundingClientRect();
+			const overlaps =
+				nodeRect.right > flowRect.left &&
+				nodeRect.left < flowRect.right &&
+				nodeRect.bottom > flowRect.top &&
+				nodeRect.top < flowRect.bottom;
+			if (overlaps) return;
+			const width = nodeRect.width || TASK_WIDTH;
+			const height = nodeRect.height || TASK_HEIGHT;
+			reactFlow.setCenter(pos.x + width / 2, pos.y + height / 2, {
+				zoom: reactFlow.getZoom(),
+				duration: 300,
+			});
+		});
+		return () => cancelAnimationFrame(handle);
+	}, [selectedTaskId]);
+
 	// Spawn a sibling that shares every predecessor of the seed — the "fan
 	// out from this point" gesture used by Shift+Tab. Placed one card-height
 	// below the seed at the same x so consecutive Shift+Tabs stack a list of
