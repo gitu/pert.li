@@ -402,8 +402,9 @@ jobs:
   pr-screenshots:
     # PR-only, informational. Renders every story whose source file changed
     # on this branch, pushes the PNGs to the `screenshots` orphan branch
-    # under `pr-<num>/`, and posts a sticky PR comment with the images
-    # embedded via raw.githubusercontent.com. Deliberately NOT in the
+    # under `pr-<num>/`, and posts a sticky PR comment that embeds each
+    # image inline via raw.githubusercontent.com (works anonymously now
+    # that the repo is public; Camo proxies it). Deliberately NOT in the
     # ci-ready gate — a flake here should never block merge.
     name: PR screenshots
     # Skip on forks: GITHUB_TOKEN on a fork PR is read-only by default,
