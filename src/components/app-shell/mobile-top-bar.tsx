@@ -86,7 +86,7 @@ export function MobileTopBar({
 					<HistoryIcon className="size-5" />
 				</Button>
 			)}
-			<ChatTrigger />
+			{inProject && <ChatTrigger />}
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<Button

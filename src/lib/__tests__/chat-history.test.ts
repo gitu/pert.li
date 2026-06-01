@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-	__resetMigrationFlagForTests,
 	type ChatBroadcast,
 	createChatBroadcaster,
 	DEFAULT_THREAD_TITLE,
@@ -16,19 +15,17 @@ import {
 
 beforeEach(() => {
 	window.localStorage.clear();
-	__resetMigrationFlagForTests();
 });
 
 afterEach(() => {
 	window.localStorage.clear();
-	__resetMigrationFlagForTests();
 });
 
 describe("getScopeKey", () => {
-	it("returns the global scope when no project id is provided", () => {
-		expect(getScopeKey(null)).toBe("global");
-		expect(getScopeKey(undefined)).toBe("global");
-		expect(getScopeKey("")).toBe("global");
+	it("returns null when no project id is provided — chat is bound to a project", () => {
+		expect(getScopeKey(null)).toBeNull();
+		expect(getScopeKey(undefined)).toBeNull();
+		expect(getScopeKey("")).toBeNull();
 	});
 
 	it("prefixes a project scope with project:", () => {
@@ -38,15 +35,15 @@ describe("getScopeKey", () => {
 
 describe("readThreadIndex", () => {
 	it("seeds a single default thread when nothing is stored", () => {
-		const idx = readThreadIndex("global");
+		const idx = readThreadIndex("project:a");
 		expect(idx.threads).toHaveLength(1);
 		expect(idx.activeThreadId).toBe(idx.threads[0].id);
 		expect(idx.threads[0].title).toBe(DEFAULT_THREAD_TITLE);
 	});
 
 	it("persists the seeded index so a second read returns the same thread id", () => {
-		const first = readThreadIndex("global");
-		const second = readThreadIndex("global");
+		const first = readThreadIndex("project:a");
+		const second = readThreadIndex("project:a");
 		expect(second.activeThreadId).toBe(first.activeThreadId);
 		expect(second.threads).toEqual(first.threads);
 	});
@@ -65,14 +62,17 @@ describe("readThreadIndex", () => {
 				{ id: "other", title: "Other", createdAt: 2, updatedAt: 2 },
 			],
 		};
-		writeThreadIndex("global", fake);
-		const idx = readThreadIndex("global");
+		writeThreadIndex("project:a", fake);
+		const idx = readThreadIndex("project:a");
 		expect(idx.activeThreadId).toBe("real");
 	});
 
 	it("reseeds when the stored index is malformed", () => {
-		window.localStorage.setItem("pertli.chatThreads.v1.global", "{not json}");
-		const idx = readThreadIndex("global");
+		window.localStorage.setItem(
+			"pertli.chatThreads.v1.project:a",
+			"{not json}",
+		);
+		const idx = readThreadIndex("project:a");
 		expect(idx.threads).toHaveLength(1);
 	});
 });
@@ -181,57 +181,6 @@ describe("deriveThreadTitle", () => {
 	});
 });
 
-describe("legacy migration", () => {
-	it("folds the legacy single-key transcript into a global thread", () => {
-		const legacy = [
-			{ id: "u1", role: "user", parts: [{ type: "text", content: "Hello" }] },
-			{ id: "a1", role: "assistant", parts: [] },
-		];
-		window.localStorage.setItem(
-			"pertli.chatMessages.v1",
-			JSON.stringify(legacy),
-		);
-
-		const idx = readThreadIndex("global");
-		expect(idx.threads).toHaveLength(1);
-		expect(idx.threads[0].title).toBe("Hello");
-		expect(readThreadMessages(idx.threads[0].id)).toEqual(legacy);
-		expect(window.localStorage.getItem("pertli.chatMessages.v1")).toBeNull();
-	});
-
-	it("is idempotent — a second read does not duplicate the thread", () => {
-		window.localStorage.setItem(
-			"pertli.chatMessages.v1",
-			JSON.stringify([
-				{ id: "u1", role: "user", parts: [{ type: "text", content: "Hi" }] },
-			]),
-		);
-		const first = readThreadIndex("global");
-		__resetMigrationFlagForTests();
-		const second = readThreadIndex("global");
-		expect(second.threads).toHaveLength(1);
-		expect(second.activeThreadId).toBe(first.activeThreadId);
-	});
-
-	it("drops an empty legacy array without creating a thread for it", () => {
-		window.localStorage.setItem("pertli.chatMessages.v1", "[]");
-		const idx = readThreadIndex("global");
-		// Default seeding still kicks in (always at least one thread), but its
-		// title is the placeholder and no messages are stored.
-		expect(idx.threads).toHaveLength(1);
-		expect(idx.threads[0].title).toBe(DEFAULT_THREAD_TITLE);
-		expect(readThreadMessages(idx.threads[0].id)).toBeNull();
-		expect(window.localStorage.getItem("pertli.chatMessages.v1")).toBeNull();
-	});
-
-	it("drops a malformed legacy payload without crashing", () => {
-		window.localStorage.setItem("pertli.chatMessages.v1", "{not json");
-		const idx = readThreadIndex("global");
-		expect(idx.threads).toHaveLength(1);
-		expect(window.localStorage.getItem("pertli.chatMessages.v1")).toBeNull();
-	});
-});
-
 describe("createChatBroadcaster — BroadcastChannel path", () => {
 	it("post does not deliver to the SAME page's subscribers (BC semantics)", () => {
 		const bus = createChatBroadcaster();
@@ -239,7 +188,7 @@ describe("createChatBroadcaster — BroadcastChannel path", () => {
 		bus.subscribe((p) => seen.push(p));
 		bus.post({
 			type: "messages",
-			scopeKey: "global",
+			scopeKey: "project:a",
 			threadId: "t1",
 			snapshot: [{ id: "u1" }],
 		});
@@ -346,7 +295,7 @@ describe("createChatBroadcaster — storage-event fallback", () => {
 		bus.subscribe((p) => seen.push(p));
 		window.dispatchEvent(
 			new StorageEvent("storage", {
-				key: "pertli.chatThreads.v1.global",
+				key: "pertli.chatThreads.v1.project:a",
 				newValue: JSON.stringify({ activeThreadId: 1, threads: [] }),
 			}),
 		);

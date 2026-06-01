@@ -1,4 +1,12 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import {
+	createMemoryHistory,
+	createRootRoute,
+	createRoute,
+	createRouter,
+	Outlet,
+	RouterProvider,
+} from "@tanstack/react-router";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 import { ChatPanel } from "./chat-panel";
 
@@ -19,11 +27,44 @@ function Stage({ children }: { children: React.ReactNode }) {
 	);
 }
 
+// Chat is bound to the active project — ChatPanel reads its projectId from
+// the route (useParams), so the stories need a Router context. The initial
+// path drives which scope the panel mounts in: `/p/<id>` for the active
+// state, `/` for the NoActiveProject state.
+function withRouter(initialPath: string, children: React.ReactNode) {
+	const rootRoute = createRootRoute({ component: () => <Outlet /> });
+	const indexRoute = createRoute({
+		getParentRoute: () => rootRoute,
+		path: "/",
+		component: () => <>{children}</>,
+	});
+	const projectRoute = createRoute({
+		getParentRoute: () => rootRoute,
+		path: "/p/$projectId",
+		component: () => <>{children}</>,
+	});
+	const router = createRouter({
+		routeTree: rootRoute.addChildren([indexRoute, projectRoute]),
+		history: createMemoryHistory({ initialEntries: [initialPath] }),
+	});
+	return <RouterProvider router={router} />;
+}
+
 const meta: Meta<typeof ChatPanel> = {
 	title: "AI/ChatPanel",
 	component: ChatPanel,
 	parameters: { layout: "centered" },
-	decorators: [(Story) => <Stage>{Story()}</Stage>],
+	decorators: [
+		// Stories that want the no-project state set
+		// `parameters.initialPath = "/"`.
+		(Story, context) => {
+			const initialPath =
+				typeof context.parameters?.initialPath === "string"
+					? context.parameters.initialPath
+					: "/p/storybook-project";
+			return <Stage>{withRouter(initialPath, <Story />)}</Stage>;
+		},
+	],
 };
 
 export default meta;
@@ -87,5 +128,20 @@ export const WithAttachedMarkdown: Story = {
 		// Send is enabled when an attachment is ready even with empty body.
 		const send = await canvas.findByTestId("chat-send");
 		await waitFor(() => expect(send).not.toBeDisabled());
+	},
+};
+
+// No active project — chat is bound to a project, so the panel falls back to
+// an explainer instead of mounting a thread. `initialPath: "/"` swaps the
+// memory router off the project route.
+export const NoActiveProject: Story = {
+	parameters: { initialPath: "/" },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const panel = await canvas.findByTestId("chat-panel");
+		expect(panel).toHaveAttribute("data-state", "no-project");
+		// The input/send affordances are deliberately absent in this state.
+		expect(canvas.queryByTestId("chat-input")).toBeNull();
+		expect(canvas.queryByTestId("chat-send")).toBeNull();
 	},
 };
