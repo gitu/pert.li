@@ -3,7 +3,6 @@ import { diffPertDoc } from "#/lib/pert/diff";
 import type { HistoryGroup } from "#/lib/pert/history";
 import {
 	dropTaskMutation,
-	type RestoreableField,
 	reAddTaskMutation,
 	restoreDependencyMutation,
 	restoreTaskFieldMutation,
@@ -62,11 +61,7 @@ function HistoryVsCurrent({
 			return;
 		}
 		if (row.type === "task-field") {
-			const mut = restoreTaskFieldMutation(
-				snapshot,
-				row.taskId,
-				row.field as RestoreableField,
-			);
+			const mut = restoreTaskFieldMutation(snapshot, row.taskId, row.field);
 			if (mut) onRestore(mut);
 			return;
 		}

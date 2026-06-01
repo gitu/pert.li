@@ -9,8 +9,13 @@ export type RestoreableField =
 	| "title"
 	| "kind"
 	| "parentId"
+	| "key"
 	| "estimate"
-	| "notes";
+	| "notes"
+	| "status"
+	| "progress"
+	| "actualStart"
+	| "actualFinish";
 
 export function restoreTaskFieldMutation(
 	snapshot: PertDoc,
@@ -95,6 +100,10 @@ function applyField(draft: Task, source: Task, field: RestoreableField): void {
 		case "parentId":
 			draft.parentId = source.parentId ?? null;
 			return;
+		case "key":
+			if (source.key) draft.key = source.key;
+			else delete draft.key;
+			return;
 		case "estimate":
 			if (source.estimate) draft.estimate = structuredClone(source.estimate);
 			else delete draft.estimate;
@@ -102,6 +111,22 @@ function applyField(draft: Task, source: Task, field: RestoreableField): void {
 		case "notes":
 			if (source.notes) draft.notes = source.notes;
 			else delete draft.notes;
+			return;
+		case "status":
+			if (source.status) draft.status = source.status;
+			else delete draft.status;
+			return;
+		case "progress":
+			if (typeof source.progress === "number") draft.progress = source.progress;
+			else delete draft.progress;
+			return;
+		case "actualStart":
+			if (source.actualStart) draft.actualStart = source.actualStart;
+			else delete draft.actualStart;
+			return;
+		case "actualFinish":
+			if (source.actualFinish) draft.actualFinish = source.actualFinish;
+			else delete draft.actualFinish;
 			return;
 	}
 }

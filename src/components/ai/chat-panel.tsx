@@ -21,19 +21,20 @@ import {
 	WrenchIcon,
 	XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	lazy,
+	Suspense,
+	useCallback,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { Streamdown } from "streamdown";
 import { Button } from "#/components/ui/button";
 import { ScrollArea } from "#/components/ui/scroll-area";
 import { Textarea } from "#/components/ui/textarea";
-import {
-	buildMessageWithAttachments,
-	classify,
-	type ExtractedFile,
-	extractText,
-	FileExtractError,
-	UnsupportedFileError,
-} from "#/lib/ai/file-extract";
+import type { ExtractedFile } from "#/lib/ai/file-extract";
 import type { EditOp } from "#/lib/ai/operations";
 import { createProposal } from "#/lib/ai/proposals-store";
 import {
@@ -107,7 +108,14 @@ import { useIsMobile } from "#/lib/use-media-query";
 import { cn } from "#/lib/utils";
 import type { ProjectView } from "#/routes/_app/p.$projectId";
 import { ChatTabs } from "./chat-tabs";
-import { ProposalCard } from "./proposal-card";
+
+// Lazy-loaded so the chat-panel chunk stays free of the proposal/diff
+// machinery. Keeps the storybook static build's chunk graph simple — the
+// chat-panel chunk shouldn't inherit TLA from transitive deps that only the
+// proposal card needs.
+const ProposalCard = lazy(() =>
+	import("./proposal-card").then((m) => ({ default: m.ProposalCard })),
+);
 
 // Chat surface backed by the /api/chat SSE endpoint. The hook owns the
 // connection lifecycle (subscribe-on-mount, unsubscribe-on-unmount); we just
@@ -743,10 +751,16 @@ function ChatThread({
 			}));
 			// Kick off parsing per slot. We mutate the slot in a follow-up
 			// setState — the closure below captures the id, not the index, so
-			// concurrent additions stay independent.
+			// concurrent additions stay independent. file-extract.ts is
+			// dynamic-imported so the chat-panel chunk doesn't statically pull
+			// in pdfjs / mammoth (those have top-level await and the chained
+			// TLA breaks the storybook static build's chunk init order).
 			for (const slot of additions) {
 				void (async () => {
 					try {
+						const { classify, extractText } = await import(
+							"#/lib/ai/file-extract"
+						);
 						// Pre-classify so unsupported types fail fast with a clearer
 						// message instead of routing into a no-op text reader.
 						classify(slot.file);
@@ -758,7 +772,7 @@ function ChatThread({
 						);
 					} catch (e) {
 						const message =
-							e instanceof UnsupportedFileError || e instanceof FileExtractError
+							isUnsupportedFileError(e) || isFileExtractError(e)
 								? e.message
 								: e instanceof Error
 									? e.message
@@ -826,13 +840,26 @@ function ChatThread({
 		);
 		if (!trimmed && ready.length === 0) return;
 		if (isLoading || attachmentsBusy) return;
-		const composed = buildMessageWithAttachments(
-			trimmed,
-			ready.map((a) => a.extracted),
-		);
+		// Attachment-free is the common path; keep it synchronous. Attachments
+		// require the file-extract module (dynamic-imported to keep this chunk
+		// free of pdfjs/mammoth's top-level await).
+		if (ready.length === 0) {
+			setInput("");
+			void sendMessage(trimmed);
+			return;
+		}
 		setInput("");
 		setAttachments([]);
-		void sendMessage(composed);
+		void (async () => {
+			const { buildMessageWithAttachments } = await import(
+				"#/lib/ai/file-extract"
+			);
+			const composed = buildMessageWithAttachments(
+				trimmed,
+				ready.map((a) => a.extracted),
+			);
+			void sendMessage(composed);
+		})();
 	};
 
 	// Any ask_choice tool calls emitted AFTER the last user message are still
@@ -1043,6 +1070,27 @@ function hasDataTransferFiles(e: React.DragEvent): boolean {
 	// In a dragenter/dragover the file list isn't readable yet; fall back to
 	// the type list which contains "Files" when the drag carries any.
 	return Array.from(dt.types ?? []).includes("Files");
+}
+
+// `instanceof` checks would require a static import of the error classes;
+// duck-type via the `kind` discriminator so the file-extract module stays
+// purely dynamic-imported.
+function isUnsupportedFileError(
+	e: unknown,
+): e is Error & { kind: "unsupported" } {
+	return (
+		e instanceof Error &&
+		(e as Error & { kind?: string }).kind === "unsupported"
+	);
+}
+
+function isFileExtractError(
+	e: unknown,
+): e is Error & { kind: "extract-failed" } {
+	return (
+		e instanceof Error &&
+		(e as Error & { kind?: string }).kind === "extract-failed"
+	);
 }
 
 function AttachmentChip({
@@ -1346,7 +1394,16 @@ function MessageRow({ message }: { message: ChatMessage }) {
 				{hasProposals && (
 					<div className="flex flex-col gap-1.5">
 						{proposalIds.map((id) => (
-							<ProposalCard key={id} proposalId={id} />
+							<Suspense
+								key={id}
+								fallback={
+									<div className="rounded-md border border-border bg-muted/30 p-2 text-[11px] text-muted-foreground">
+										Loading proposal…
+									</div>
+								}
+							>
+								<ProposalCard proposalId={id} />
+							</Suspense>
 						))}
 					</div>
 				)}

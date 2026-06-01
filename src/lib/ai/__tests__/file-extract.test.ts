@@ -68,6 +68,20 @@ describe("extractText (plain text path)", () => {
 		expect(out.text.length).toBeLessThan(big.length);
 		expect(out.text).toContain("truncated to fit chat limit");
 	});
+
+	it("measures the cap in UTF-8 bytes, not UTF-16 code units", async () => {
+		// CJK characters serialise to 3 UTF-8 bytes apiece. ~80k code units →
+		// ~240k bytes, well past the 200k cap. The pre-fix code (text.length
+		// vs MAX_EXTRACTED_BYTES) would have allowed this through untruncated.
+		const codepoints = 80_000;
+		const big = "中".repeat(codepoints);
+		const file = makeFile("cjk.txt", big, "text/plain");
+		const out = await extractText(file);
+		expect(out.truncated).toBe(true);
+		const byteLength = new TextEncoder().encode(out.text).byteLength;
+		// Allow some headroom for the truncation marker itself.
+		expect(byteLength).toBeLessThanOrEqual(200_000 + 200);
+	});
 });
 
 describe("attachment formatting", () => {

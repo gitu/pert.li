@@ -95,14 +95,28 @@ export function classify(file: File): ExtractKind {
 	throw new UnsupportedFileError(file.name);
 }
 
+// Measure in UTF-8 bytes so the cap is meaningful for non-ASCII content
+// (a 100k-codepoint CJK doc serialises to ~300k bytes — well past what the
+// model should see in one turn). When we exceed the cap we slice CODE-UNITS
+// at a conservatively-low upper bound (≈ `MAX_EXTRACTED_BYTES`, since UTF-8
+// produces at most 4 bytes per code point) and then trim until the encoded
+// length fits.
 function truncate(text: string): { text: string; truncated: boolean } {
-	if (text.length <= MAX_EXTRACTED_BYTES) {
+	const encoder = new TextEncoder();
+	const byteLength = encoder.encode(text).byteLength;
+	if (byteLength <= MAX_EXTRACTED_BYTES) {
 		return { text, truncated: false };
 	}
-	return {
-		text: text.slice(0, MAX_EXTRACTED_BYTES) + TRUNCATION_MARKER,
-		truncated: true,
-	};
+	// Start with a slice that is at most MAX_EXTRACTED_BYTES code units (so its
+	// UTF-8 form is ≤ 4× the cap, then we trim back to fit).
+	let sliced = text.slice(0, MAX_EXTRACTED_BYTES);
+	while (encoder.encode(sliced).byteLength > MAX_EXTRACTED_BYTES) {
+		// Trim by ~10% on each iteration; for typical content this finishes in
+		// 1–2 passes. Slicing JS strings is by code units, so we won't end on a
+		// lone high surrogate — TextEncoder replaces those with U+FFFD anyway.
+		sliced = sliced.slice(0, Math.floor(sliced.length * 0.9));
+	}
+	return { text: sliced + TRUNCATION_MARKER, truncated: true };
 }
 
 export async function extractText(file: File): Promise<ExtractedFile> {

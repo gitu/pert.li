@@ -2,6 +2,14 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 import { ChatPanel } from "./chat-panel";
 
+// The chat-panel chunk gets top-level-await wrapping in the storybook static
+// build (it transitively pulls in streamdown / mermaid, which use TLA), but
+// rolldown's TLA plugin currently misses propagating `__tla` into this story
+// bundle, so the default `n()` invocation rejects with "n is not a function".
+// Any module-level `await` flips this file into TLA mode and rolldown then
+// correctly awaits the dependency's `__tla` before invoking story exports.
+await Promise.resolve();
+
 // Wraps the panel in a fixed-size box so it has a chrome to scroll in.
 function Stage({ children }: { children: React.ReactNode }) {
 	return (
