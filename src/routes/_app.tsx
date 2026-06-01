@@ -80,7 +80,16 @@ import { ViewModeProvider } from "#/lib/view-mode";
 import { hasSeenWelcome } from "#/lib/welcome";
 import { listProjects } from "#/server/workspace.ts";
 
+// Auth-gated shell: session is resolved client-side via authClient.useSession,
+// so an SSR render only ever produces the "Loading…" placeholder before
+// hydration anyway. The leaves under this route (project canvas with
+// xyflow/ELK/automerge, admin) are also pure client surfaces with no SEO
+// value. Skipping SSR here drops the wasted server render of the heavy
+// project bundle and ships the shell straight to hydration. Public routes
+// (/welcome, /signin, /share/$token, /join/$token, /privacy) live outside
+// this layout and continue to SSR.
 export const Route = createFileRoute("/_app")({
+	ssr: false,
 	component: AppShell,
 });
 
