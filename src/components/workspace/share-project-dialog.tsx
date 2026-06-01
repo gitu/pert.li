@@ -23,6 +23,7 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "#/components/ui/dialog";
+import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import {
 	Select,
@@ -335,14 +336,18 @@ function ShareRow({
 				</a>
 			</div>
 			<div className="mt-2 flex items-center gap-1.5">
-				<code className="min-w-0 flex-1 truncate rounded bg-muted px-2 py-1 text-xs">
-					{url}
-				</code>
+				<Input
+					readOnly
+					value={url}
+					onFocus={(e) => e.currentTarget.select()}
+					className="h-7 flex-1 font-mono text-xs"
+					aria-label="Share link URL"
+				/>
 				<Button
 					type="button"
 					size="icon"
 					variant="ghost"
-					className="size-7"
+					className="size-7 shrink-0"
 					onClick={copy}
 					aria-label="Copy link"
 				>
@@ -357,7 +362,7 @@ function ShareRow({
 					type="button"
 					size="icon"
 					variant="ghost"
-					className="size-7 text-destructive hover:text-destructive"
+					className="size-7 shrink-0 text-destructive hover:text-destructive"
 					onClick={onRevoke}
 					aria-label="Revoke link"
 				>
@@ -379,7 +384,7 @@ function ExtendMenu({
 	// instantly via onValueChange.
 	return (
 		<Select value="" onValueChange={(v) => onExtend(v as ExpiryChoice)}>
-			<SelectTrigger className="h-7 w-auto gap-1 px-2 text-xs">
+			<SelectTrigger className="h-7 w-auto shrink-0 gap-1 px-2 text-xs">
 				<RotateCcwIcon className="size-3.5" />
 				<span>Extend</span>
 			</SelectTrigger>
