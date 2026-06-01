@@ -10,6 +10,14 @@ import {
 import { expect, userEvent, within } from "storybook/test";
 import { PlanViewSwitcher } from "./chat-panel";
 
+// The chat-panel chunk gets top-level-await wrapping in the storybook static
+// build (transitive Streamdown / Mermaid deps), and rolldown's TLA plugin
+// currently misses propagating `__tla` into this story bundle, so the
+// synchronous init crashes with "n is not a function". Any module-level
+// `await` flips this file into TLA mode and rolldown then correctly awaits
+// the dependency's `__tla` before invoking story exports.
+await Promise.resolve();
+
 // PlanViewSwitcher reads `useParams` / `useSearch` and calls `useNavigate`,
 // so the stories need a router context. We mount a tiny router whose
 // `/p/$projectId` route renders the switcher itself — that way navigating
