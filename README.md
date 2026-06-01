@@ -44,6 +44,8 @@ The same project, four ways. Edit in any view; the others stay in sync.
 | **Timeline** — Gantt with the critical path in red and slack in gray. | **Table** — inline three-point estimates, computed ES/EF/slack, critical/slack badges. |
 | [![Matrix view — predecessor/successor toggles](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/matrix.png)](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/matrix.png) | [![AI chat assistant pinned beside the canvas](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/chat.png)](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/chat.png) |
 | **Matrix** — click a cell to toggle a finish→start dependency. | **AI co-planner** — pin the chat dock beside the canvas and let it create tasks for you. |
+| [![Welcome screen — sign-in / import](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/welcome.png)](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/welcome.png) | [![Workspace view — tree + canvas](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/workspace.png)](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/workspace.png) |
+| **Welcome** — sign in as a dev user and import a `.pert.json` project. | **Workspace** — project list + canvas layout after import. |
 
 ## Environment
 
