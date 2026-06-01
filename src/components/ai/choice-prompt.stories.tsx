@@ -2,6 +2,14 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { ChoicePrompt, type PendingChoice } from "./chat-panel";
 
+// The chat-panel chunk gets top-level-await wrapping in the storybook static
+// build (transitive Streamdown / Mermaid deps), and rolldown's TLA plugin
+// currently misses propagating `__tla` into this story bundle, so the
+// synchronous init crashes with "n is not a function". Any module-level
+// `await` flips this file into TLA mode and rolldown then correctly awaits
+// the dependency's `__tla` before invoking story exports.
+await Promise.resolve();
+
 // Renders the chip panel that appears above the input when the assistant
 // has asked a multiple-choice question. The chat panel itself owns the
 // message state, so we test the chip surface directly.

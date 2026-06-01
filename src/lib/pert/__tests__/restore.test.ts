@@ -90,6 +90,126 @@ describe("restoreTaskFieldMutation", () => {
 		expect(current.tasksById.A.estimate).toBeUndefined();
 		expect(current.tasksById.A.notes).toBeUndefined();
 	});
+
+	it("restores key, status, progress, and actual dates from snapshot", () => {
+		const snapshot = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			key: "M1.A",
+			status: "in_progress",
+			progress: 40,
+			actualStart: "2026-05-20",
+		});
+		const current = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			status: "completed",
+			progress: 100,
+			actualStart: "2026-05-25",
+			actualFinish: "2026-06-01",
+		});
+		restoreTaskFieldMutation(snapshot, "A", "key")?.(current);
+		restoreTaskFieldMutation(snapshot, "A", "status")?.(current);
+		restoreTaskFieldMutation(snapshot, "A", "progress")?.(current);
+		restoreTaskFieldMutation(snapshot, "A", "actualStart")?.(current);
+		restoreTaskFieldMutation(snapshot, "A", "actualFinish")?.(current);
+		expect(current.tasksById.A.key).toBe("M1.A");
+		expect(current.tasksById.A.status).toBe("in_progress");
+		expect(current.tasksById.A.progress).toBe(40);
+		expect(current.tasksById.A.actualStart).toBe("2026-05-20");
+		// Snapshot has no actualFinish → restored to absent.
+		expect(current.tasksById.A.actualFinish).toBeUndefined();
+	});
+
+	it("clears key/status/progress/actual dates when the snapshot has none", () => {
+		const snapshot = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+		});
+		const current = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			key: "M1.A",
+			status: "in_progress",
+			progress: 40,
+			actualStart: "2026-05-20",
+			actualFinish: "2026-06-01",
+		});
+		restoreTaskFieldMutation(snapshot, "A", "key")?.(current);
+		restoreTaskFieldMutation(snapshot, "A", "status")?.(current);
+		restoreTaskFieldMutation(snapshot, "A", "progress")?.(current);
+		restoreTaskFieldMutation(snapshot, "A", "actualStart")?.(current);
+		restoreTaskFieldMutation(snapshot, "A", "actualFinish")?.(current);
+		expect(current.tasksById.A.key).toBeUndefined();
+		expect(current.tasksById.A.status).toBeUndefined();
+		expect(current.tasksById.A.progress).toBeUndefined();
+		expect(current.tasksById.A.actualStart).toBeUndefined();
+		expect(current.tasksById.A.actualFinish).toBeUndefined();
+	});
+
+	it("trims and clears whitespace-only key on restore (matches setKeyMutation)", () => {
+		const snapshot = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			key: "   ",
+		});
+		const current = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			key: "M1",
+		});
+		restoreTaskFieldMutation(snapshot, "A", "key")?.(current);
+		expect(current.tasksById.A.key).toBeUndefined();
+	});
+
+	it("trims padded keys on restore", () => {
+		const snapshot = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			key: "  M1.A  ",
+		});
+		const current = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+		});
+		restoreTaskFieldMutation(snapshot, "A", "key")?.(current);
+		expect(current.tasksById.A.key).toBe("M1.A");
+	});
+
+	it("restores progress=0 (falsy but valid)", () => {
+		const snapshot = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			progress: 0,
+		});
+		const current = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			progress: 50,
+		});
+		restoreTaskFieldMutation(snapshot, "A", "progress")?.(current);
+		expect(current.tasksById.A.progress).toBe(0);
+	});
 });
 
 describe("restoreAllTaskFieldsMutation", () => {
