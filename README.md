@@ -4,6 +4,8 @@ Collaborative PERT planning with an AI co-planner.
 
 pert.li turns rough scopes into PERT charts you can actually steer: three-point estimates (optimistic / most likely / pessimistic), a deterministic critical path, nested containers, and live multi-user edits. Every keystroke syncs through [Automerge](https://automerge.org) — no save button, no merge conflicts — and a built-in chat assistant can read your plan and create tasks, set estimates, and wire dependencies on your behalf.
 
+![Network view with the critical path highlighted](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/network.png)
+
 ## Quick start
 
 Requires Node 24+ and pnpm 11 (corepack will install it for you).
@@ -31,6 +33,17 @@ To use a real Postgres instead, drop a `DATABASE_URL` into `.env.local` and Driz
 - **Mobile UI.** Below 768 px the desktop layout is replaced by a read-only-first shell with tap-friendly view variants. Toggle the pencil to edit.
 - **Auth out of the box.** Passwordless email (via [Resend](https://resend.com)) plus a single optional OIDC SSO provider (Entra ID, Okta, Keycloak, Authentik, …).
 - **Self-hostable.** Pushes an image to `ghcr.io/<owner>/pert.li` on every tag; the multi-stage `Dockerfile` produces a slim Node image. See `DEPLOY.md` for the Cloud Run recipe.
+
+## The views
+
+The same project, four ways. Edit in any view; the others stay in sync.
+
+| | |
+| :---: | :---: |
+| [![Timeline view — Gantt-style schedule](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/timeline.png)](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/timeline.png) | [![Table view — inline editing with ES/EF/slack](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/table.png)](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/table.png) |
+| **Timeline** — Gantt with the critical path in red and slack in gray. | **Table** — inline three-point estimates, computed ES/EF/slack, critical/slack badges. |
+| [![Matrix view — predecessor/successor toggles](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/matrix.png)](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/matrix.png) | [![AI chat assistant pinned beside the canvas](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/chat.png)](https://raw.githubusercontent.com/gitu/pert.li/main/docs/screenshots/chat.png) |
+| **Matrix** — click a cell to toggle a finish→start dependency. | **AI co-planner** — pin the chat dock beside the canvas and let it create tasks for you. |
 
 ## Environment
 
