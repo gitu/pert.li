@@ -144,9 +144,14 @@ function ShareCanvas({
 	// share name. View-mode recipients skip the broadcast entirely (no name set).
 	useEffect(() => {
 		if (mode === "edit" && displayName) {
+			const buf = new Uint8Array(16);
+			crypto.getRandomValues(buf);
+			const suffix = Array.from(buf, (b) =>
+				b.toString(16).padStart(2, "0"),
+			).join("");
 			setShareIdentity({
 				displayName,
-				userId: `share:${token.slice(0, 8)}:${Math.random().toString(36).slice(2, 8)}`,
+				userId: `share:${token.slice(0, 8)}:${suffix}`,
 			});
 		}
 		return () => setShareIdentity(null);
