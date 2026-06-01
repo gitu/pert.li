@@ -36,8 +36,9 @@ import { computeLayout, fallbackGridLayout } from "#/lib/pert/layout";
 import type { MonteCarloResult } from "#/lib/pert/montecarlo";
 import { type ProjectedNode, projectGraph } from "#/lib/pert/projection";
 import {
+	buildContainerSnapshot,
 	canReparent,
-	findContainerAtPoint,
+	findContainerAtPointInSnapshot,
 	reparentMutation,
 	shiftDescendantsMutation,
 } from "#/lib/pert/reparent";
@@ -300,9 +301,14 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const { screenToFlowPosition, setCenter, getZoom } = reactFlow;
 	const recentlyCreated = useRecentlyCreatedHighlight(doc, setCenter, getZoom);
 
-	const derivedNodes = useMemo(
+	// Split the node build so the heavy bounds/ports/layout work only re-runs
+	// when structural inputs change. Overlay flags (drag hover, inline edit,
+	// MC criticality, just-created flash) layer on cheaply and keep stable
+	// references for unaffected nodes — that's what stops React Flow from
+	// re-diffing every node on every drag frame or MC result.
+	const baseNodes = useMemo(
 		() =>
-			buildNodes(
+			buildBaseNodes(
 				doc,
 				projection,
 				scheduleResult,
@@ -310,12 +316,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				onContainerResize,
 				onDeleteTask,
 				cycleTaskIds,
-				mc.result,
-				dragHoverContainerId,
-				recentlyCreated,
-				editingNodeId,
-				onCommitInlineEdit,
-				onCancelInlineEdit,
 				onAddLinkedTask,
 			),
 		[
@@ -326,13 +326,28 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			onContainerResize,
 			onDeleteTask,
 			cycleTaskIds,
-			mc.result,
+			onAddLinkedTask,
+		],
+	);
+	const derivedNodes = useMemo(
+		() =>
+			applyNodeOverlays(
+				baseNodes,
+				dragHoverContainerId,
+				recentlyCreated,
+				editingNodeId,
+				mc.result,
+				onCommitInlineEdit,
+				onCancelInlineEdit,
+			),
+		[
+			baseNodes,
 			dragHoverContainerId,
 			recentlyCreated,
 			editingNodeId,
+			mc.result,
 			onCommitInlineEdit,
 			onCancelInlineEdit,
-			onAddLinkedTask,
 		],
 	);
 	const derivedEdges = useMemo(
@@ -361,6 +376,13 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const dragStartPositions = useRef<Map<TaskId, { x: number; y: number }>>(
 		new Map(),
 	);
+	// Container-bounds snapshot taken when a leaf drag begins. While a single
+	// leaf is dragging the bounds (computed with that leaf excluded) don't
+	// change, so we cache them and skip the O(containers × descendants) doc
+	// walk that `findContainerAtPoint` did on every drag frame.
+	const dragSnapshots = useRef<
+		Map<TaskId, ReturnType<typeof buildContainerSnapshot>>
+	>(new Map());
 
 	const onNodesChange = useCallback(
 		(changes: NodeChange[]) => {
@@ -390,6 +412,19 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 							x: change.position.x,
 							y: change.position.y,
 						});
+						if (!isContainer) {
+							// Cache container bounds once for the lifetime of this drag.
+							// Exclude the dragged leaf so the bounds shrink — that's
+							// what lets the user drag a leaf back out of its parent.
+							dragSnapshots.current.set(
+								change.id,
+								buildContainerSnapshot(
+									doc,
+									collapsedSet,
+									new Set<TaskId>([change.id]),
+								),
+							);
+						}
 					}
 					// Live drop-target preview: while a leaf is dragging, check
 					// which container its centre is over and mirror that into
@@ -401,16 +436,8 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 							x: change.position.x + TASK_WIDTH / 2,
 							y: change.position.y + TASK_HEIGHT / 2,
 						};
-						// Exclude the dragged leaf from each container's bounding
-						// box so the container snaps back as the leaf is pulled
-						// outside its siblings — enabling drag-out.
-						const exclude = new Set<TaskId>([change.id]);
-						const hover = findContainerAtPoint(
-							doc,
-							center,
-							collapsedSet,
-							exclude,
-						);
+						const snapshot = dragSnapshots.current.get(change.id) ?? [];
+						const hover = findContainerAtPointInSnapshot(snapshot, center);
 						const valid =
 							hover !== null && canReparent(doc, change.id, hover)
 								? hover
@@ -437,6 +464,8 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 
 				const start = dragStartPositions.current.get(change.id);
 				dragStartPositions.current.delete(change.id);
+				const snapshot = dragSnapshots.current.get(change.id);
+				dragSnapshots.current.delete(change.id);
 
 				if (isContainer) {
 					// Drag a container: shift every descendant leaf by the same
@@ -451,21 +480,20 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				}
 
 				// Leaf task: write position, and possibly re-parent if it was
-				// dropped inside a container's bounds.
+				// dropped inside a container's bounds. Reuse the drag-start
+				// snapshot for the drop hit-test — the bounds are still accurate
+				// (other descendants haven't moved) and avoids a fresh doc walk.
 				changeDoc((d) => {
 					const draft = d.tasksById[change.id];
 					if (!draft) return;
 					draft.layout = { ...(draft.layout ?? {}), position: next };
 				});
-				const targetContainer = findContainerAtPoint(
-					doc,
-					{
-						x: next.x + TASK_WIDTH / 2,
-						y: next.y + TASK_HEIGHT / 2,
-					},
-					collapsedSet,
-					new Set<TaskId>([change.id]),
-				);
+				const targetContainer = snapshot
+					? findContainerAtPointInSnapshot(snapshot, {
+							x: next.x + TASK_WIDTH / 2,
+							y: next.y + TASK_HEIGHT / 2,
+						})
+					: null;
 				if (
 					targetContainer !== null &&
 					canReparent(doc, change.id, targetContainer)
@@ -962,7 +990,12 @@ function mergeEdges(prev: Edge[], next: Edge[]): Edge[] {
 	});
 }
 
-function buildNodes(
+// The "base" nodes — depend only on structural inputs (doc, projection,
+// schedule, cycle set) and stable callbacks. Drag-hover, inline-edit, MC
+// criticality, and just-created highlights are layered on by
+// `applyNodeOverlays` below so those signals don't force a full rebuild on
+// every keystroke / drag frame.
+function buildBaseNodes(
 	doc: PertDoc,
 	projection: ReturnType<typeof projectGraph>,
 	scheduleResult: ReturnType<typeof computeSchedule>,
@@ -973,15 +1006,6 @@ function buildNodes(
 	) => void,
 	onDeleteTask: (taskId: TaskId) => void,
 	cycleTaskIds: ReadonlySet<TaskId>,
-	mcResult: MonteCarloResult | null,
-	dragHoverContainerId: TaskId | null,
-	recentlyCreated: ReadonlySet<TaskId>,
-	editingNodeId: TaskId | null,
-	onCommitInlineEdit: (
-		taskId: TaskId,
-		next: { title: string; mostLikelyDays?: number },
-	) => void,
-	onCancelInlineEdit: () => void,
 	onAddLinkedTask: (
 		sourceId: TaskId,
 		direction: "successor" | "predecessor",
@@ -1018,8 +1042,8 @@ function buildNodes(
 				onToggle: () => onToggleContainer(containerId),
 				entries: [],
 				exits: [],
-				dropTarget: dragHoverContainerId === containerId,
-				justCreated: recentlyCreated.has(containerId),
+				dropTarget: false,
+				justCreated: false,
 				onResizeEnd: (size) => onResizeContainer(containerId, size),
 				minWidth: bounds.width,
 				minHeight: bounds.height,
@@ -1055,8 +1079,8 @@ function buildNodes(
 				onToggle: () => onToggleContainer(containerId),
 				entries: ports.entries,
 				exits: ports.exits,
-				dropTarget: dragHoverContainerId === containerId,
-				justCreated: recentlyCreated.has(containerId),
+				dropTarget: false,
+				justCreated: false,
 				onResizeEnd: (size) => onResizeContainer(containerId, size),
 				minWidth: COLLAPSED_CARD_WIDTH,
 				onDelete: () => onDeleteTask(containerId),
@@ -1078,16 +1102,10 @@ function buildNodes(
 			pushLeafNode(
 				nodes,
 				projected,
-				doc,
 				fallback,
 				schedule,
 				cycleTaskIds,
-				mcResult,
-				recentlyCreated,
 				onDeleteTask,
-				editingNodeId,
-				onCommitInlineEdit,
-				onCancelInlineEdit,
 				onAddLinkedTask,
 			);
 		}
@@ -1096,22 +1114,75 @@ function buildNodes(
 	return nodes;
 }
 
-function pushLeafNode(
-	nodes: Node[],
-	projected: Extract<ProjectedNode, { kind: "leaf" }>,
-	_doc: PertDoc,
-	fallback: ReturnType<typeof fallbackGridLayout>,
-	schedule: Schedule | null,
-	cycleTaskIds: ReadonlySet<TaskId>,
-	mcResult: MonteCarloResult | null,
+// Overlay the volatile UI signals (drag hover, inline-edit, MC criticality,
+// just-created flash) on top of the base nodes. Returns the same node
+// reference for any node not touched by an overlay, so React Flow's diff
+// stays cheap when only one or two nodes change.
+function applyNodeOverlays(
+	baseNodes: Node[],
+	dragHoverContainerId: TaskId | null,
 	recentlyCreated: ReadonlySet<TaskId>,
-	onDeleteTask: (taskId: TaskId) => void,
 	editingNodeId: TaskId | null,
+	mcResult: MonteCarloResult | null,
 	onCommitInlineEdit: (
 		taskId: TaskId,
 		next: { title: string; mostLikelyDays?: number },
 	) => void,
 	onCancelInlineEdit: () => void,
+): Node[] {
+	return baseNodes.map((n) => {
+		if (n.type === "task") {
+			const taskId = n.id as TaskId;
+			const baseData = n.data as unknown as TaskNodeData;
+			const mcTask = mcResult?.tasks[taskId];
+			const criticality = mcTask?.criticality;
+			const editing = editingNodeId === taskId;
+			const just = recentlyCreated.has(taskId);
+			if (
+				baseData.criticality === criticality &&
+				baseData.editing === editing &&
+				baseData.justCreated === just
+			) {
+				return n;
+			}
+			const data: TaskNodeData = {
+				...baseData,
+				criticality,
+				justCreated: just,
+				editing,
+				onCommitEdit: editing
+					? (next) => onCommitInlineEdit(taskId, next)
+					: undefined,
+				onCancelEdit: editing ? onCancelInlineEdit : undefined,
+			};
+			return { ...n, data: data as unknown as Record<string, unknown> };
+		}
+		if (n.type === "containerExpanded" || n.type === "containerCollapsed") {
+			const containerId = n.id as TaskId;
+			const baseData = n.data as unknown as ContainerNodeData;
+			const dropTarget = dragHoverContainerId === containerId;
+			const just = recentlyCreated.has(containerId);
+			if (baseData.dropTarget === dropTarget && baseData.justCreated === just) {
+				return n;
+			}
+			const data: ContainerNodeData = {
+				...baseData,
+				dropTarget,
+				justCreated: just,
+			};
+			return { ...n, data: data as unknown as Record<string, unknown> };
+		}
+		return n;
+	});
+}
+
+function pushLeafNode(
+	nodes: Node[],
+	projected: Extract<ProjectedNode, { kind: "leaf" }>,
+	fallback: ReturnType<typeof fallbackGridLayout>,
+	schedule: Schedule | null,
+	cycleTaskIds: ReadonlySet<TaskId>,
+	onDeleteTask: (taskId: TaskId) => void,
 	onAddLinkedTask: (
 		sourceId: TaskId,
 		direction: "successor" | "predecessor",
@@ -1121,8 +1192,6 @@ function pushLeafNode(
 	const task = projected.task;
 	const pos = task.layout?.position ?? fallback[task.id] ?? { x: 0, y: 0 };
 	const sched = schedule?.tasks[task.id];
-	const mcTask = mcResult?.tasks[task.id];
-	const editing = editingNodeId === task.id;
 	const data: TaskNodeData = {
 		title: task.title,
 		kind: task.kind === "milestone" ? "milestone" : "task",
@@ -1134,14 +1203,12 @@ function pushLeafNode(
 		cycle: cycleTaskIds.has(task.id),
 		status: sched?.status ?? task.status ?? "not_started",
 		progress: sched?.progress ?? task.progress ?? 0,
-		criticality: mcTask?.criticality,
-		justCreated: recentlyCreated.has(task.id),
+		criticality: undefined,
+		justCreated: false,
 		onDelete: () => onDeleteTask(task.id),
-		editing,
-		onCommitEdit: editing
-			? (next) => onCommitInlineEdit(task.id, next)
-			: undefined,
-		onCancelEdit: editing ? onCancelInlineEdit : undefined,
+		editing: false,
+		onCommitEdit: undefined,
+		onCancelEdit: undefined,
 		onAddPredecessor: (kind) => onAddLinkedTask(task.id, "predecessor", kind),
 		onAddSuccessor: (kind) => onAddLinkedTask(task.id, "successor", kind),
 	};
@@ -1468,11 +1535,23 @@ function useContinuousLayout(
 			if (cancelled) return;
 			// Apply positions. Expanded containers derive their position from
 			// children, so only leaves + collapsed containers need updating.
+			// Skip writes when the computed position is effectively unchanged —
+			// an Automerge change of N positions is O(N) and was firing for
+			// every task on every structural edit, even when ELK returned the
+			// same layout it had last time.
 			changeDoc((d) => {
 				for (const task of Object.values(d.tasksById)) {
 					if (task.kind === "container" && !collapsed.has(task.id)) continue;
 					const pos = positions[task.id];
 					if (!pos) continue;
+					const current = task.layout?.position;
+					if (
+						current &&
+						Math.abs(current.x - pos.x) < 0.5 &&
+						Math.abs(current.y - pos.y) < 0.5
+					) {
+						continue;
+					}
 					task.layout = { ...(task.layout ?? {}), position: pos };
 				}
 			});
