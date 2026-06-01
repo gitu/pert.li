@@ -95,7 +95,7 @@ describe("renderComment", () => {
 		hasScreenshot: () => true,
 	};
 
-	it("groups stories by title and renders markdown links to the image on github.com", () => {
+	it("groups stories by title and embeds raw.githubusercontent images linked to the full-size PNG", () => {
 		const out = renderComment({
 			...baseArgs,
 			stories: [
@@ -115,17 +115,22 @@ describe("renderComment", () => {
 		});
 		expect(out).toContain("### Foo/Bar");
 		expect(out).toContain("`src/components/foo/bar.stories.tsx`");
-		// Links must point at github.com/<repo>/blob/... — NOT
-		// raw.githubusercontent.com, which 404s under browser sessions
-		// for a private repo. And NOT an `<img>` tag (Camo would 404).
+		// Images embed via raw.githubusercontent.com — the repo is public
+		// so Camo can fetch the URL anonymously and the screenshot
+		// renders inline. Each image is wrapped in a link to the same
+		// raw URL so clicking opens the full-size PNG.
 		expect(out).toContain(
-			"- [Default](https://github.com/gitu/pert.li/blob/screenshots/pr-42/foo-bar--default.png)",
+			"[![Default](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--default.png)](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--default.png)",
 		);
 		expect(out).toContain(
-			"- [With Icon](https://github.com/gitu/pert.li/blob/screenshots/pr-42/foo-bar--with-icon.png)",
+			"[![With Icon](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--with-icon.png)](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--with-icon.png)",
 		);
-		expect(out).not.toContain("raw.githubusercontent.com");
-		expect(out).not.toMatch(/<img /);
+		// Each story name appears as bold above its image.
+		expect(out).toContain("**Default**");
+		expect(out).toContain("**With Icon**");
+		// We no longer route through github.com/blob — that was a
+		// workaround for the private-repo era.
+		expect(out).not.toContain("github.com/gitu/pert.li/blob/");
 		// The title heading appears only once even though we have two
 		// stories under it.
 		expect(out.match(/### Foo\/Bar/g)).toHaveLength(1);
@@ -142,6 +147,7 @@ describe("renderComment", () => {
 		expect(out).toContain("_render failed");
 		// Missing-screenshot stories must not produce a link to a 404'd
 		// image; they're rendered as bold name + "render failed" instead.
+		expect(out).not.toMatch(/!\[/);
 		expect(out).not.toMatch(/\]\(http/);
 	});
 

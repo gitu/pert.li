@@ -10,19 +10,13 @@
 //   argv[3]            — directory holding the rendered PNGs
 //   argv[4]            — output markdown file (default: stdout)
 //
-// For each story in the input JSON, we render a plain markdown link to
-// the published image on the screenshots branch — pointing at
-// github.com/<repo>/blob/<branch>/<path>, NOT raw.githubusercontent.com.
-// Two reasons:
-//   1. The repo is private. raw.githubusercontent.com only authenticates
-//      via an Authorization header (token); browser sessions don't carry
-//      one against that subdomain, so the URL 404s when a reviewer
-//      clicks it. github.com/<repo>/blob/... works under the reviewer's
-//      existing session and renders the PNG inline in the file viewer.
-//   2. We also avoid `<img>` tags entirely: GitHub's Camo image proxy
-//      that fetches `<img src>` URLs in PR comments is anonymous and
-//      would 404 against either subdomain for a private repo. Plain
-//      `<a>` links sidestep Camo.
+// For each story in the input JSON we embed the PNG inline via a
+// markdown image pointed at raw.githubusercontent.com on the
+// screenshots branch. The repo is public, so GitHub's Camo image
+// proxy can fetch the raw URL anonymously and the image renders in
+// the PR conversation without the reviewer having to click through.
+// We also wrap the image in a link to the same raw URL so a click
+// opens the full-size PNG.
 // Stories whose PNG is missing on disk are listed as "(render failed)".
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -33,7 +27,7 @@ import path from "node:path";
 // unit test can exercise grouping / fallback behavior without touching
 // the filesystem.
 export function renderComment({ stories, repo, prNumber, branch = "screenshots", headSha = "", hasScreenshot }) {
-	const urlBase = `https://github.com/${repo}/blob/${branch}/pr-${prNumber}`;
+	const urlBase = `https://raw.githubusercontent.com/${repo}/${branch}/pr-${prNumber}`;
 	const lines = ["## 📸 PR screenshots", ""];
 
 	if (!stories || stories.length === 0) {
@@ -55,12 +49,15 @@ export function renderComment({ stories, repo, prNumber, branch = "screenshots",
 			for (const story of group) {
 				if (hasScreenshot(story)) {
 					const url = `${urlBase}/${story.id}.png`;
-					lines.push(`- [${story.name}](${url})`);
+					lines.push(`**${story.name}**`);
+					lines.push("");
+					lines.push(`[![${story.name}](${url})](${url})`);
+					lines.push("");
 				} else {
-					lines.push(`- **${story.name}** — _render failed_`);
+					lines.push(`**${story.name}** — _render failed_`);
+					lines.push("");
 				}
 			}
-			lines.push("");
 		}
 	}
 
