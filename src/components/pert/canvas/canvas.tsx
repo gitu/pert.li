@@ -575,18 +575,225 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		};
 	}, [projectId]);
 
-	// Arrow-key navigation on the canvas. Plain arrows jump the selection
-	// through the dependency graph (←/→ = predecessor/successor, ↑/↓ =
-	// sibling tasks sharing a predecessor or successor). ⌘+← / ⌘+→ create a
-	// new linked task in that direction — the keyboard mirror of the radial
-	// quick-add buttons on the node card. Bound once via a ref so the handler
-	// doesn't re-attach on every doc edit.
-	const keyNavRef = useRef({ doc, projectId, onAddLinkedTask });
-	keyNavRef.current = { doc, projectId, onAddLinkedTask };
+	// Mirror the selected task id into React Flow's per-node `selected` flag,
+	// and pan the camera if the new selection isn't currently in view. React
+	// Flow tracks node selection in its own local state — without this, only
+	// the mouse-driven selection paints a ring, and keynav / programmatic
+	// selection leaves the visual marker on whatever the user last clicked.
+	// The visibility check uses real DOM rects so it accounts for the
+	// current zoom + viewport; if any part of the node overlaps the React
+	// Flow container we leave the camera alone (the user can see it).
+	// biome-ignore lint/correctness/useExhaustiveDependencies: doc/reactFlow/setNodes are accessed through a ref so the effect only fires when the selection actually changes — re-running on doc would re-pan on every edit
 	useEffect(() => {
+		setNodes((current) =>
+			current.map((n) => {
+				const shouldSelect = n.id === selectedTaskId;
+				if (n.selected === shouldSelect) return n;
+				return { ...n, selected: shouldSelect };
+			}),
+		);
+		if (!selectedTaskId) return;
+		const task = doc.tasksById[selectedTaskId];
+		if (!task) return;
+		const pos = task.layout?.position;
+		if (!pos) return;
+		const handle = requestAnimationFrame(() => {
+			const nodeEl = document.querySelector(
+				`.react-flow__node[data-id="${CSS.escape(selectedTaskId)}"]`,
+			) as HTMLElement | null;
+			if (!nodeEl) return;
+			const flowEl = nodeEl.closest(".react-flow") as HTMLElement | null;
+			if (!flowEl) return;
+			const nodeRect = nodeEl.getBoundingClientRect();
+			const flowRect = flowEl.getBoundingClientRect();
+			const overlaps =
+				nodeRect.right > flowRect.left &&
+				nodeRect.left < flowRect.right &&
+				nodeRect.bottom > flowRect.top &&
+				nodeRect.top < flowRect.bottom;
+			if (overlaps) return;
+			const width = nodeRect.width || TASK_WIDTH;
+			const height = nodeRect.height || TASK_HEIGHT;
+			reactFlow.setCenter(pos.x + width / 2, pos.y + height / 2, {
+				zoom: reactFlow.getZoom(),
+				duration: 300,
+			});
+		});
+		return () => cancelAnimationFrame(handle);
+	}, [selectedTaskId]);
+
+	// Spawn a sibling that shares every predecessor of the seed — the "fan
+	// out from this point" gesture used by Shift+Tab. Placed one card-height
+	// below the seed at the same x so consecutive Shift+Tabs stack a list of
+	// parallel work items. Selecting + entering inline-edit on the new task
+	// mirrors `onAddLinkedTask` so the user can immediately rename.
+	const onAddSiblingTask = useCallback(
+		(seedId: TaskId) => {
+			const seed = doc.tasksById[seedId];
+			if (!seed) return;
+			const seedPos = seed.layout?.position ?? { x: 0, y: 0 };
+			const predecessorIds: TaskId[] = [];
+			for (const dep of Object.values(doc.dependenciesById)) {
+				const from = dep.from.taskId;
+				if (dep.to.taskId === seedId && from) predecessorIds.push(from);
+			}
+			const position = { x: seedPos.x, y: seedPos.y + TASK_HEIGHT + 40 };
+			const newTaskId = newId("task");
+			changeDoc((d) => {
+				const draftSeed = d.tasksById[seedId];
+				if (!draftSeed) return;
+				const draft: Task = {
+					id: newTaskId,
+					kind: "task",
+					title: "New task",
+					parentId: draftSeed.parentId ?? null,
+					layout: { position },
+					estimate: {
+						optimistic: 1,
+						mostLikely: 2,
+						pessimistic: 4,
+						unit: "day",
+					},
+				};
+				d.tasksById[newTaskId] = draft;
+				for (const predId of predecessorIds) {
+					if (!d.tasksById[predId]) continue;
+					const depId = newId("dep");
+					d.dependenciesById[depId] = {
+						id: depId,
+						from: { taskId: predId },
+						to: { taskId: newTaskId },
+						type: "finish_to_start",
+					};
+				}
+			});
+			selectTask(projectId, newTaskId);
+			setEditingNodeId(newTaskId);
+		},
+		[changeDoc, doc.dependenciesById, doc.tasksById, projectId],
+	);
+
+	// Spawn a fresh task/milestone/container at the viewport centre. If a
+	// container is currently selected, the new leaf is dropped inside it —
+	// matches the same logic as the toolbar's add buttons so the keyboard
+	// and the mouse stay consistent.
+	const onAddFreshNode = useCallback(
+		(kind: Task["kind"]) => {
+			const center = screenToFlowPosition({
+				x: window.innerWidth / 2,
+				y: window.innerHeight / 2,
+			});
+			const selectedId = selectionStore.state.taskId;
+			const selected =
+				selectionStore.state.projectId === projectId && selectedId
+					? doc.tasksById[selectedId]
+					: undefined;
+			const parentId =
+				selected?.kind === "container" && kind !== "container"
+					? selected.id
+					: null;
+			const newTaskId = newId("task");
+			changeDoc((d) => {
+				const draft: Task = {
+					id: newTaskId,
+					kind,
+					title:
+						kind === "milestone"
+							? "New milestone"
+							: kind === "container"
+								? "New container"
+								: "New task",
+					parentId,
+					layout: { position: center },
+				};
+				if (kind === "task") {
+					draft.estimate = {
+						optimistic: 1,
+						mostLikely: 2,
+						pessimistic: 4,
+						unit: "day",
+					};
+				}
+				d.tasksById[newTaskId] = draft;
+				if (kind === "container") ensureContainerInterfaces(d, newTaskId);
+			});
+			selectTask(projectId, newTaskId);
+			if (kind !== "container") setEditingNodeId(newTaskId);
+		},
+		[changeDoc, doc.tasksById, projectId, screenToFlowPosition],
+	);
+
+	// Keyboard shortcuts on the canvas. Three classes of action, all wired
+	// through one capture-phase listener so React Flow's built-in handlers
+	// (arrow-nudge, Tab-focus-cycle) never see the event:
+	//   • Navigation — arrows walk the dependency graph; ⌘+←/→ creates a
+	//     linked predecessor/successor task (also Tab / Shift+Tab below).
+	//   • Spawn from selection — Tab adds a downstream task connected to
+	//     the seed; Shift+Tab adds a sibling that shares the seed's
+	//     predecessors so users can fan out parallel work fast.
+	//   • Fresh add — `n` / `m` / `c` add a task / milestone / container
+	//     at the viewport centre, with no selection required. Lets users
+	//     bootstrap an empty canvas without reaching for the toolbar.
+	// Bound via refs so the listener doesn't re-attach on every doc edit.
+	const keyNavRef = useRef({
+		doc,
+		projectId,
+		onAddLinkedTask,
+		onAddSiblingTask,
+		onAddFreshNode,
+	});
+	keyNavRef.current = {
+		doc,
+		projectId,
+		onAddLinkedTask,
+		onAddSiblingTask,
+		onAddFreshNode,
+	};
+	useEffect(() => {
+		function isTypingTarget(target: EventTarget | null): boolean {
+			const el = target as HTMLElement | null;
+			if (!el) return false;
+			const tag = el.tagName;
+			return (
+				tag === "INPUT" ||
+				tag === "TEXTAREA" ||
+				tag === "SELECT" ||
+				el.isContentEditable === true
+			);
+		}
 		function handler(e: KeyboardEvent) {
 			if (e.defaultPrevented) return;
+			if (isTypingTarget(e.target)) return;
 			const key = e.key;
+			const current = keyNavRef.current;
+			const state = selectionStore.state;
+
+			// Fresh-add letters — only when no Cmd/Ctrl/Alt is held so we
+			// don't collide with browser shortcuts (Cmd+N / Cmd+M / Ctrl+N).
+			if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+				if (key === "n" || key === "m" || key === "c") {
+					e.preventDefault();
+					e.stopPropagation();
+					current.onAddFreshNode(
+						key === "n" ? "task" : key === "m" ? "milestone" : "container",
+					);
+					return;
+				}
+			}
+
+			// Tab / Shift+Tab spawn from the current selection.
+			if (key === "Tab") {
+				if (state.projectId !== current.projectId || !state.taskId) return;
+				const task = current.doc.tasksById[state.taskId];
+				if (!task || task.kind === "container") return;
+				e.preventDefault();
+				e.stopPropagation();
+				if (e.shiftKey) current.onAddSiblingTask(state.taskId);
+				else current.onAddLinkedTask(state.taskId, "successor", "task");
+				return;
+			}
+
+			// Everything below this point needs an arrow key + a selection.
 			if (
 				key !== "ArrowLeft" &&
 				key !== "ArrowRight" &&
@@ -595,20 +802,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			) {
 				return;
 			}
-			const target = e.target as HTMLElement | null;
-			if (target) {
-				const tag = target.tagName;
-				if (
-					tag === "INPUT" ||
-					tag === "TEXTAREA" ||
-					tag === "SELECT" ||
-					target.isContentEditable
-				) {
-					return;
-				}
-			}
-			const state = selectionStore.state;
-			const current = keyNavRef.current;
 			if (state.projectId !== current.projectId || !state.taskId) return;
 			const task = current.doc.tasksById[state.taskId];
 			if (!task || task.kind === "container") return;
@@ -617,6 +810,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			if (wantsCreate) {
 				if (key !== "ArrowLeft" && key !== "ArrowRight") return;
 				e.preventDefault();
+				e.stopPropagation();
 				current.onAddLinkedTask(
 					state.taskId,
 					key === "ArrowRight" ? "successor" : "predecessor",
@@ -625,6 +819,13 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				return;
 			}
 
+			// Own the arrow key as soon as a task is selected — even when no
+			// neighbor exists in that direction, the user's intent is
+			// "navigate", not "move the node by 5px". Without this, React
+			// Flow's node-move handler picks up the unhandled arrow and the
+			// selected task drifts off-grid.
+			e.preventDefault();
+			e.stopPropagation();
 			const dir =
 				key === "ArrowLeft"
 					? "left"
@@ -634,13 +835,10 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 							? "up"
 							: "down";
 			const next = findNeighborTaskId(current.doc, state.taskId, dir);
-			if (next) {
-				e.preventDefault();
-				selectTask(current.projectId, next);
-			}
+			if (next) selectTask(current.projectId, next);
 		}
-		window.addEventListener("keydown", handler);
-		return () => window.removeEventListener("keydown", handler);
+		window.addEventListener("keydown", handler, true);
+		return () => window.removeEventListener("keydown", handler, true);
 	}, []);
 
 	const resolvedTheme = useResolvedTheme();

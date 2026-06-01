@@ -6,6 +6,10 @@ import {
 	PlusIcon,
 	Settings2Icon,
 } from "lucide-react";
+import {
+	CANVAS_SHORTCUTS,
+	KeyboardShortcutsHelp,
+} from "#/components/pert/keyboard-shortcuts-help";
 import { Button } from "#/components/ui/button";
 import {
 	DropdownMenu,
@@ -17,6 +21,7 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
+import { Separator } from "#/components/ui/separator";
 import {
 	type CanvasPrefs,
 	EDGE_STYLES,
@@ -30,6 +35,10 @@ export type CanvasAddToolbarProps = {
 	onAddContainer: () => void;
 };
 
+// Tooltip suffix that exposes the keyboard shortcut next to each button so
+// users discover them without opening the help popover. The popover still
+// ships the full cheat-sheet for the bindings that aren't on a button (Tab,
+// arrows, etc.).
 export function CanvasAddToolbar({
 	onAddTask,
 	onAddMilestone,
@@ -46,6 +55,7 @@ export function CanvasAddToolbar({
 				className="h-8 gap-1.5 text-xs"
 				onClick={onAddTask}
 				data-testid="toolbar-add-task"
+				title="Add a task (n)"
 			>
 				<PlusIcon className="size-3.5" />
 				Task
@@ -56,6 +66,7 @@ export function CanvasAddToolbar({
 				className="h-8 gap-1.5 text-xs"
 				onClick={onAddMilestone}
 				data-testid="toolbar-add-milestone"
+				title="Add a milestone (m)"
 			>
 				<CircleDotIcon className="size-3.5" />
 				Milestone
@@ -66,10 +77,17 @@ export function CanvasAddToolbar({
 				className="h-8 gap-1.5 text-xs"
 				onClick={onAddContainer}
 				data-testid="toolbar-add-container"
+				title="Add a container (c)"
 			>
 				<FolderPlusIcon className="size-3.5" />
 				Container
 			</Button>
+			<Separator orientation="vertical" className="mx-1 h-5" />
+			<KeyboardShortcutsHelp
+				groups={CANVAS_SHORTCUTS}
+				testId="canvas-keyboard-help"
+				tooltip="Canvas keyboard shortcuts"
+			/>
 		</div>
 	);
 }

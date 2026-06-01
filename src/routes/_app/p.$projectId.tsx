@@ -16,9 +16,10 @@ import {
 	MaximizeIcon,
 	MinimizeIcon,
 	NetworkIcon,
+	Share2Icon,
 	TimerIcon,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CanvasLoading } from "#/components/canvas/canvas-loading";
 import { PertCanvas } from "#/components/pert/canvas/canvas";
 import { ExportProjectButton } from "#/components/pert/exchange/export-button";
@@ -32,6 +33,7 @@ import { ProjectCalendarSheet } from "#/components/pert/project-calendar-sheet";
 import { TimelineMobile } from "#/components/pert/timeline/timeline-mobile";
 import { TimelineView } from "#/components/pert/timeline/timeline-view";
 import { Button } from "#/components/ui/button";
+import { ShareProjectDialog } from "#/components/workspace/share-project-dialog";
 import { authClient } from "#/lib/auth-client";
 import { useOptionalRepo } from "#/lib/automerge/provider";
 import { usePresenceSelection } from "#/lib/automerge/use-presence-selection";
@@ -47,6 +49,7 @@ import {
 	selectTask,
 	setActiveProjectDoc,
 } from "#/lib/pert/store";
+import { shareIdentityStore } from "#/lib/share-identity";
 import { useFullscreen } from "#/lib/use-fullscreen";
 import { useIsMobile } from "#/lib/use-media-query";
 import { cn } from "#/lib/utils";
@@ -189,6 +192,7 @@ function ProjectViewHeader({
 			</div>
 			<HeaderCalendarSheet projectId={projectId} />
 			<HeaderExportButton projectId={projectId} />
+			<HeaderShareButton projectId={projectId} />
 			<Button
 				type="button"
 				size="sm"
@@ -220,6 +224,31 @@ function HeaderExportButton({ projectId }: { projectId: string }) {
 	const { doc, projectId: activeId } = useStore(projectDocStore);
 	if (!doc || activeId !== projectId) return null;
 	return <ExportProjectButton doc={doc} />;
+}
+
+function HeaderShareButton({ projectId }: { projectId: string }) {
+	const [open, setOpen] = useState(false);
+	return (
+		<>
+			<Button
+				type="button"
+				size="sm"
+				variant="ghost"
+				className="h-8 gap-1.5 text-xs"
+				onClick={() => setOpen(true)}
+				data-testid="project-share"
+				title="Share this project"
+			>
+				<Share2Icon className="size-3.5" />
+				Share
+			</Button>
+			<ShareProjectDialog
+				projectId={projectId}
+				open={open}
+				onOpenChange={setOpen}
+			/>
+		</>
+	);
 }
 
 function ViewTab({
@@ -279,7 +308,10 @@ function RepoReadyCanvas({
 	);
 }
 
-function PertProjectPanel({
+// Exported so the public /share/$token route can drive the canvas tree
+// with the share-resolved `documentId` directly, skipping the auth-gated
+// `useProjectDoc` resolution that the in-app route uses.
+export function PertProjectPanel({
 	projectId,
 	documentId,
 	view,
@@ -308,8 +340,11 @@ function PertProjectPanel({
 			!doc.interfacesByContainerId ||
 			!doc.viewsById);
 	useEffect(() => {
-		if (!needsMigration) return;
-		changeDoc((d) => {
+		// Skip in read-only modes (mobile-readonly, view-mode share). The
+		// next authenticated editor to open the doc runs the migration; a
+		// public viewer must not write to the project they're only viewing.
+		if (!needsMigration || !effectiveChangeDoc) return;
+		effectiveChangeDoc((d) => {
 			const legacy = d as unknown as Record<string, unknown>;
 			legacy.tasksById ??= {};
 			legacy.dependenciesById ??= {};
@@ -317,7 +352,7 @@ function PertProjectPanel({
 			legacy.viewsById ??= {};
 			if ("count" in legacy) delete legacy.count;
 		});
-	}, [needsMigration, changeDoc]);
+	}, [needsMigration, effectiveChangeDoc]);
 
 	// Pre-rework containers were created without default Entry/Exit interfaces.
 	// Backfill them once on first load so cross-boundary edges have a port to
@@ -338,15 +373,18 @@ function PertProjectPanel({
 		.map((t) => t.id)
 		.join(",");
 	useEffect(() => {
-		if (needsMigration || containerBackfillKey === "") return;
-		changeDoc((d) => {
+		// Same read-only guard as the schema migration above — a view-only
+		// recipient must not write container backfills to the project.
+		if (needsMigration || containerBackfillKey === "" || !effectiveChangeDoc)
+			return;
+		effectiveChangeDoc((d) => {
 			for (const id of containerBackfillKey.split(",")) {
 				if (d.tasksById[id]?.kind === "container") {
 					ensureContainerInterfaces(d, id);
 				}
 			}
 		});
-	}, [needsMigration, containerBackfillKey, changeDoc]);
+	}, [needsMigration, containerBackfillKey, effectiveChangeDoc]);
 
 	// Lift the active doc + handle into the cross-pane store so the right
 	// inspector, history drawer, and presence overlays (which live in the
@@ -419,8 +457,17 @@ function PresenceBroadcaster({
 	handle: DocHandle<PertProjectDoc>;
 }) {
 	const { data: session } = authClient.useSession();
-	const userId = session?.user?.id ?? "anonymous";
-	const displayName = session?.user?.name ?? session?.user?.email ?? null;
+	// Share-link recipients have no Better Auth session; the share landing
+	// route writes their chosen display name + per-tab id into this store
+	// instead. The signed-in session always wins when both are present
+	// (someone signed in opening a link sees their own identity).
+	const shareIdentity = useStore(shareIdentityStore);
+	const userId = session?.user?.id ?? shareIdentity?.userId ?? "anonymous";
+	const displayName =
+		session?.user?.name ??
+		session?.user?.email ??
+		shareIdentity?.displayName ??
+		null;
 	const selectedTaskId = useStore(selectionStore, (s) =>
 		s.projectId === projectId ? s.taskId : null,
 	);

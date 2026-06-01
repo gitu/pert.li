@@ -7,8 +7,38 @@ afterEach(() => {
 });
 
 describe("createEmailTransport", () => {
-	it("falls back to console when nothing is configured", () => {
+	it("falls back to console when nothing is configured outside production", () => {
 		const transport = createEmailTransport({});
+		expect(transport.kind).toBe("console");
+	});
+
+	it("refuses to fall back to console in production", () => {
+		expect(() => createEmailTransport({ NODE_ENV: "production" })).toThrow(
+			/No email transport configured in production/,
+		);
+	});
+
+	it("still uses Resend in production when RESEND_API_KEY is set", () => {
+		const transport = createEmailTransport({
+			NODE_ENV: "production",
+			RESEND_API_KEY: "re_test",
+		});
+		expect(transport.kind).toBe("resend");
+	});
+
+	it("still uses SMTP in production when SMTP_HOST is set", () => {
+		const transport = createEmailTransport({
+			NODE_ENV: "production",
+			SMTP_HOST: "mail.example.com",
+		});
+		expect(transport.kind).toBe("smtp");
+	});
+
+	it("ALLOW_CONSOLE_EMAIL_IN_PROD=1 explicitly opts in to the console fallback", () => {
+		const transport = createEmailTransport({
+			NODE_ENV: "production",
+			ALLOW_CONSOLE_EMAIL_IN_PROD: "1",
+		});
 		expect(transport.kind).toBe("console");
 	});
 

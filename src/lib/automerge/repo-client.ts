@@ -29,3 +29,26 @@ export function getBrowserRepo(): Repo {
 	});
 	return _repo;
 }
+
+// Share-link repo. Lives separately from the authenticated singleton so a
+// signed-in user opening a share link in the same browser doesn't have the
+// share peer's identity collide with their own session. No IndexedDB storage
+// — the share session is transient. Different `share` tokens get different
+// repo instances so cross-token state doesn't leak.
+const _shareRepos = new Map<string, Repo>();
+
+export function getShareRepo(opts: { token: string }): Repo {
+	const existing = _shareRepos.get(opts.token);
+	if (existing) return existing;
+	if (typeof window === "undefined") {
+		throw new Error("getShareRepo() called outside the browser");
+	}
+	const wsUrl = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/sync?share=${encodeURIComponent(opts.token)}`;
+	const repo = new Repo({
+		network: [new WebSocketClientAdapter(wsUrl)],
+		// No IndexedDB: share sessions are intentionally non-persistent so
+		// closing the tab leaves no recoverable doc state behind locally.
+	});
+	_shareRepos.set(opts.token, repo);
+	return repo;
+}

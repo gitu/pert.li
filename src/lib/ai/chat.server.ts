@@ -7,6 +7,7 @@ import {
 } from "@tanstack/ai";
 import dotenv from "dotenv";
 import { type ProviderEnv, selectTextAdapter } from "#/lib/ai/provider";
+import { requireSessionFromHeaders } from "#/server/auth-context.server";
 
 // Vite's environment runner sandboxes `process.env` inside the dev worker —
 // dotenv parses our .env files but the writes don't reach `globalThis.process.env`
@@ -59,10 +60,12 @@ const SYSTEM_PROMPT = [
 	"",
 	"  Layout (app shell, signed-in):",
 	"    • Top bar: sidebar toggle, pert.li logo, workspace switcher",
-	"      (hidden when the sidebar is collapsed), New project button,",
-	"      Chat button, bottom-panel toggle, account menu (Edit profile,",
-	"      Admin — only for users with the admin bit, theme submenu with",
-	"      Light/Dark/System, Sign out).",
+	"      (hidden when the sidebar is collapsed; dropdown lists every",
+	"      workspace the user belongs to with their role, marks the active",
+	"      one, and has a 'Create new workspace' entry that opens a small",
+	"      name-only dialog), New project button, Chat button, bottom-panel",
+	"      toggle, account menu (Edit profile, Admin — only for users with",
+	"      the admin bit, theme submenu with Light/Dark/System, Sign out).",
 	"    • Left sidebar: Workspace link + Projects list (click to open).",
 	"      Collapsible via the leftmost top-bar button.",
 	"    • Main column: the active project's views (see below) on top,",
@@ -121,6 +124,14 @@ const SYSTEM_PROMPT = [
 	"    • Canvas — React Flow + ELK auto-layout. Zoom, pan, drag to reparent,",
 	"      collapse/expand container nodes. Fullscreen, layout presets",
 	"      (compact / comfortable / spacious), elbow vs cubic edges.",
+	"      Keyboard add: n / m / c add a task / milestone / container at the",
+	"      viewport centre (drops inside the selected container when one is",
+	"      picked). With a leaf node selected, Tab spawns a downstream",
+	"      linked task and Shift+Tab spawns a sibling that shares the",
+	"      seed's predecessors; ⌘/Ctrl + ←/→ creates a linked predecessor",
+	"      or successor. Arrow keys walk the dep graph (↑/↓ = siblings,",
+	"      ←/→ = predecessor/successor). The toolbar's 'Keys' button opens",
+	"      a cheat-sheet of every binding.",
 	"    • List — tree view of tasks.",
 	"    • Timeline — Gantt-style by date.",
 	"    • Table — TanStack Table with sort / filter / column toggles and",
@@ -134,7 +145,14 @@ const SYSTEM_PROMPT = [
 	"      ±1.96σ confidence band (PERT spread, summed in quadrature),",
 	"      done-vs-remaining day split, the duration-weighted progress %,",
 	"      and the completed-task count as a fraction + percent (e.g.",
-	"      '3/5 (60%) completed').",
+	"      '3/5 (60%) completed'). Keyboard add: n or ⌘/Ctrl+I focuses the",
+	"      quick-add row, Enter commits as a task and Shift+Enter commits",
+	"      as a milestone. With a row selected, ↑/↓ moves the selection,",
+	"      Enter inline-edits the title, o / Shift+O insert a new task",
+	"      below / above (wired with a dependency so it sorts where you'd",
+	"      expect), and Tab / Shift+Tab indent under the previous row's",
+	"      container / outdent one level. A 'Keys' button in the table",
+	"      header opens the same cheat-sheet.",
 	"    • Matrix — dependency matrix; click a cell to toggle an edge.",
 	"      Successor labels now sit anchored at the column's bottom-center",
 	"      so the diagonal text actually lines up with its column. A",
@@ -209,8 +227,12 @@ const SYSTEM_PROMPT = [
 	"",
 	"  Collaboration — projects are Automerge documents. Multiple users edit",
 	"  the same plan live with presence badges; the History drawer browses",
-	"  versions and restores earlier values. Workspace-level invites bring",
-	"  collaborators in by email.",
+	"  versions and restores earlier values. Workspace owners invite",
+	"  collaborators from the workspace home via the 'Invite collaborator'",
+	"  button: by email (for users already signed up) or via a shareable",
+	"  Share link (editor access only), optional expiry, and an",
+	"  optional max-uses cap. Anyone with a Share link confirms the join on",
+	"  a /join/<token> landing page; owner promotion stays manual.",
 	"",
 	"  Import / Export — every project header has an Export button that",
 	"  downloads the plan as a layout-free `.pert.json` exchange file (tasks,",
@@ -219,6 +241,15 @@ const SYSTEM_PROMPT = [
 	"  'Import project' button that uploads a `.pert.json` and seeds a fresh",
 	"  project from its contents, optionally with a renamed title. Re-import",
 	"  re-runs auto-layout, so positions don't round-trip.",
+	"",
+	"  Share — every project header has a Share button. The owner mints",
+	"  link-based shares with two modes (view-only or editable) and an",
+	"  optional expiry (defaults to 30 days; can be set to never). Each",
+	"  share has its own URL at /share/<token>; recipients open it without",
+	"  signing in. Editable shares prompt for a display name once, then",
+	"  sync live alongside authenticated collaborators. The dialog lists",
+	"  active links with copy, extend, and revoke controls; revoked links",
+	"  stop working immediately.",
 	"",
 	"  Chat dock — the assistant (you) opens in two modes: a right-side Sheet",
 	"  overlay (transient) or a Pinned column anchored to the right rail.",
@@ -386,6 +417,16 @@ const SYSTEM_PROMPT = [
 ].join("\n");
 
 export async function handleChatRequest(request: Request): Promise<Response> {
+	// Gate every call on an authenticated session: the LLM adapter below uses
+	// server-held provider keys, so any anonymous caller would be spending the
+	// operator's API budget. Throws UnauthorizedError (401) when there's no
+	// session — handled below so the route can return a 401 response instead
+	// of a 500.
+	try {
+		await requireSessionFromHeaders(request.headers);
+	} catch {
+		return new Response("Unauthorized", { status: 401 });
+	}
 	const params = await chatParamsFromRequest(request);
 	const { adapter, config } = selectTextAdapter(SERVER_ENV);
 	// All chat tools are client-executed (they mutate the browser-side

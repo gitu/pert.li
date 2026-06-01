@@ -27,6 +27,10 @@ import {
 	ZapIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+	KeyboardShortcutsHelp,
+	TABLE_SHORTCUTS,
+} from "#/components/pert/keyboard-shortcuts-help";
 import { PresenceBadge } from "#/components/pert/presence/presence-badge";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
@@ -47,7 +51,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "#/components/ui/table";
-import { addTaskMutation } from "#/lib/ai/tool-mutators";
+import { addDependencyMutation, addTaskMutation } from "#/lib/ai/tool-mutators";
 import { todayIsoDate } from "#/lib/pert/calendar";
 import { computeSchedule, type ScheduleResult } from "#/lib/pert/schedule";
 import { projectDocStore, selectionStore, selectTask } from "#/lib/pert/store";
@@ -346,29 +350,197 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 		[changeDoc, focusQuickAdd, projectId, quickAddEstimate, quickAddTitle],
 	);
 
-	// Keyboard shortcut: cmd/ctrl + i jumps focus to the quick-add input
-	// from anywhere in the table view. `n` works too as long as the focus
-	// isn't already inside an input/textarea — mirrors GitHub's `c` for
-	// "create".
+	// Insert a fresh task adjacent to a seed row. The new task inherits the
+	// seed's parent, and we wire a dependency so it sorts where the user
+	// expects: below = `seed → new` (new becomes a successor), above =
+	// `new → seed` (new becomes a predecessor). Selecting + flipping into
+	// inline-edit mirrors the canvas Tab-spawn experience.
+	const insertAdjacentRow = useCallback(
+		(seedId: TaskId, position: "above" | "below") => {
+			if (!changeDoc) return;
+			const seed = doc.tasksById[seedId];
+			if (!seed) return;
+			const parentId = seed.parentId ?? null;
+			let newTaskId: TaskId | null = null;
+			changeDoc((d) => {
+				const { id } = addTaskMutation(d, {
+					title: "",
+					kind: "task",
+					parentId,
+				});
+				newTaskId = id;
+				const fromId = position === "below" ? seedId : id;
+				const toId = position === "below" ? id : seedId;
+				addDependencyMutation(d, { fromTaskId: fromId, toTaskId: toId });
+			});
+			if (newTaskId) {
+				selectTask(projectId, newTaskId);
+				setEditingId(newTaskId);
+			}
+		},
+		[changeDoc, doc.tasksById, projectId],
+	);
+
+	// Indent / outdent the selected row. Indent copies the parentId of the
+	// previous visible row (so the row drops into the same container as the
+	// one above it). Outdent walks up: if the row is already nested, set its
+	// parent to its current parent's parent. No-op when there's no parent to
+	// inherit / promote from, matching outliner intuition.
+	const indentRow = useCallback(
+		(rowId: TaskId, prevRowId: TaskId | null) => {
+			if (!changeDoc) return;
+			if (!prevRowId) return;
+			const prev = doc.tasksById[prevRowId];
+			if (!prev) return;
+			const targetParent = prev.parentId ?? null;
+			const row = doc.tasksById[rowId];
+			if (!row) return;
+			if ((row.parentId ?? null) === targetParent) return;
+			if (!targetParent) return; // nothing to indent into
+			changeDoc((d) => {
+				const t = d.tasksById[rowId];
+				if (!t) return;
+				t.parentId = targetParent;
+			});
+		},
+		[changeDoc, doc.tasksById],
+	);
+	const outdentRow = useCallback(
+		(rowId: TaskId) => {
+			if (!changeDoc) return;
+			const row = doc.tasksById[rowId];
+			if (!row?.parentId) return;
+			const parent = doc.tasksById[row.parentId];
+			const grandparent = parent?.parentId ?? null;
+			changeDoc((d) => {
+				const t = d.tasksById[rowId];
+				if (!t) return;
+				t.parentId = grandparent;
+			});
+		},
+		[changeDoc, doc.tasksById],
+	);
+
+	// The full set of keyboard shortcuts for the table view. Stays consistent
+	// with the canvas keynav vocabulary (n adds, Tab indents, arrows move).
+	//   • n / ⌘I        — focus the quick-add row
+	//   • ↑/↓           — move selection across visible rows
+	//   • Enter         — inline-edit the selected row's title
+	//   • o             — insert a task BELOW the selection
+	//   • Shift+O       — insert a task ABOVE the selection
+	//   • Tab           — indent (parent = previous row's parent)
+	//   • Shift+Tab     — outdent (parent = current grandparent)
+	//   • Esc           — clear selection
+	// Bound via a ref so the effect re-runs only when the bindings change,
+	// not on every doc edit.
+	const visibleRowsRef = useRef<TaskId[]>([]);
+	const handlerStateRef = useRef({
+		focusQuickAdd,
+		insertAdjacentRow,
+		indentRow,
+		outdentRow,
+		setEditingId,
+		projectId,
+	});
+	handlerStateRef.current = {
+		focusQuickAdd,
+		insertAdjacentRow,
+		indentRow,
+		outdentRow,
+		setEditingId,
+		projectId,
+	};
 	useEffect(() => {
 		if (!changeDoc) return;
 		const handler = (e: KeyboardEvent) => {
 			if (e.defaultPrevented) return;
-			const isModEnter = (e.metaKey || e.ctrlKey) && e.key === "i";
 			const target = e.target as HTMLElement | null;
 			const inInput =
 				target?.tagName === "INPUT" ||
 				target?.tagName === "TEXTAREA" ||
 				target?.isContentEditable === true;
+			const ctx = handlerStateRef.current;
+			const orderedIds = visibleRowsRef.current;
+			const selectedId = selectionStore.state.taskId;
+			const selectedInProject =
+				selectionStore.state.projectId === ctx.projectId && selectedId;
+
+			// Quick-add focus shortcuts.
+			const isModI = (e.metaKey || e.ctrlKey) && e.key === "i";
 			const isPlainN = !inInput && e.key === "n" && !e.metaKey && !e.ctrlKey;
-			if (isModEnter || isPlainN) {
+			if (isModI || isPlainN) {
 				e.preventDefault();
-				focusQuickAdd();
+				ctx.focusQuickAdd();
+				return;
+			}
+			if (inInput) return;
+			if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+			if (e.key === "Escape") {
+				if (selectedInProject) {
+					e.preventDefault();
+					selectTask(ctx.projectId, null);
+				}
+				return;
+			}
+
+			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+				if (orderedIds.length === 0) return;
+				e.preventDefault();
+				const currentIndex = selectedInProject
+					? orderedIds.indexOf(selectedId as TaskId)
+					: -1;
+				let nextIndex: number;
+				if (e.key === "ArrowDown") {
+					nextIndex = currentIndex < 0 ? 0 : currentIndex + 1;
+					if (nextIndex >= orderedIds.length) nextIndex = orderedIds.length - 1;
+				} else {
+					nextIndex =
+						currentIndex < 0
+							? orderedIds.length - 1
+							: Math.max(0, currentIndex - 1);
+				}
+				const nextId = orderedIds[nextIndex];
+				if (nextId) selectTask(ctx.projectId, nextId);
+				return;
+			}
+
+			if (e.key === "Enter") {
+				if (!selectedInProject) return;
+				e.preventDefault();
+				ctx.setEditingId(selectedId as TaskId);
+				return;
+			}
+
+			if (e.key === "o" && !e.shiftKey) {
+				if (!selectedInProject) return;
+				e.preventDefault();
+				ctx.insertAdjacentRow(selectedId as TaskId, "below");
+				return;
+			}
+			if (e.key === "O" && e.shiftKey) {
+				if (!selectedInProject) return;
+				e.preventDefault();
+				ctx.insertAdjacentRow(selectedId as TaskId, "above");
+				return;
+			}
+
+			if (e.key === "Tab") {
+				if (!selectedInProject) return;
+				e.preventDefault();
+				if (e.shiftKey) {
+					ctx.outdentRow(selectedId as TaskId);
+				} else {
+					const idx = orderedIds.indexOf(selectedId as TaskId);
+					const prevId = idx > 0 ? orderedIds[idx - 1] : null;
+					ctx.indentRow(selectedId as TaskId, prevId);
+				}
+				return;
 			}
 		};
 		window.addEventListener("keydown", handler);
 		return () => window.removeEventListener("keydown", handler);
-	}, [changeDoc, focusQuickAdd]);
+	}, [changeDoc]);
 
 	const columns = useMemo<ColumnDef<TaskListRow>[]>(
 		() => [
@@ -852,6 +1024,11 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 		[visibleRows],
 	);
 	const visibleColumnCount = table.getVisibleLeafColumns().length;
+	// Keep the keynav effect's row-order ref in sync with what's actually
+	// rendered. Reads from visibleRows so it reflects filter + sort, not the
+	// raw doc order — pressing ↓ should move to the row the user sees below
+	// the current one, not the next id alphabetically.
+	visibleRowsRef.current = visibleRows.map((r) => r.original.id);
 
 	return (
 		<div className="flex h-full flex-col overflow-hidden">
@@ -977,6 +1154,11 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 							</DropdownMenuItem>
 						</DropdownMenuContent>
 					</DropdownMenu>
+					<KeyboardShortcutsHelp
+						groups={TABLE_SHORTCUTS}
+						testId="task-list-keyboard-help"
+						tooltip="Table keyboard shortcuts"
+					/>
 					{scheduleResult.ok ? (
 						<span className="text-xs text-muted-foreground">
 							Project {fmt(scheduleResult.schedule.projectDuration)} d
@@ -987,7 +1169,10 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 				</div>
 			</header>
 			<div className="flex-1 overflow-auto">
-				{visibleRows.length === 0 ? (
+				{visibleRows.length === 0 && !changeDoc ? (
+					// Read-only with nothing to show: keep the friendly empty
+					// state. When the view is editable we always render the table
+					// chrome below so the quick-add row stays reachable.
 					rows.length === 0 ? (
 						<EmptyList />
 					) : (
@@ -1031,25 +1216,56 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 							))}
 						</TableHeader>
 						<TableBody>
-							{grouped && groupedTree
-								? renderGroupedRows({
-										tree: groupedTree,
-										depth: 0,
-										collapsedGroups,
-										toggleGroup,
-										visibleRowById,
+							{visibleRows.length === 0 ? (
+								// Editable empty state — the quick-add row below is the
+								// affordance, so this just describes what's happening.
+								// `rows.length === 0` separates "no tasks at all" from
+								// "filter matched nothing"; the latter offers a clear-filter
+								// button so the user isn't stuck.
+								<TableRow data-testid="task-list-empty-placeholder">
+									<TableCell
+										colSpan={visibleColumnCount}
+										className="text-center text-xs text-muted-foreground"
+									>
+										{rows.length === 0 ? (
+											<span>
+												No tasks yet — use the quick-add row below to start.
+											</span>
+										) : (
+											<span className="inline-flex items-center gap-2">
+												No tasks match the filter.
+												<Button
+													variant="link"
+													className="h-auto p-0 text-xs"
+													onClick={() => setGlobalFilter("")}
+												>
+													Clear filter
+												</Button>
+											</span>
+										)}
+									</TableCell>
+								</TableRow>
+							) : grouped && groupedTree ? (
+								renderGroupedRows({
+									tree: groupedTree,
+									depth: 0,
+									collapsedGroups,
+									toggleGroup,
+									visibleRowById,
+									selectedTaskId,
+									projectId,
+									columnCount: visibleColumnCount,
+								})
+							) : (
+								visibleRows.map((row) =>
+									renderFlatTaskRow({
+										row,
 										selectedTaskId,
 										projectId,
-										columnCount: visibleColumnCount,
-									})
-								: visibleRows.map((row) =>
-										renderFlatTaskRow({
-											row,
-											selectedTaskId,
-											projectId,
-											indent: 0,
-										}),
-									)}
+										indent: 0,
+									}),
+								)
+							)}
 							{changeDoc && (
 								<TableRow
 									data-testid="task-list-quick-add"
@@ -1062,11 +1278,17 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 												ref={quickAddTitleRef}
 												value={quickAddTitle}
 												onChange={(e) => setQuickAddTitle(e.target.value)}
-												placeholder="Add a task… (Enter)"
+												placeholder="Add a task… (Enter — Shift+Enter for milestone)"
 												className="h-7 min-w-0 flex-1 text-xs"
 												data-testid="task-list-quick-add-title"
 												onKeyDown={(e) => {
-													if (e.key === "Enter" && !e.shiftKey) {
+													if (e.key === "Enter" && e.shiftKey) {
+														// Shift+Enter commits as milestone — paired with
+														// the dedicated button so power users don't have
+														// to reach for the mouse to choose the kind.
+														e.preventDefault();
+														submitQuickAdd("milestone");
+													} else if (e.key === "Enter") {
 														e.preventDefault();
 														submitQuickAdd("task");
 													} else if (e.key === "Escape") {
@@ -1085,7 +1307,10 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 												className="h-7 w-16 text-xs"
 												data-testid="task-list-quick-add-estimate"
 												onKeyDown={(e) => {
-													if (e.key === "Enter" && !e.shiftKey) {
+													if (e.key === "Enter" && e.shiftKey) {
+														e.preventDefault();
+														submitQuickAdd("milestone");
+													} else if (e.key === "Enter") {
 														e.preventDefault();
 														submitQuickAdd("task");
 													}

@@ -22,3 +22,72 @@ export type ProjectSummary = {
 };
 
 export type WorkspaceRole = "owner" | "editor" | "viewer";
+
+// --- Workspace join links --------------------------------------------------
+// Roles a join link is allowed to grant. Owners are excluded — promotion to
+// owner stays a manual operation. "viewer" is excluded too, until the sync
+// server can actually enforce read-only access (Automerge has no read-only
+// peer mode today; admitting a viewer to sync silently grants full edit).
+export type JoinLinkRole = "editor";
+
+export type WorkspaceInvitationSummary = {
+	id: string;
+	workspaceId: string;
+	token: string;
+	role: JoinLinkRole;
+	createdBy: string;
+	createdAt: string;
+	expiresAt: string | null;
+	maxUses: number | null;
+	useCount: number;
+	revokedAt: string | null;
+};
+
+export type WorkspaceInvitationPreview = {
+	token: string;
+	workspaceId: string;
+	workspaceName: string;
+	role: JoinLinkRole;
+	expiresAt: string | null;
+	maxUses: number | null;
+	useCount: number;
+	// Set when the link is unusable. Callers render a tailored error message.
+	invalidReason: "revoked" | "expired" | "exhausted" | null;
+};
+
+export type WorkspaceMembershipSummary = {
+	workspaceId: string;
+	name: string;
+	slug: string;
+	role: WorkspaceRole;
+	createdAt: string;
+};
+
+export type AcceptInvitationResult = {
+	workspaceId: string;
+	workspaceName: string;
+	alreadyMember: boolean;
+};
+
+// --- Per-project share links ----------------------------------------------
+
+export type ProjectShareMode = "view" | "edit";
+
+export type ProjectShareSummary = {
+	id: string;
+	projectId: string;
+	token: string;
+	mode: ProjectShareMode;
+	expiresAt: string | null;
+	createdAt: string;
+	createdBy: string;
+};
+
+export type ResolvedShare = {
+	shareId: string;
+	projectId: string;
+	title: string;
+	automergeDocUrl: AutomergeUrl;
+	mode: ProjectShareMode;
+	expiresAt: string | null;
+};

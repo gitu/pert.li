@@ -78,11 +78,16 @@ function PrivacyPage() {
 						</li>
 					</ul>
 					<p className="mt-3">
-						We also persist a few preferences in <code>localStorage</code> (not
-						cookies, never sent to the server): your theme choice, whether the
-						welcome page has been seen, chat dock layout, and whether you've
-						dismissed this cookie hint. You can clear them at any time from your
-						browser's site-data UI.
+						We also persist UI state in <code>localStorage</code>, which never
+						leaves your browser on its own: your theme choice, whether the
+						welcome page has been seen, chat dock layout, canvas view
+						preferences, which task containers are collapsed, your task list's
+						visible columns and edit profiles, and whether you've dismissed this
+						cookie hint. Recent chat messages are also cached locally so the
+						conversation survives a reload — that cache is not pushed to our
+						server, though any message you submit to the assistant is sent to
+						the configured LLM provider as described below. You can clear all of
+						these at any time from your browser's site-data UI.
 					</p>
 
 					<h2 className="mt-8 text-xl font-semibold tracking-tight">

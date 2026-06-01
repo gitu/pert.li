@@ -1,16 +1,25 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import type { AutomergeUrl } from "@automerge/automerge-repo";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { db } from "#/db";
 import {
 	project,
 	user,
 	userWorkspaceDoc,
 	workspace,
+	workspaceInvitation,
 	workspaceMember,
 } from "#/db/schema";
 import { createEmptyPertDoc, type PertDoc } from "#/lib/pert/types";
-import type { ProjectSummary, WorkspaceRole } from "#/types/workspace";
+import type {
+	AcceptInvitationResult,
+	JoinLinkRole,
+	ProjectSummary,
+	WorkspaceInvitationPreview,
+	WorkspaceInvitationSummary,
+	WorkspaceMembershipSummary,
+	WorkspaceRole,
+} from "#/types/workspace";
 import { getServerRepo } from "./automerge-server.server.ts";
 
 const slugFromBytes = () => randomBytes(6).toString("hex");
@@ -43,6 +52,54 @@ export async function ensurePersonalWorkspace(
 	return workspaceId;
 }
 
+export async function createWorkspaceForUser(opts: {
+	userId: string;
+	name: string;
+}): Promise<{ workspaceId: string; name: string; slug: string }> {
+	const workspaceId = randomUUID();
+	const memberId = randomUUID();
+	const slug = slugFromBytes();
+	const name = opts.name.trim();
+	if (!name) throw new Error("Workspace name is required");
+	await db.insert(workspace).values({
+		id: workspaceId,
+		name,
+		slug,
+		createdBy: opts.userId,
+	});
+	await db.insert(workspaceMember).values({
+		id: memberId,
+		workspaceId,
+		userId: opts.userId,
+		role: "owner",
+	});
+	return { workspaceId, name, slug };
+}
+
+export async function listMembershipsForUser(
+	userId: string,
+): Promise<WorkspaceMembershipSummary[]> {
+	const rows = await db
+		.select({
+			workspaceId: workspace.id,
+			name: workspace.name,
+			slug: workspace.slug,
+			role: workspaceMember.role,
+			createdAt: workspace.createdAt,
+		})
+		.from(workspaceMember)
+		.innerJoin(workspace, eq(workspace.id, workspaceMember.workspaceId))
+		.where(eq(workspaceMember.userId, userId))
+		.orderBy(workspace.createdAt);
+	return rows.map((r) => ({
+		workspaceId: r.workspaceId,
+		name: r.name,
+		slug: r.slug,
+		role: r.role as WorkspaceRole,
+		createdAt: r.createdAt.toISOString(),
+	}));
+}
+
 export async function getWorkspaceRole(
 	userId: string,
 	workspaceId: string,
@@ -58,6 +115,22 @@ export async function getWorkspaceRole(
 		)
 		.limit(1);
 	return rows.length === 0 ? null : (rows[0].role as WorkspaceRole);
+}
+
+export type WritableWorkspaceRole = "owner" | "editor";
+
+// Returns the user's role on the workspace only if it grants write access.
+// "viewer" and non-membership both collapse to null. Used by every server fn
+// that mutates workspace-scoped state, and by the Automerge sharePolicy —
+// Automerge has no read-only peer mode, so admitting a viewer to sync would
+// effectively grant them full edit. Until a real read-only sync story lands,
+// viewers are gated out of both write paths and the sync server.
+export async function getWritableWorkspaceRole(
+	userId: string,
+	workspaceId: string,
+): Promise<WritableWorkspaceRole | null> {
+	const role = await getWorkspaceRole(userId, workspaceId);
+	return role === "owner" || role === "editor" ? role : null;
 }
 
 export async function listProjectsForWorkspace(
@@ -192,6 +265,276 @@ export async function addMemberByEmail(opts: {
 		role: opts.role,
 	});
 	return { alreadyMember: false };
+}
+
+// Authorizes Automerge sync for a (user, doc) pair. Returns true iff the user
+// is the owner of a personal workspace doc with this URL, OR is an
+// owner/editor on a workspace whose project points at this URL. Viewers and
+// non-members both collapse to false — see getWritableWorkspaceRole for why.
+export async function userCanWriteDoc(
+	userId: string,
+	docUrl: string,
+): Promise<boolean> {
+	const owned = await db
+		.select({ url: userWorkspaceDoc.automergeDocUrl })
+		.from(userWorkspaceDoc)
+		.where(
+			and(
+				eq(userWorkspaceDoc.userId, userId),
+				eq(userWorkspaceDoc.automergeDocUrl, docUrl),
+			),
+		)
+		.limit(1);
+	if (owned.length > 0) return true;
+
+	const projectAccess = await db
+		.select({ role: workspaceMember.role })
+		.from(project)
+		.innerJoin(
+			workspaceMember,
+			eq(workspaceMember.workspaceId, project.workspaceId),
+		)
+		.where(
+			and(
+				eq(workspaceMember.userId, userId),
+				eq(project.automergeDocUrl, docUrl),
+			),
+		)
+		.limit(1);
+	if (projectAccess.length === 0) return false;
+	const role = projectAccess[0].role;
+	return role === "owner" || role === "editor";
+}
+
+// 24 url-safe bytes ⇒ 32-char base64url — enough entropy that brute-force
+// guessing across a single workspace's join links is infeasible without
+// rate-limiting at the route layer.
+function generateInvitationToken(): string {
+	return randomBytes(24).toString("base64url");
+}
+
+function rowToSummary(row: {
+	id: string;
+	workspaceId: string;
+	token: string;
+	role: WorkspaceRole;
+	createdBy: string;
+	createdAt: Date;
+	expiresAt: Date | null;
+	maxUses: number | null;
+	useCount: number;
+	revokedAt: Date | null;
+}): WorkspaceInvitationSummary {
+	return {
+		id: row.id,
+		workspaceId: row.workspaceId,
+		token: row.token,
+		role: row.role as JoinLinkRole,
+		createdBy: row.createdBy,
+		createdAt: row.createdAt.toISOString(),
+		expiresAt: row.expiresAt?.toISOString() ?? null,
+		maxUses: row.maxUses,
+		useCount: row.useCount,
+		revokedAt: row.revokedAt?.toISOString() ?? null,
+	};
+}
+
+export async function createWorkspaceInvitation(opts: {
+	workspaceId: string;
+	createdBy: string;
+	role: JoinLinkRole;
+	expiresAt?: Date | null;
+	maxUses?: number | null;
+}): Promise<WorkspaceInvitationSummary> {
+	const id = randomUUID();
+	const token = generateInvitationToken();
+	const [row] = await db
+		.insert(workspaceInvitation)
+		.values({
+			id,
+			workspaceId: opts.workspaceId,
+			token,
+			role: opts.role,
+			createdBy: opts.createdBy,
+			expiresAt: opts.expiresAt ?? null,
+			maxUses: opts.maxUses ?? null,
+		})
+		.returning();
+	return rowToSummary(row);
+}
+
+export async function listWorkspaceInvitations(
+	workspaceId: string,
+): Promise<WorkspaceInvitationSummary[]> {
+	const rows = await db
+		.select()
+		.from(workspaceInvitation)
+		.where(eq(workspaceInvitation.workspaceId, workspaceId))
+		.orderBy(desc(workspaceInvitation.createdAt));
+	return rows.map(rowToSummary);
+}
+
+export async function revokeWorkspaceInvitation(opts: {
+	invitationId: string;
+	workspaceId: string;
+}): Promise<{ revoked: boolean }> {
+	const result = await db
+		.update(workspaceInvitation)
+		.set({ revokedAt: new Date() })
+		.where(
+			and(
+				eq(workspaceInvitation.id, opts.invitationId),
+				eq(workspaceInvitation.workspaceId, opts.workspaceId),
+				isNull(workspaceInvitation.revokedAt),
+			),
+		)
+		.returning({ id: workspaceInvitation.id });
+	return { revoked: result.length > 0 };
+}
+
+export async function getInvitationPreviewByToken(
+	token: string,
+): Promise<WorkspaceInvitationPreview | null> {
+	const rows = await db
+		.select({
+			id: workspaceInvitation.id,
+			workspaceId: workspaceInvitation.workspaceId,
+			token: workspaceInvitation.token,
+			role: workspaceInvitation.role,
+			expiresAt: workspaceInvitation.expiresAt,
+			maxUses: workspaceInvitation.maxUses,
+			useCount: workspaceInvitation.useCount,
+			revokedAt: workspaceInvitation.revokedAt,
+			workspaceName: workspace.name,
+		})
+		.from(workspaceInvitation)
+		.innerJoin(workspace, eq(workspace.id, workspaceInvitation.workspaceId))
+		.where(eq(workspaceInvitation.token, token))
+		.limit(1);
+	if (rows.length === 0) return null;
+	const r = rows[0];
+	let invalidReason: WorkspaceInvitationPreview["invalidReason"] = null;
+	if (r.revokedAt) invalidReason = "revoked";
+	else if (r.expiresAt && r.expiresAt.getTime() <= Date.now())
+		invalidReason = "expired";
+	else if (r.maxUses != null && r.useCount >= r.maxUses)
+		invalidReason = "exhausted";
+	return {
+		token: r.token,
+		workspaceId: r.workspaceId,
+		workspaceName: r.workspaceName,
+		role: r.role as JoinLinkRole,
+		expiresAt: r.expiresAt?.toISOString() ?? null,
+		maxUses: r.maxUses,
+		useCount: r.useCount,
+		invalidReason,
+	};
+}
+
+export async function acceptInvitationByToken(opts: {
+	token: string;
+	userId: string;
+}): Promise<AcceptInvitationResult> {
+	// Look up the invitation + workspace name first. This is just for the
+	// returned result and for the already-member fast path; the authoritative
+	// validity check happens inside the conditional UPDATE below so we don't
+	// race with concurrent accepts.
+	const preview = await getInvitationPreviewByToken(opts.token);
+	if (!preview) throw new Error("Invitation not found");
+
+	// Defense-in-depth: even if a pre-existing DB row stamped role="viewer"
+	// (no UI / API path creates one today — see createJoinLinkInput), refuse
+	// to materialise that into a workspace_member row. Until real read-only
+	// sync lands, viewer members are functionally broken anyway because the
+	// sync server gates writes through userCanWriteDoc.
+	if (preview.role !== "editor") {
+		throw new Error(
+			"This invitation grants an unsupported role and can't be redeemed.",
+		);
+	}
+
+	const existing = await db
+		.select({ id: workspaceMember.id })
+		.from(workspaceMember)
+		.where(
+			and(
+				eq(workspaceMember.workspaceId, preview.workspaceId),
+				eq(workspaceMember.userId, opts.userId),
+			),
+		)
+		.limit(1);
+
+	if (existing.length > 0) {
+		return {
+			workspaceId: preview.workspaceId,
+			workspaceName: preview.workspaceName,
+			alreadyMember: true,
+		};
+	}
+
+	// Atomically reserve a slot: bump use_count only if the invitation is
+	// still revocable / not expired / under the max-uses cap. Two simultaneous
+	// accepts can't both succeed past a max_uses=1 link because only one of
+	// the UPDATEs will satisfy `use_count < max_uses`. We use the returning
+	// rowcount as the gate for inserting membership.
+	const claimed = await db
+		.update(workspaceInvitation)
+		.set({ useCount: sql`${workspaceInvitation.useCount} + 1` })
+		.where(
+			and(
+				eq(workspaceInvitation.token, opts.token),
+				isNull(workspaceInvitation.revokedAt),
+				or(
+					isNull(workspaceInvitation.expiresAt),
+					gt(workspaceInvitation.expiresAt, new Date()),
+				),
+				or(
+					isNull(workspaceInvitation.maxUses),
+					sql`${workspaceInvitation.useCount} < ${workspaceInvitation.maxUses}`,
+				),
+			),
+		)
+		.returning({ id: workspaceInvitation.id });
+
+	if (claimed.length === 0) {
+		// Re-fetch to surface a precise reason (revoked / expired / exhausted)
+		// for the error message — the conditional UPDATE collapsed all three.
+		const fresh = await getInvitationPreviewByToken(opts.token);
+		if (!fresh) throw new Error("Invitation not found");
+		if (fresh.invalidReason === "revoked")
+			throw new Error("This invitation has been revoked");
+		if (fresh.invalidReason === "expired")
+			throw new Error("This invitation has expired");
+		if (fresh.invalidReason === "exhausted")
+			throw new Error("This invitation has reached its usage limit");
+		// Shouldn't happen: claim failed but the link reads as valid. Treat as
+		// a transient race and surface a generic error.
+		throw new Error("Could not accept invitation, please retry");
+	}
+
+	try {
+		await db.insert(workspaceMember).values({
+			id: randomUUID(),
+			workspaceId: preview.workspaceId,
+			userId: opts.userId,
+			role: preview.role,
+		});
+	} catch (err) {
+		// Roll back our reserved slot so the count keeps reflecting real joins
+		// (e.g. a concurrent accept by the same user just won the unique index
+		// race and the membership row already exists).
+		await db
+			.update(workspaceInvitation)
+			.set({ useCount: sql`${workspaceInvitation.useCount} - 1` })
+			.where(eq(workspaceInvitation.token, opts.token));
+		throw err;
+	}
+
+	return {
+		workspaceId: preview.workspaceId,
+		workspaceName: preview.workspaceName,
+		alreadyMember: false,
+	};
 }
 
 export async function getOrCreatePersonalWorkspaceDocUrl(

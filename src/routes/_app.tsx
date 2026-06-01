@@ -9,7 +9,6 @@ import {
 import {
 	BotIcon,
 	CheckIcon,
-	ChevronsUpDownIcon,
 	CircleDotIcon,
 	EyeIcon,
 	FolderTreeIcon,
@@ -70,6 +69,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "#/components/ui/tabs";
 import { TooltipProvider } from "#/components/ui/tooltip";
 import { CreateProjectDialog } from "#/components/workspace/create-project-dialog";
 import { ProjectList } from "#/components/workspace/project-list";
+import { WorkspaceSwitcher } from "#/components/workspace/workspace-switcher";
+import { useActiveWorkspaceId } from "#/lib/active-workspace";
 import { authClient } from "#/lib/auth-client";
 import { RepoProvider } from "#/lib/automerge/provider";
 import { chatDock, useChatDockMode } from "#/lib/chat-dock";
@@ -651,20 +652,14 @@ function ChatHost({ target }: { target: HTMLDivElement | null }) {
 	return createPortal(<ChatPanel showDockControls />, target);
 }
 
-function WorkspaceSwitcher() {
-	return (
-		<Button variant="ghost" size="sm" className="gap-2 text-sm font-medium">
-			<FolderTreeIcon className="size-4 text-muted-foreground" />
-			Personal workspace
-			<ChevronsUpDownIcon className="size-3.5 text-muted-foreground" />
-		</Button>
-	);
-}
-
 function LeftNav({ onNewProject }: { onNewProject: () => void }) {
+	const activeWorkspaceId = useActiveWorkspaceId();
 	const projectsQuery = useQuery({
-		queryKey: ["projects"],
-		queryFn: () => listProjects(),
+		queryKey: ["projects", activeWorkspaceId],
+		queryFn: () =>
+			listProjects({
+				data: activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {},
+			}),
 	});
 	// `useParams` with `strict: false` returns the active leaf's params if it
 	// matches; otherwise `{}`. Used to highlight the active project.

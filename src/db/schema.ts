@@ -3,6 +3,7 @@ import {
 	boolean,
 	customType,
 	index,
+	integer,
 	jsonb,
 	pgEnum,
 	pgTable,
@@ -123,6 +124,31 @@ export const workspaceMember = pgTable(
 	],
 );
 
+// Shareable join links. A workspace owner generates a token; anyone who hits
+// /join/<token> with a session is added as a member at the link's preset role
+// (editor or viewer — owner promotion stays manual). Optional expiry and
+// max-uses; manual revoke clears active links without dropping the audit row.
+export const workspaceInvitation = pgTable(
+	"workspace_invitation",
+	{
+		id: text("id").primaryKey(),
+		workspaceId: text("workspace_id")
+			.notNull()
+			.references(() => workspace.id, { onDelete: "cascade" }),
+		token: text("token").notNull().unique(),
+		role: workspaceRole("role").notNull().default("editor"),
+		createdBy: text("created_by")
+			.notNull()
+			.references(() => user.id, { onDelete: "restrict" }),
+		createdAt: timestamp("created_at").notNull().defaultNow(),
+		expiresAt: timestamp("expires_at"),
+		maxUses: integer("max_uses"),
+		useCount: integer("use_count").notNull().default(0),
+		revokedAt: timestamp("revoked_at"),
+	},
+	(t) => [index("workspace_invitation_workspace_idx").on(t.workspaceId)],
+);
+
 export const project = pgTable("project", {
 	id: text("id").primaryKey(),
 	workspaceId: text("workspace_id")
@@ -159,6 +185,31 @@ export const automergeStorage = pgTable(
 		updatedAt: timestamp("updated_at").notNull().defaultNow(),
 	},
 	(t) => [index("automerge_storage_key_idx").on(t.key)],
+);
+
+// Public share links for a single project. A row grants anyone holding the
+// token access to one project's Automerge document — read-only or editable,
+// optionally bounded by `expiresAt`. Revoking sets `revokedAt`; the row is
+// kept for audit/extend rather than being deleted.
+export const projectShareMode = pgEnum("project_share_mode", ["view", "edit"]);
+
+export const projectShare = pgTable(
+	"project_share",
+	{
+		id: text("id").primaryKey(),
+		projectId: text("project_id")
+			.notNull()
+			.references(() => project.id, { onDelete: "cascade" }),
+		token: text("token").notNull().unique(),
+		mode: projectShareMode("mode").notNull(),
+		expiresAt: timestamp("expires_at"),
+		createdBy: text("created_by")
+			.notNull()
+			.references(() => user.id, { onDelete: "restrict" }),
+		createdAt: timestamp("created_at").notNull().defaultNow(),
+		revokedAt: timestamp("revoked_at"),
+	},
+	(t) => [index("project_share_project_idx").on(t.projectId)],
 );
 
 export const auditLog = pgTable("audit_log", {

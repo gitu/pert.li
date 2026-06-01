@@ -191,6 +191,7 @@ jobs:
             -p 18080:8080 \
             -e BETTER_AUTH_SECRET=ci-only-not-secret-long-enough-- \
             -e ANTHROPIC_API_KEY=ci-placeholder \
+            -e ALLOW_CONSOLE_EMAIL_IN_PROD=1 \
             "$IMAGE"
 
           # PGLite fallback path (no DATABASE_URL): the server needs to
