@@ -118,6 +118,68 @@ export const Empty: Story = {
 	},
 };
 
+// Long, evenly-paced project so the day axis stretches well past the
+// container width — exercises the horizontal scroll + zoom controls.
+function longLinearDoc(): PertDoc {
+	const d = createEmptyPertDoc("Long linear");
+	const days = 60;
+	for (let i = 0; i < days; i++) {
+		const id = `T${i}`;
+		d.tasksById[id] = {
+			id,
+			kind: "task",
+			title: `Task ${i + 1}`,
+			parentId: null,
+			estimate: est(1, 1, 1),
+		};
+		if (i > 0) {
+			const depId = `d${i}`;
+			d.dependenciesById[depId] = {
+				id: depId,
+				from: { taskId: `T${i - 1}` },
+				to: { taskId: id },
+				type: "finish_to_start",
+			};
+		}
+	}
+	return d;
+}
+
+export const Zoomable: Story = {
+	args: { doc: longLinearDoc(), projectId: "story-timeline-zoom" },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const bars = await canvas.findByTestId("timeline-bars");
+		// Auto-fit runs in a layout effect; wait for the resulting render so
+		// the baseline width below isn't a stale default.
+		await new Promise((r) => setTimeout(r, 0));
+		const widthOf = (el: Element) => Number(el.getAttribute("width") ?? "0");
+		const baseline = widthOf(bars);
+		await expect(baseline).toBeGreaterThan(0);
+
+		const zoomIn = await canvas.findByTestId("timeline-zoom-in");
+		await userEvent.click(zoomIn);
+		await userEvent.click(zoomIn);
+		const zoomedIn = widthOf(canvas.getByTestId("timeline-bars"));
+		await expect(zoomedIn).toBeGreaterThan(baseline);
+
+		const zoomOut = await canvas.findByTestId("timeline-zoom-out");
+		await userEvent.click(zoomOut);
+		await userEvent.click(zoomOut);
+		await userEvent.click(zoomOut);
+		const zoomedOut = widthOf(canvas.getByTestId("timeline-bars"));
+		await expect(zoomedOut).toBeLessThan(zoomedIn);
+
+		const fit = await canvas.findByTestId("timeline-zoom-fit");
+		await userEvent.click(fit);
+		const fitted = widthOf(canvas.getByTestId("timeline-bars"));
+		// "Fit" should land somewhere between the deeply-zoomed-out and
+		// the heavily-zoomed-in widths — i.e. roughly the auto-fit baseline.
+		await expect(fitted).toBeGreaterThan(zoomedOut);
+		await expect(fitted).toBeLessThan(zoomedIn);
+	},
+};
+
 function keyedDoc(): PertDoc {
 	const d = createEmptyPertDoc("Keyed phases");
 	// One task keyed directly to the milestone (M1 / M2) so the grouping
