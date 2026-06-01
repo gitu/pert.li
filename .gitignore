@@ -29,6 +29,7 @@ e2e/.auth/
 # Local debugging artifacts
 .playwright-mcp/
 *.png
+!docs/screenshots/*.png
 debug-*.log
 
 # This project is pnpm-only. If npm/yarn ever produce a lockfile here it's
