@@ -1,14 +1,19 @@
 import { fetchServerSentEvents } from "@tanstack/ai-client";
 import { useChat } from "@tanstack/ai-react";
+import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useStore } from "@tanstack/react-store";
 import {
 	ArrowUpIcon,
 	BotIcon,
 	ChevronDownIcon,
 	ChevronRightIcon,
+	GridIcon,
+	ListIcon,
+	NetworkIcon,
 	PinIcon,
 	PinOffIcon,
 	SquareIcon,
+	TimerIcon,
 	UserIcon,
 	WrenchIcon,
 	XIcon,
@@ -86,6 +91,7 @@ import { projectDocStore } from "#/lib/pert/store";
 import type { PertDoc } from "#/lib/pert/types";
 import { useIsMobile } from "#/lib/use-media-query";
 import { cn } from "#/lib/utils";
+import type { ProjectView } from "#/routes/_app/p.$projectId";
 import { ChatTabs } from "./chat-tabs";
 
 // Chat surface backed by the /api/chat SSE endpoint. The hook owns the
@@ -1093,6 +1099,11 @@ function ToolCallChip({
 	const [open, setOpen] = useState(false);
 	const running = !result && call.state !== "complete";
 	const failed = result?.state === "error" || !!result?.error;
+	// `read_project` returns the active plan. Show the four view options so
+	// the user can jump straight to Network / Timeline / Table / Matrix
+	// without leaving the chat — the plan being discussed is the project the
+	// main pane is already pointing at.
+	const showPlanViews = call.name === "read_project" && !!result && !failed;
 	return (
 		<div
 			className={cn(
@@ -1122,6 +1133,7 @@ function ToolCallChip({
 					{running ? "…" : failed ? "failed" : "done"}
 				</span>
 			</button>
+			{showPlanViews && <PlanViewSwitcher />}
 			{open && (
 				<div className="space-y-1 border-t bg-background/40 p-1.5 font-mono text-[10px]">
 					<div>
@@ -1142,6 +1154,71 @@ function ToolCallChip({
 					)}
 				</div>
 			)}
+		</div>
+	);
+}
+
+const PLAN_VIEW_TABS: Array<{
+	id: ProjectView;
+	label: string;
+	Icon: typeof NetworkIcon;
+}> = [
+	{ id: "network", label: "Network", Icon: NetworkIcon },
+	{ id: "timeline", label: "Timeline", Icon: TimerIcon },
+	{ id: "table", label: "Table", Icon: ListIcon },
+	{ id: "matrix", label: "Matrix", Icon: GridIcon },
+];
+
+// Compact mirror of the project-header tab strip, rendered inside the chat's
+// `read_project` chip so the user can pivot the main pane between views
+// while still reading the assistant's reply. Routes the click through the
+// same `/p/$projectId?view=` query the header tabs use (network → no param).
+export function PlanViewSwitcher() {
+	const navigate = useNavigate();
+	const params = useParams({ strict: false }) as { projectId?: string };
+	const search = useSearch({ strict: false }) as { view?: ProjectView };
+	const projectId = useStore(projectDocStore, (s) => s.projectId);
+	// Fall back to the active project from the doc store when the chat is
+	// floating over a non-project route — the URL still controls the main
+	// pane, so prefer the route param when it's there.
+	const targetProjectId = params.projectId ?? projectId;
+	if (!targetProjectId) return null;
+	const active: ProjectView = search.view ?? "network";
+	return (
+		<div
+			className="flex flex-wrap items-center gap-1 border-t bg-background/40 px-1.5 py-1 text-[10px]"
+			data-testid="chat-plan-view-switcher"
+		>
+			<span className="text-muted-foreground">View as</span>
+			{PLAN_VIEW_TABS.map((tab) => {
+				const isActive = active === tab.id;
+				return (
+					<button
+						key={tab.id}
+						type="button"
+						aria-pressed={isActive}
+						data-testid={`chat-plan-view-${tab.id}`}
+						onClick={() => {
+							if (isActive) return;
+							navigate({
+								to: "/p/$projectId",
+								params: { projectId: targetProjectId },
+								search: { view: tab.id === "network" ? undefined : tab.id },
+								replace: true,
+							});
+						}}
+						className={cn(
+							"inline-flex h-5 items-center gap-1 rounded px-1.5",
+							isActive
+								? "bg-accent text-accent-foreground"
+								: "text-muted-foreground hover:bg-accent/40 hover:text-foreground",
+						)}
+					>
+						<tab.Icon className="size-3" />
+						{tab.label}
+					</button>
+				);
+			})}
 		</div>
 	);
 }
