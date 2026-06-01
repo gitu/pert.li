@@ -102,6 +102,46 @@ export function findContainerAtPoint(
 	return best;
 }
 
+export type ContainerSnapshot = {
+	id: TaskId;
+	bounds: Bounds;
+	depth: number;
+};
+
+// Snapshot every drop-eligible container's bounds + ancestor depth in one
+// doc walk. Drag-time callers use this to avoid recomputing bounds-from-
+// descendants 60 times per second: during a single drag the dragged leaf
+// is excluded from each container's bounds, the other descendants don't
+// move, so the snapshot stays accurate for the lifetime of the drag.
+// Sorted deepest-first so the per-frame hit test can return on first match.
+export function buildContainerSnapshot(
+	doc: PertDoc,
+	collapsed: ReadonlySet<TaskId>,
+	excludeIds?: ReadonlySet<TaskId>,
+): ContainerSnapshot[] {
+	const snap: ContainerSnapshot[] = [];
+	for (const t of Object.values(doc.tasksById)) {
+		if (t.kind !== "container") continue;
+		if (collapsed.has(t.id)) continue;
+		if (excludeIds?.has(t.id)) continue;
+		const bounds = containerBoundsFromDescendants(doc, t.id, excludeIds);
+		if (!bounds) continue;
+		snap.push({ id: t.id, bounds, depth: ancestorDepth(doc, t.id) });
+	}
+	snap.sort((a, b) => b.depth - a.depth);
+	return snap;
+}
+
+export function findContainerAtPointInSnapshot(
+	snapshot: ReadonlyArray<ContainerSnapshot>,
+	point: Point,
+): TaskId | null {
+	for (const s of snapshot) {
+		if (pointInBounds(point, s.bounds)) return s.id;
+	}
+	return null;
+}
+
 function ancestorDepth(doc: PertDoc, taskId: TaskId): number {
 	let depth = 0;
 	let current = doc.tasksById[taskId]?.parentId ?? null;

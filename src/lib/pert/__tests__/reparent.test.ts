@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+	buildContainerSnapshot,
 	canReparent,
 	containerBoundsFromDescendants,
 	findContainerAtPoint,
+	findContainerAtPointInSnapshot,
 	reparentMutation,
 	shiftDescendantsMutation,
 } from "#/lib/pert/reparent";
@@ -112,6 +114,62 @@ describe("findContainerAtPoint", () => {
 		expect(
 			findContainerAtPoint(doc, { x: 200, y: 150 }, new Set(["inner"])),
 		).toBe("outer");
+	});
+});
+
+describe("buildContainerSnapshot + findContainerAtPointInSnapshot", () => {
+	it("matches findContainerAtPoint for the nested case (deepest wins)", () => {
+		const doc = build(
+			container("outer"),
+			container("inner", "outer"),
+			leaf("A", "inner", { x: 100, y: 100 }),
+			leaf("B", "inner", { x: 300, y: 200 }),
+		);
+		const snap = buildContainerSnapshot(doc, new Set());
+		expect(findContainerAtPointInSnapshot(snap, { x: 200, y: 150 })).toBe(
+			"inner",
+		);
+		expect(findContainerAtPointInSnapshot(snap, { x: -1000, y: -1000 })).toBe(
+			null,
+		);
+	});
+
+	it("honors the collapsed set (skips collapsed containers)", () => {
+		const doc = build(
+			container("outer"),
+			container("inner", "outer"),
+			leaf("A", "inner", { x: 100, y: 100 }),
+			leaf("B", "inner", { x: 300, y: 200 }),
+		);
+		const snap = buildContainerSnapshot(doc, new Set(["inner"]));
+		expect(findContainerAtPointInSnapshot(snap, { x: 200, y: 150 })).toBe(
+			"outer",
+		);
+	});
+
+	it("honors excludeIds (drag-out: leaf removed from its parent's bounds)", () => {
+		// A single leaf inside its container: with the leaf excluded the
+		// container falls back to MIN size around its own position (default
+		// 0,0). A point far away should miss.
+		const doc = build(container("box"), leaf("A", "box", { x: 100, y: 100 }));
+		const snap = buildContainerSnapshot(doc, new Set(), new Set(["A"]));
+		// Point (150, 150) was inside before exclusion, should now miss the
+		// shrunk fallback box at (0,0)..(440,280).
+		expect(findContainerAtPointInSnapshot(snap, { x: 1000, y: 1000 })).toBe(
+			null,
+		);
+	});
+
+	it("sorts deepest-first so the linear scan returns the deepest hit", () => {
+		const doc = build(
+			container("outer"),
+			container("inner", "outer"),
+			leaf("A", "inner", { x: 100, y: 100 }),
+			leaf("B", "inner", { x: 300, y: 200 }),
+		);
+		const snap = buildContainerSnapshot(doc, new Set());
+		expect(snap[0]?.id).toBe("inner");
+		expect(snap[1]?.id).toBe("outer");
 	});
 });
 
