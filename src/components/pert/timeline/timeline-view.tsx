@@ -7,7 +7,7 @@ import {
 	ZoomInIcon,
 	ZoomOutIcon,
 } from "lucide-react";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { computeSchedule } from "#/lib/pert/schedule";
 import { selectionStore, selectTask } from "#/lib/pert/store";
@@ -73,12 +73,14 @@ export function TimelineView({ projectId, doc }: TimelineViewProps) {
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const [pxPerDay, setPxPerDay] = useState(DEFAULT_PX_PER_DAY);
 
-	// Auto-fit once on first paint so the bars span the available width
-	// without the user having to click Fit. After that the zoom is sticky
-	// — we don't refit on resize or doc updates so manual zoom isn't
-	// clobbered while the user is working.
+	// Auto-fit once after first paint so the bars span the available
+	// width without the user having to click Fit. `useEffect` (not
+	// `useLayoutEffect`) so it's SSR-safe — the cost is a brief render at
+	// DEFAULT_PX_PER_DAY before the fit value lands, which is fine. After
+	// the first run the zoom is sticky: we don't refit on resize or doc
+	// updates so manual zoom isn't clobbered while the user is working.
 	const autoFittedRef = useRef(false);
-	useLayoutEffect(() => {
+	useEffect(() => {
 		if (autoFittedRef.current) return;
 		if (model.lanes.length === 0) return;
 		const next = computeFitPxPerDay(scrollRef.current, model.axisMax);
@@ -310,9 +312,11 @@ function TimelineStrip({
 	const laneCount = rows.reduce((n, r) => (r.type === "lane" ? n + 1 : n), 0);
 
 	return (
+		// No role="img" / aria-label here — the strip is no longer a
+		// single image. The lane labels are real <button>s, so the
+		// interactive contents carry their own semantics; an outer img
+		// role would hide them from assistive tech.
 		<div
-			role="img"
-			aria-label={`Timeline of ${laneCount} tasks across ${fmt(axisMax)} days`}
 			data-testid="timeline-svg"
 			className="grid font-sans"
 			style={{
