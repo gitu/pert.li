@@ -401,6 +401,11 @@ export const ArrowKeyNavigation: Story = {
 
 		await userEvent.click(nodeA);
 		await waitFor(() => expect(selectionStore.state.taskId).toBe("A"));
+		// Mouse click already sets the React Flow `selected` class, but assert
+		// it so the keynav-driven assertions below have a clear baseline.
+		await waitFor(() =>
+			expect(wrapperA.classList.contains("selected")).toBe(true),
+		);
 
 		await userEvent.keyboard("{ArrowRight}");
 		// Diamond: A → {B, C}. closestByY tie-breaks on iteration order
@@ -408,6 +413,16 @@ export const ArrowKeyNavigation: Story = {
 		await waitFor(() => expect(selectionStore.state.taskId).toBe("B"));
 		// A's React Flow node must not have been nudged by the arrow key.
 		await expect(wrapperA.style.transform).toBe(before);
+		// Visual selection must follow keynav too — React Flow tracks node
+		// selection in its own local state, so updating selectionStore alone
+		// leaves the ring on whatever was last clicked.
+		const wrapperB = canvas
+			.getByTestId("task-node-B")
+			.closest(".react-flow__node") as HTMLElement;
+		await waitFor(() => {
+			expect(wrapperB.classList.contains("selected")).toBe(true);
+			expect(wrapperA.classList.contains("selected")).toBe(false);
+		});
 
 		// Bouncing off the right edge: D has no successor. The selection
 		// stays put AND the node still doesn't move.
@@ -416,6 +431,9 @@ export const ArrowKeyNavigation: Story = {
 		const nodeD = canvas.getByTestId("task-node-D");
 		const wrapperD = nodeD.closest(".react-flow__node") as HTMLElement;
 		const dBefore = wrapperD.style.transform;
+		await waitFor(() =>
+			expect(wrapperD.classList.contains("selected")).toBe(true),
+		);
 		await userEvent.keyboard("{ArrowRight}");
 		await expect(selectionStore.state.taskId).toBe("D");
 		await expect(wrapperD.style.transform).toBe(dBefore);
