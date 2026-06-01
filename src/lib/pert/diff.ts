@@ -147,8 +147,13 @@ function compareTaskFields(b: Task, a: Task): TaskFieldChange[] {
 	if (bp !== ap) {
 		out.push({ field: "parentId", before: bp, after: ap });
 	}
-	const bk = b.key ?? null;
-	const ak = a.key ?? null;
+	// Normalise the key the same way setKeyMutation does: trim + treat
+	// empty/whitespace as a missing value. Without this, older docs that
+	// stored `key: ""` (or `"  "`) before the trim-on-write rule landed
+	// would show up as a spurious "key" delta against a doc with the key
+	// cleared via the inspector.
+	const bk = normaliseKey(b.key);
+	const ak = normaliseKey(a.key);
 	if (bk !== ak) {
 		out.push({ field: "key", before: bk, after: ak });
 	}
@@ -241,6 +246,12 @@ function compareDependencyFields(
 		out.push({ field: "toInterfaceId", before: bti, after: ati });
 	}
 	return out;
+}
+
+function normaliseKey(key: string | undefined | null): string | null {
+	if (key === undefined || key === null) return null;
+	const trimmed = key.trim();
+	return trimmed.length === 0 ? null : trimmed;
 }
 
 function estimateEqual(

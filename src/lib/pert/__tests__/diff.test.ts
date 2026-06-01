@@ -175,6 +175,49 @@ describe("diffPertDoc", () => {
 		expect(fields).toEqual(["lagDays", "toTaskId"]);
 	});
 
+	it("normalises key: empty/whitespace counts as the same as undefined", () => {
+		const before = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			key: "",
+		});
+		const afterEmpty = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+		});
+		expect(diffPertDoc(before, afterEmpty).tasks).toEqual([]);
+
+		const afterWhitespace = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			key: "   ",
+		});
+		expect(diffPertDoc(before, afterWhitespace).tasks).toEqual([]);
+
+		// But trimmed-equal-but-non-empty keys still show no diff.
+		const beforeWithKey = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			key: "  M1  ",
+		});
+		const afterTrimmed = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			key: "M1",
+		});
+		expect(diffPertDoc(beforeWithKey, afterTrimmed).tasks).toEqual([]);
+	});
+
 	it("sorts tasks added → changed → removed, alphabetically within each", () => {
 		const before = build(leaf("Z", "Zeta"), leaf("M", "Mu"));
 		const after = build(leaf("M", "Mu prime"), leaf("A", "Alpha"));

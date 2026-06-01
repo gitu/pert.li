@@ -131,4 +131,106 @@ describe("proposals store", () => {
 		expect(live.tasksById.C).toBeDefined();
 		expect(live.tasksById.A.title).toBe("A"); // other rows untouched
 	});
+
+	it("applyProposalRow copies the interface bucket when an added task is a container", () => {
+		const live = seed();
+		const ops: EditOp[] = [
+			{ op: "add_task", id: "C", title: "Container", kind: "container" },
+		];
+		const { proposal } = createProposal(live, "test", ops);
+		// applyOperations seeded default Entry/Exit interfaces on the proposed
+		// doc — sanity-check that.
+		expect(
+			Object.keys(proposal.proposedDoc.interfacesByContainerId.C ?? {}),
+		).not.toHaveLength(0);
+
+		const changeDoc = (mutate: (d: PertDoc) => void) => mutate(live);
+		applyProposalRow(
+			proposal.id,
+			{ type: "task-added", taskId: "C" },
+			changeDoc,
+		);
+		expect(live.tasksById.C?.kind).toBe("container");
+		expect(Object.keys(live.interfacesByContainerId.C ?? {})).not.toHaveLength(
+			0,
+		);
+	});
+
+	it("applyProposalRow drops the interface bucket when removing a container", () => {
+		const live = seed();
+		// Promote A to a container with interfaces, then propose removing it.
+		live.tasksById.A.kind = "container";
+		live.interfacesByContainerId.A = {
+			if_default: {
+				id: "if_default",
+				containerId: "A",
+				kind: "entry",
+				label: "input",
+			},
+		};
+		const ops: EditOp[] = [{ op: "remove_task", taskId: "A" }];
+		const { proposal } = createProposal(live, "test", ops);
+		const changeDoc = (mutate: (d: PertDoc) => void) => mutate(live);
+		applyProposalRow(
+			proposal.id,
+			{ type: "task-removed", taskId: "A" },
+			changeDoc,
+		);
+		expect(live.tasksById.A).toBeUndefined();
+		expect(live.interfacesByContainerId.A).toBeUndefined();
+	});
+
+	it("applyProposalRow refuses to apply a dependency row whose endpoints aren't present yet", () => {
+		const live = seed();
+		const ops: EditOp[] = [
+			{ op: "add_task", id: "C", title: "Ship" },
+			{ op: "add_dependency", fromTaskId: "C", toTaskId: "A", id: "ca" },
+		];
+		const { proposal } = createProposal(live, "test", ops);
+		const changeDoc = (mutate: (d: PertDoc) => void) => mutate(live);
+		// Apply the dep row first — its `from` references task C, which the
+		// user hasn't applied yet. Should silently no-op so the live doc
+		// never gains a dep referencing a missing task.
+		applyProposalRow(
+			proposal.id,
+			{ type: "dependency", depId: "ca" },
+			changeDoc,
+		);
+		expect(live.dependenciesById.ca).toBeUndefined();
+		// Apply the task-added prerequisite, then the dep row again — now
+		// the dep should land.
+		applyProposalRow(
+			proposal.id,
+			{ type: "task-added", taskId: "C" },
+			changeDoc,
+		);
+		applyProposalRow(
+			proposal.id,
+			{ type: "dependency", depId: "ca" },
+			changeDoc,
+		);
+		expect(live.dependenciesById.ca?.from.taskId).toBe("C");
+	});
+
+	it("applyProposalRow refuses a dependency whose endpoint has become a container since the proposal was staged", () => {
+		const live = seed();
+		// Stage a normal dep against a live doc where both endpoints are
+		// leaf tasks — proposal validates and stores it.
+		const ops: EditOp[] = [
+			{ op: "add_dependency", fromTaskId: "A", toTaskId: "B", id: "ab" },
+		];
+		const { proposal } = createProposal(live, "test", ops);
+		expect(proposal.proposedDoc.dependenciesById.ab).toBeDefined();
+		// But between staging and apply, someone promoted A to a container.
+		// The apply-row guard refuses the dep because container endpoints
+		// aren't valid in this model — matching addDependencyMutation.
+		live.tasksById.A.kind = "container";
+		const changeDoc = (mutate: (d: PertDoc) => void) => mutate(live);
+		applyProposalRow(
+			proposal.id,
+			{ type: "dependency", depId: "ab" },
+			changeDoc,
+		);
+		expect(live.dependenciesById.ab).toBeUndefined();
+	});
 });

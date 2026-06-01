@@ -155,6 +155,43 @@ describe("restoreTaskFieldMutation", () => {
 		expect(current.tasksById.A.actualFinish).toBeUndefined();
 	});
 
+	it("trims and clears whitespace-only key on restore (matches setKeyMutation)", () => {
+		const snapshot = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			key: "   ",
+		});
+		const current = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			key: "M1",
+		});
+		restoreTaskFieldMutation(snapshot, "A", "key")?.(current);
+		expect(current.tasksById.A.key).toBeUndefined();
+	});
+
+	it("trims padded keys on restore", () => {
+		const snapshot = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			key: "  M1.A  ",
+		});
+		const current = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+		});
+		restoreTaskFieldMutation(snapshot, "A", "key")?.(current);
+		expect(current.tasksById.A.key).toBe("M1.A");
+	});
+
 	it("restores progress=0 (falsy but valid)", () => {
 		const snapshot = build({
 			id: "A",

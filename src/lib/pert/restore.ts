@@ -100,10 +100,15 @@ function applyField(draft: Task, source: Task, field: RestoreableField): void {
 		case "parentId":
 			draft.parentId = source.parentId ?? null;
 			return;
-		case "key":
-			if (source.key) draft.key = source.key;
-			else delete draft.key;
+		case "key": {
+			// Mirror setKeyMutation's normalisation: whitespace-only or empty
+			// keys are treated as a clear so restoring a snapshot doesn't
+			// reintroduce a noise key the live editor would have removed.
+			const trimmed = source.key?.trim() ?? "";
+			if (trimmed.length === 0) delete draft.key;
+			else draft.key = trimmed;
 			return;
+		}
 		case "estimate":
 			if (source.estimate) draft.estimate = structuredClone(source.estimate);
 			else delete draft.estimate;

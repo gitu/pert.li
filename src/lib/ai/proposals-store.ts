@@ -179,9 +179,23 @@ function applyRowMutation(
 		if (!t) return;
 		if (target.tasksById[row.taskId]) return;
 		target.tasksById[row.taskId] = JSON.parse(JSON.stringify(t)) as Task;
+		// Containers carry their default interfaces under a sibling map. If
+		// we only copy `tasksById`, a container shows up on the canvas with
+		// no Entry/Exit ports until something else backfills them — and any
+		// dependencies the proposal pinned to those interfaces would point
+		// at nothing.
+		if (t.kind === "container") {
+			const sourceBucket = source.interfacesByContainerId[row.taskId];
+			if (sourceBucket) {
+				target.interfacesByContainerId[row.taskId] = JSON.parse(
+					JSON.stringify(sourceBucket),
+				);
+			}
+		}
 		return;
 	}
 	if (row.type === "task-removed") {
+		const wasContainer = target.tasksById[row.taskId]?.kind === "container";
 		delete target.tasksById[row.taskId];
 		for (const [depId, dep] of Object.entries(target.dependenciesById)) {
 			if (dep.from.taskId === row.taskId || dep.to.taskId === row.taskId) {
@@ -190,6 +204,13 @@ function applyRowMutation(
 		}
 		for (const t of Object.values(target.tasksById)) {
 			if (t.parentId === row.taskId) t.parentId = null;
+		}
+		// Drop any interface bucket the deleted task owned. Leaving it
+		// behind would orphan interface definitions for a container that
+		// no longer exists (or worse, attach them to a future task that
+		// reuses the same id).
+		if (wasContainer || target.interfacesByContainerId[row.taskId]) {
+			delete target.interfacesByContainerId[row.taskId];
 		}
 		return;
 	}
@@ -206,11 +227,34 @@ function applyRowMutation(
 			delete target.dependenciesById[row.depId];
 			return;
 		}
+		// Guard against partial-apply order: if the user applies a
+		// dependency row before its prerequisite task-added rows, copying
+		// the dep verbatim would point it at tasks that don't exist on
+		// the live doc (or at a container endpoint, which addDependency
+		// rejects). Drop the row silently — the diff will keep showing it
+		// until the prerequisites land, then a second click applies it.
+		if (
+			!endpointValid(target, src.from.taskId) ||
+			!endpointValid(target, src.to.taskId)
+		) {
+			return;
+		}
 		target.dependenciesById[row.depId] = JSON.parse(
 			JSON.stringify(src),
 		) as Dependency;
 		return;
 	}
+}
+
+function endpointValid(doc: PertDoc, taskId: string | undefined): boolean {
+	if (!taskId) return false;
+	const task = doc.tasksById[taskId];
+	if (!task) return false;
+	// Container endpoints aren't valid dep targets in this app's model —
+	// addDependencyMutation rejects them. Mirror that here so user-applied
+	// dep rows don't get into a state the rest of the app considers
+	// invalid.
+	return task.kind !== "container";
 }
 
 function copyTaskField(dst: Task, src: Task, field: string): void {
