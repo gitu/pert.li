@@ -6,6 +6,7 @@ import {
 	toServerSentEventsResponse,
 } from "@tanstack/ai";
 import dotenv from "dotenv";
+import { toGeminiCompatibleTools } from "#/lib/ai/gemini-compat";
 import { type ProviderEnv, selectTextAdapter } from "#/lib/ai/provider";
 import { requireSessionFromHeaders } from "#/server/auth-context.server";
 
@@ -461,7 +462,14 @@ export async function handleChatRequest(request: Request): Promise<Response> {
 	// turns the client-declared tool list into no-execute entries — the
 	// runtime then ferries each tool call back to the browser, waits for
 	// `addToolResult(...)`, and continues the agent loop.
-	const tools = mergeAgentTools([], params.tools);
+	const merged = mergeAgentTools([], params.tools);
+	// Gemini's function-declaration schema dialect rejects the JSON Schema
+	// `const` keyword (which Zod emits for every z.literal(), e.g. the `op`
+	// discriminators in propose_changes' operations array). Rewrite those to
+	// single-value enums before they reach the Gemini adapter; other providers
+	// accept `const` natively.
+	const tools =
+		config.provider === "gemini" ? toGeminiCompatibleTools(merged) : merged;
 	const stream = chat({
 		adapter,
 		messages: params.messages,
