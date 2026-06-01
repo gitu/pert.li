@@ -146,7 +146,7 @@ function ShareCanvas({
 		if (mode === "edit" && displayName) {
 			setShareIdentity({
 				displayName,
-				userId: `share:${token.slice(0, 8)}:${crypto.randomUUID().slice(0, 6)}`,
+				userId: `share:${token.slice(0, 8)}:${Math.random().toString(36).slice(2, 8)}`,
 			});
 		}
 		return () => setShareIdentity(null);
