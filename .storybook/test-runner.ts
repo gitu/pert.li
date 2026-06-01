@@ -78,7 +78,7 @@ const config: TestRunnerConfig = {
 				const width = right - x;
 				const height = bottom - y;
 				const fillsViewport =
-					width >= viewport.width * FULL_BLEED_RATIO &&
+					width >= viewport.width * FULL_BLEED_RATIO ||
 					height >= viewport.height * FULL_BLEED_RATIO;
 				if (width >= MIN_CLIP_SIZE && height >= MIN_CLIP_SIZE && !fillsViewport) {
 					clip = { x, y, width, height };
