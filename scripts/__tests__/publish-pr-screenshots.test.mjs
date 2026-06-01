@@ -1,5 +1,11 @@
 import { execFileSync, execSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -24,7 +30,7 @@ function rewriteRemote(scriptPath, fakeRemoteUrl) {
 	// The shipped script hard-codes the GitHub HTTPS URL; the test
 	// reroutes it to a local `file://` bare repo so we never touch the
 	// real network.
-	const original = execFileSync("cat", [SCRIPT], { encoding: "utf8" });
+	const original = readFileSync(SCRIPT, { encoding: "utf8" });
 	const patched = original.replace(
 		/https:\/\/x-access-token:.*@github\.com\/.*\.git/,
 		fakeRemoteUrl,
