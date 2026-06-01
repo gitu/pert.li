@@ -607,30 +607,54 @@ function ChatThread({
 			initialMessages: initialMessagesRef.current as any,
 		});
 
-	// Persist to localStorage + broadcast to other tabs on every change.
-	// Skip the very first effect run when the array matches what we just
-	// hydrated, otherwise an empty initial useChat state can wipe a saved
-	// transcript on mount.
+	// Persist to localStorage + broadcast to other tabs.
+	// While `isLoading` is true the assistant is streaming and `messages`
+	// emits a new array per token — JSON.stringify + localStorage.setItem +
+	// BroadcastChannel.post on every one of those was the worst single source
+	// of chat-dock lag. Debounce writes during streaming and flush once when
+	// streaming ends; outside streaming, persist synchronously so sends /
+	// resets land immediately.
 	const lastBroadcastSerialRef = useRef<string | null>(null);
+	const pendingPersistRef = useRef<number | null>(null);
 	useEffect(() => {
 		if (!broadcaster) return;
-		try {
-			const serial = JSON.stringify(messages);
-			if (serial === lastBroadcastSerialRef.current) return;
-			lastBroadcastSerialRef.current = serial;
-			const snapshot = messages as unknown as ChatMessagesSnapshot;
-			writeThreadMessages(threadId, snapshot);
-			broadcaster.post({
-				type: "messages",
-				scopeKey,
-				threadId,
-				snapshot,
-			});
-		} catch {
-			// non-serialisable payload (cyclical objects, functions in args) —
-			// drop persistence rather than crashing the chat.
+		const persist = () => {
+			pendingPersistRef.current = null;
+			try {
+				const serial = JSON.stringify(messages);
+				if (serial === lastBroadcastSerialRef.current) return;
+				lastBroadcastSerialRef.current = serial;
+				const snapshot = messages as unknown as ChatMessagesSnapshot;
+				writeThreadMessages(threadId, snapshot);
+				broadcaster.post({
+					type: "messages",
+					scopeKey,
+					threadId,
+					snapshot,
+				});
+			} catch {
+				// non-serialisable payload (cyclical objects, functions in args) —
+				// drop persistence rather than crashing the chat.
+			}
+		};
+		if (isLoading) {
+			if (pendingPersistRef.current !== null) {
+				window.clearTimeout(pendingPersistRef.current);
+			}
+			pendingPersistRef.current = window.setTimeout(persist, 400);
+			return () => {
+				if (pendingPersistRef.current !== null) {
+					window.clearTimeout(pendingPersistRef.current);
+					pendingPersistRef.current = null;
+				}
+			};
 		}
-	}, [broadcaster, messages, scopeKey, threadId]);
+		if (pendingPersistRef.current !== null) {
+			window.clearTimeout(pendingPersistRef.current);
+			pendingPersistRef.current = null;
+		}
+		persist();
+	}, [broadcaster, messages, scopeKey, threadId, isLoading]);
 
 	// Auto-derive a thread title from the first user message and report message
 	// count up to the parent so the close-confirm can stay silent on empties.
