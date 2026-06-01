@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import { ChatPanel } from "./chat-panel";
 
 // Wraps the panel in a fixed-size box so it has a chrome to scroll in.
@@ -52,5 +52,32 @@ export const WithSeedPrompt: Story = {
 		const canvas = within(canvasElement);
 		const send = await canvas.findByTestId("chat-send");
 		expect(send).not.toBeDisabled();
+	},
+};
+
+// Drives the hidden <input type="file"> directly — exercises the markdown
+// extraction path (no PDF/DOCX bundle needed) and the chip + parsed-state
+// transition.
+export const WithAttachedMarkdown: Story = {
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const input = (await canvas.findByTestId(
+			"chat-file-input",
+		)) as HTMLInputElement;
+		const file = new File(
+			[
+				"# Auth spec\n- OIDC discovery: needs token rotation\n- Session refresh: 24h sliding window\n",
+			],
+			"auth-spec.md",
+			{ type: "text/markdown" },
+		);
+		await userEvent.upload(input, file);
+		await waitFor(async () => {
+			const chip = await canvas.findByTestId(/^chat-attachment-/);
+			expect(chip).toHaveAttribute("data-status", "ready");
+		});
+		// Send is enabled when an attachment is ready even with empty body.
+		const send = await canvas.findByTestId("chat-send");
+		await waitFor(() => expect(send).not.toBeDisabled());
 	},
 };

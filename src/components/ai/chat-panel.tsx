@@ -7,9 +7,12 @@ import {
 	BotIcon,
 	ChevronDownIcon,
 	ChevronRightIcon,
+	FileTextIcon,
 	GridIcon,
 	ListIcon,
+	Loader2Icon,
 	NetworkIcon,
+	PaperclipIcon,
 	PinIcon,
 	PinOffIcon,
 	SquareIcon,
@@ -23,6 +26,16 @@ import { Streamdown } from "streamdown";
 import { Button } from "#/components/ui/button";
 import { ScrollArea } from "#/components/ui/scroll-area";
 import { Textarea } from "#/components/ui/textarea";
+import {
+	buildMessageWithAttachments,
+	classify,
+	type ExtractedFile,
+	extractText,
+	FileExtractError,
+	UnsupportedFileError,
+} from "#/lib/ai/file-extract";
+import type { EditOp } from "#/lib/ai/operations";
+import { createProposal } from "#/lib/ai/proposals-store";
 import {
 	addDependencyMutation,
 	addInterfaceMutation,
@@ -51,6 +64,7 @@ import {
 	askChoiceTool,
 	moveTaskTool,
 	pinDependencyTool,
+	proposeChangesTool,
 	readProjectTool,
 	removeDependencyTool,
 	removeInterfaceTool,
@@ -93,6 +107,7 @@ import { useIsMobile } from "#/lib/use-media-query";
 import { cn } from "#/lib/utils";
 import type { ProjectView } from "#/routes/_app/p.$projectId";
 import { ChatTabs } from "./chat-tabs";
+import { ProposalCard } from "./proposal-card";
 
 // Chat surface backed by the /api/chat SSE endpoint. The hook owns the
 // connection lifecycle (subscribe-on-mount, unsubscribe-on-unmount); we just
@@ -505,6 +520,24 @@ export function ChatPanel({
 				// continues. The chips themselves are rendered below from the message
 				// log; clicking one sends the option's value as a normal user message.
 				askChoiceTool.client(() => ({ ok: true as const })),
+				// propose_changes builds a staged proposal in the client store and
+				// returns its id. The live doc is NOT mutated — the chat UI renders
+				// a ProposalCard with the diff, and the user clicks Apply (or per-
+				// row Apply, or Reject) to commit.
+				proposeChangesTool.client((args) => {
+					const active = getActiveDoc();
+					if (!active) return noActiveProject;
+					const { proposal, summary } = createProposal(
+						active.doc,
+						args.rationale,
+						args.operations as EditOp[],
+					);
+					return {
+						ok: true as const,
+						proposalId: proposal.id,
+						summary,
+					};
+				}),
 			] as const,
 		[],
 	);
@@ -692,8 +725,61 @@ function ChatThread({
 	const [input, setInput] = useState(
 		autoSendInitial ? "" : (initialPrompt ?? ""),
 	);
+	const [attachments, setAttachments] = useState<AttachmentSlot[]>([]);
+	const [isDragging, setIsDragging] = useState(false);
+	const fileInputRef = useRef<HTMLInputElement>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const autoSentRef = useRef(false);
+	const attachmentsBusy = attachments.some((a) => a.status === "parsing");
+
+	const ingestFiles = useCallback((files: FileList | File[]) => {
+		const list = Array.from(files);
+		if (list.length === 0) return;
+		setAttachments((current) => {
+			const additions: AttachmentSlot[] = list.map((file) => ({
+				id: createAttachmentId(),
+				file,
+				status: "parsing",
+			}));
+			// Kick off parsing per slot. We mutate the slot in a follow-up
+			// setState — the closure below captures the id, not the index, so
+			// concurrent additions stay independent.
+			for (const slot of additions) {
+				void (async () => {
+					try {
+						// Pre-classify so unsupported types fail fast with a clearer
+						// message instead of routing into a no-op text reader.
+						classify(slot.file);
+						const extracted = await extractText(slot.file);
+						setAttachments((prev) =>
+							prev.map((a) =>
+								a.id === slot.id ? { ...a, status: "ready", extracted } : a,
+							),
+						);
+					} catch (e) {
+						const message =
+							e instanceof UnsupportedFileError || e instanceof FileExtractError
+								? e.message
+								: e instanceof Error
+									? e.message
+									: "Could not read file";
+						setAttachments((prev) =>
+							prev.map((a) =>
+								a.id === slot.id
+									? { ...a, status: "error", error: message }
+									: a,
+							),
+						);
+					}
+				})();
+			}
+			return [...current, ...additions];
+		});
+	}, []);
+
+	const removeAttachment = useCallback((id: string) => {
+		setAttachments((prev) => prev.filter((a) => a.id !== id));
+	}, []);
 
 	// Expose imperative API to the outer panel for dock pending prompts.
 	useEffect(() => {
@@ -732,9 +818,21 @@ function ChatThread({
 
 	const submit = () => {
 		const trimmed = input.trim();
-		if (!trimmed || isLoading) return;
+		const ready = attachments.filter(
+			(
+				a,
+			): a is AttachmentSlot & { status: "ready"; extracted: ExtractedFile } =>
+				a.status === "ready" && !!a.extracted,
+		);
+		if (!trimmed && ready.length === 0) return;
+		if (isLoading || attachmentsBusy) return;
+		const composed = buildMessageWithAttachments(
+			trimmed,
+			ready.map((a) => a.extracted),
+		);
 		setInput("");
-		void sendMessage(trimmed);
+		setAttachments([]);
+		void sendMessage(composed);
 	};
 
 	// Any ask_choice tool calls emitted AFTER the last user message are still
@@ -797,8 +895,84 @@ function ChatThread({
 					onChoose={chooseOption}
 				/>
 			)}
-			<div className="shrink-0 border-t p-2">
+			<fieldset
+				className={cn(
+					"relative shrink-0 border-t border-x-0 border-b-0 p-2",
+					isDragging && "bg-primary/5",
+				)}
+				onDragEnter={(e) => {
+					if (!hasDataTransferFiles(e)) return;
+					e.preventDefault();
+					setIsDragging(true);
+				}}
+				onDragOver={(e) => {
+					if (!hasDataTransferFiles(e)) return;
+					e.preventDefault();
+				}}
+				onDragLeave={(e) => {
+					// Only flip off when the pointer leaves the container, not when
+					// it moves between children.
+					if (
+						e.currentTarget instanceof HTMLElement &&
+						!e.currentTarget.contains(e.relatedTarget as Node | null)
+					) {
+						setIsDragging(false);
+					}
+				}}
+				onDrop={(e) => {
+					if (!hasDataTransferFiles(e)) return;
+					e.preventDefault();
+					setIsDragging(false);
+					ingestFiles(e.dataTransfer.files);
+				}}
+			>
+				{attachments.length > 0 && (
+					<div
+						className="mb-1.5 flex flex-wrap gap-1"
+						data-testid="chat-attachments"
+					>
+						{attachments.map((a) => (
+							<AttachmentChip
+								key={a.id}
+								slot={a}
+								onRemove={() => removeAttachment(a.id)}
+							/>
+						))}
+					</div>
+				)}
+				{isDragging && (
+					<div
+						className="pointer-events-none absolute inset-1 flex items-center justify-center rounded-md border-2 border-dashed border-primary/60 bg-background/80 text-[11px] font-medium text-primary"
+						data-testid="chat-drop-overlay"
+					>
+						Drop files to attach
+					</div>
+				)}
 				<div className="flex items-end gap-2">
+					<input
+						ref={fileInputRef}
+						type="file"
+						multiple
+						className="hidden"
+						accept=".txt,.md,.markdown,.csv,.json,.log,.rst,.yaml,.yml,.pdf,.docx,text/*,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+						onChange={(e) => {
+							if (e.target.files) ingestFiles(e.target.files);
+							e.target.value = "";
+						}}
+						data-testid="chat-file-input"
+					/>
+					<Button
+						type="button"
+						size="icon"
+						variant="ghost"
+						className="size-9 shrink-0"
+						onClick={() => fileInputRef.current?.click()}
+						disabled={isLoading}
+						aria-label="Attach files"
+						data-testid="chat-attach"
+					>
+						<PaperclipIcon className="size-4" />
+					</Button>
 					<Textarea
 						value={input}
 						onChange={(e) => setInput(e.target.value)}
@@ -816,7 +990,9 @@ function ChatThread({
 						placeholder={
 							isLoading
 								? "Streaming response…"
-								: "Message — Enter to send, Shift-Enter for newline"
+								: attachmentsBusy
+									? "Reading attachments…"
+									: "Message — Enter to send, Shift-Enter for newline. Drag files to attach."
 						}
 						rows={2}
 						disabled={isLoading}
@@ -828,15 +1004,94 @@ function ChatThread({
 						size="icon"
 						className="size-9"
 						onClick={submit}
-						disabled={!input.trim() || isLoading}
+						disabled={
+							isLoading ||
+							attachmentsBusy ||
+							(!input.trim() && !attachments.some((a) => a.status === "ready"))
+						}
 						aria-label="Send message"
 						data-testid="chat-send"
 					>
 						<ArrowUpIcon className="size-4" />
 					</Button>
 				</div>
-			</div>
+			</fieldset>
 		</>
+	);
+}
+
+type AttachmentSlot = {
+	id: string;
+	file: File;
+	status: "parsing" | "ready" | "error";
+	extracted?: ExtractedFile;
+	error?: string;
+};
+
+function createAttachmentId(): string {
+	const bytes = new Uint8Array(4);
+	crypto.getRandomValues(bytes);
+	let s = "";
+	for (const b of bytes) s += b.toString(16).padStart(2, "0");
+	return `att_${s}`;
+}
+
+function hasDataTransferFiles(e: React.DragEvent): boolean {
+	const dt = e.dataTransfer;
+	if (!dt) return false;
+	if (dt.files && dt.files.length > 0) return true;
+	// In a dragenter/dragover the file list isn't readable yet; fall back to
+	// the type list which contains "Files" when the drag carries any.
+	return Array.from(dt.types ?? []).includes("Files");
+}
+
+function AttachmentChip({
+	slot,
+	onRemove,
+}: {
+	slot: AttachmentSlot;
+	onRemove: () => void;
+}) {
+	const truncated = slot.extracted?.truncated;
+	const meta =
+		slot.status === "parsing"
+			? "Reading…"
+			: slot.status === "error"
+				? (slot.error ?? "Failed to read")
+				: slot.extracted
+					? `${slot.extracted.text.length.toLocaleString()} chars${truncated ? " · truncated" : ""}`
+					: "";
+	return (
+		<div
+			className={cn(
+				"flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-[10px]",
+				slot.status === "error"
+					? "border-destructive/40 bg-destructive/10 text-destructive"
+					: "border-border bg-muted/30",
+			)}
+			data-testid={`chat-attachment-${slot.id}`}
+			data-status={slot.status}
+		>
+			{slot.status === "parsing" ? (
+				<Loader2Icon className="size-3 shrink-0 animate-spin" />
+			) : (
+				<FileTextIcon className="size-3 shrink-0" />
+			)}
+			<span className="truncate font-medium">{slot.file.name}</span>
+			{meta && (
+				<span className="truncate text-muted-foreground" title={meta}>
+					· {meta}
+				</span>
+			)}
+			<button
+				type="button"
+				onClick={onRemove}
+				className="ml-1 rounded p-0.5 text-muted-foreground hover:bg-muted-foreground/10"
+				aria-label={`Remove attachment ${slot.file.name}`}
+			>
+				<XIcon className="size-3" />
+			</button>
+		</div>
 	);
 }
 
@@ -1045,10 +1300,12 @@ export type ChatMessage = {
 
 function MessageRow({ message }: { message: ChatMessage }) {
 	const isUser = message.role === "user";
-	const text = extractText(message);
+	const text = extractMessageText(message);
 	const toolCalls = extractToolCalls(message);
+	const proposalIds = extractProposalIds(message);
 	const hasText = text.length > 0;
 	const hasTools = toolCalls.length > 0;
+	const hasProposals = proposalIds.length > 0;
 	return (
 		<div
 			data-testid={`chat-message-${message.role}`}
@@ -1083,9 +1340,16 @@ function MessageRow({ message }: { message: ChatMessage }) {
 							<Streamdown parseIncompleteMarkdown>{text}</Streamdown>
 						</div>
 					)
-				) : !hasTools ? (
+				) : !hasTools && !hasProposals ? (
 					<span className="italic text-muted-foreground">…thinking…</span>
 				) : null}
+				{hasProposals && (
+					<div className="flex flex-col gap-1.5">
+						{proposalIds.map((id) => (
+							<ProposalCard key={id} proposalId={id} />
+						))}
+					</div>
+				)}
 				{hasTools && (
 					<div className="flex flex-col gap-1">
 						{toolCalls.map((call) => (
@@ -1256,7 +1520,7 @@ function prettyJson(raw: string): string {
 	}
 }
 
-function extractText(message: ChatMessage): string {
+function extractMessageText(message: ChatMessage): string {
 	return message.parts
 		.filter((p) => p.type === "text")
 		.map((p) => (typeof p.content === "string" ? p.content : ""))
@@ -1274,9 +1538,33 @@ function extractToolCalls(message: ChatMessage): Array<ToolCallView> {
 				state: String(p.state ?? ""),
 			}))
 			// `ask_choice` is pure UI — the question + chips render below the
-			// chat scroller. Showing a "wrench chip" for it would be redundant.
-			.filter((c) => c.name !== "ask_choice")
+			// chat scroller. `propose_changes` is rendered as a ProposalCard
+			// in-bubble instead of as a wrench chip. Both would be redundant
+			// alongside their custom surfaces.
+			.filter((c) => c.name !== "ask_choice" && c.name !== "propose_changes")
 	);
+}
+
+// Pull proposal ids out of any `propose_changes` tool-results on the message.
+// Used by MessageRow to render an inline ProposalCard under the assistant's
+// text. We read the result (not the call args) so the card only shows up
+// after the client handler has actually staged the proposal.
+function extractProposalIds(message: ChatMessage): string[] {
+	const ids: string[] = [];
+	for (const part of message.parts) {
+		if (part.type !== "tool-result") continue;
+		const content = typeof part.content === "string" ? part.content : "";
+		if (!content) continue;
+		try {
+			const parsed = JSON.parse(content) as { proposalId?: unknown };
+			if (typeof parsed.proposalId === "string" && parsed.proposalId) {
+				ids.push(parsed.proposalId);
+			}
+		} catch {
+			// not JSON; ignore.
+		}
+	}
+	return ids;
 }
 
 function extractToolResult(

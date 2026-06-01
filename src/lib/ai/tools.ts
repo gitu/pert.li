@@ -1,5 +1,6 @@
 import { toolDefinition } from "@tanstack/ai";
 import { z } from "zod";
+import { editOpSchema } from "./operations";
 
 // Isomorphic tool definitions for the chat assistant. The same definitions are
 // used on both sides: the server merges them into the model's available tools
@@ -315,6 +316,46 @@ export const pinDependencyTool = toolDefinition({
 	outputSchema: okOrErrorSchema,
 });
 
+// Stages a batch of edits for the user to review. The tool itself does NOT
+// touch the live doc — it builds a cloned PertDoc with the operations
+// applied, computes the diff, and returns a proposal id. The chat UI then
+// renders a proposal card with the diff and Apply / Reject controls. Use
+// this for broad edits (re-estimate the auth tasks based on the attached
+// spec; introduce a milestone and rewire dependencies; etc.) so the user
+// gets one consolidated review surface instead of N individual mutations.
+export const proposeChangesTool = toolDefinition({
+	name: "propose_changes",
+	description:
+		"Stage a batch of edits across the project for the user to review before anything lands. Returns a proposalId — the chat UI renders the resulting diff with per-row Apply and Apply-all controls. Use this for any edit that touches more than ~3 tasks, or any time you re-estimate from an attached document. Individual edit tools (set_estimate, add_task, …) still exist for single, surgical fixes.",
+	inputSchema: z.object({
+		rationale: z
+			.string()
+			.min(1)
+			.describe(
+				"One or two sentences the user will see at the top of the proposal card explaining why these changes hang together (e.g. 'Re-estimated the auth tasks from the attached spec — adding a 5-day spike for OIDC discovery).' Don't restate the operations; the diff does that.",
+			),
+		operations: z
+			.array(editOpSchema)
+			.min(1)
+			.describe(
+				"Edit operations in the order they should apply. Each operation mirrors one of the single-task tools. You may use client-provided ids on add_task / add_dependency / add_interface to reference newly-added entities in later operations within the same batch.",
+			),
+	}),
+	outputSchema: z.union([
+		z.object({
+			ok: z.literal(true),
+			proposalId: z.string(),
+			summary: z.object({
+				tasksAffected: z.number(),
+				depsAffected: z.number(),
+				operationsApplied: z.number(),
+				operationsFailed: z.number(),
+			}),
+		}),
+		z.object({ ok: z.literal(false), error: z.string() }),
+	]),
+});
+
 // Presents a multiple-choice question to the user. The tool itself just
 // acknowledges immediately; the UI surfaces the question + clickable chips
 // above the chat input. Clicking a chip sends `value` (falling back to
@@ -375,5 +416,6 @@ export const CHAT_TOOL_DEFINITIONS = [
 	removeInterfaceTool,
 	setInterfaceTool,
 	pinDependencyTool,
+	proposeChangesTool,
 	askChoiceTool,
 ] as const;
