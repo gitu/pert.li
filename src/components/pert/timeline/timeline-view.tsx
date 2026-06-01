@@ -1,6 +1,13 @@
 import { useStore } from "@tanstack/react-store";
-import { CircleDotIcon, LayersIcon, ZapIcon } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+	CircleDotIcon,
+	LayersIcon,
+	MaximizeIcon,
+	ZapIcon,
+	ZoomInIcon,
+	ZoomOutIcon,
+} from "lucide-react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { computeSchedule } from "#/lib/pert/schedule";
 import { selectionStore, selectTask } from "#/lib/pert/store";
@@ -17,9 +24,11 @@ import {
 import type { PertDoc } from "#/lib/pert/types";
 import { cn } from "#/lib/utils";
 
-// Timeline strip: one row per leaf/milestone, x-axis = days from project
-// start, critical path lit. Selection is shared with the rest of the views
-// via selectionStore. No estimate editing here — that's the inspector job.
+// Timeline strip: Gantt-style bars on a day axis. Day axis sticks to the
+// top, the label column sticks to the left, and the bars area is a 2D
+// scrollable canvas at a user-chosen pixels-per-day zoom. Selection is
+// shared with the rest of the views via selectionStore. No estimate
+// editing here — that's the inspector job.
 
 export type TimelineViewProps = {
 	projectId: string;
@@ -34,6 +43,13 @@ const AXIS_HEIGHT = 28;
 const MIN_BAR_WIDTH = 4;
 // How far each nesting level pushes the lane / header label to the right.
 const INDENT_PX = 14;
+
+// Zoom is expressed in pixels per day. The default is a sensible starting
+// point; auto-fit runs once on mount to match the available viewport.
+const DEFAULT_PX_PER_DAY = 32;
+const MIN_PX_PER_DAY = 2;
+const MAX_PX_PER_DAY = 240;
+const ZOOM_STEP = 1.5;
 
 export function TimelineView({ projectId, doc }: TimelineViewProps) {
 	const scheduleResult = useMemo(() => computeSchedule(doc), [doc]);
@@ -53,6 +69,35 @@ export function TimelineView({ projectId, doc }: TimelineViewProps) {
 		() => buildRows(model.lanes, grouped),
 		[model.lanes, grouped],
 	);
+
+	const scrollRef = useRef<HTMLDivElement>(null);
+	const [pxPerDay, setPxPerDay] = useState(DEFAULT_PX_PER_DAY);
+
+	// Auto-fit once on first paint so the bars span the available width
+	// without the user having to click Fit. After that the zoom is sticky
+	// — we don't refit on resize or doc updates so manual zoom isn't
+	// clobbered while the user is working.
+	const autoFittedRef = useRef(false);
+	useLayoutEffect(() => {
+		if (autoFittedRef.current) return;
+		if (model.lanes.length === 0) return;
+		const next = computeFitPxPerDay(scrollRef.current, model.axisMax);
+		if (next != null) {
+			setPxPerDay(next);
+			autoFittedRef.current = true;
+		}
+	}, [model.lanes.length, model.axisMax]);
+
+	const fit = () => {
+		const next = computeFitPxPerDay(scrollRef.current, model.axisMax);
+		if (next != null) setPxPerDay(next);
+	};
+	const zoomIn = () =>
+		setPxPerDay((p) => Math.min(p * ZOOM_STEP, MAX_PX_PER_DAY));
+	const zoomOut = () =>
+		setPxPerDay((p) => Math.max(p / ZOOM_STEP, MIN_PX_PER_DAY));
+
+	const hasLanes = model.lanes.length > 0;
 
 	return (
 		<div
@@ -80,6 +125,44 @@ export function TimelineView({ projectId, doc }: TimelineViewProps) {
 						<LayersIcon className="size-3.5" />
 						{grouped ? "Grouped" : "Group"}
 					</Button>
+					<div className="flex items-center rounded-md border">
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-7 w-7 rounded-r-none p-0"
+							onClick={zoomOut}
+							disabled={!hasLanes || pxPerDay <= MIN_PX_PER_DAY + 1e-3}
+							data-testid="timeline-zoom-out"
+							title="Zoom out"
+							aria-label="Zoom out"
+						>
+							<ZoomOutIcon className="size-3.5" />
+						</Button>
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-7 w-7 rounded-none border-x p-0"
+							onClick={fit}
+							disabled={!hasLanes}
+							data-testid="timeline-zoom-fit"
+							title="Fit timeline to width"
+							aria-label="Fit timeline to width"
+						>
+							<MaximizeIcon className="size-3.5" />
+						</Button>
+						<Button
+							variant="ghost"
+							size="sm"
+							className="h-7 w-7 rounded-l-none p-0"
+							onClick={zoomIn}
+							disabled={!hasLanes || pxPerDay >= MAX_PX_PER_DAY - 1e-3}
+							data-testid="timeline-zoom-in"
+							title="Zoom in"
+							aria-label="Zoom in"
+						>
+							<ZoomInIcon className="size-3.5" />
+						</Button>
+					</div>
 					{model.cycle ? (
 						<span className="text-xs text-destructive">
 							Cycle detected — schedule unavailable
@@ -93,21 +176,43 @@ export function TimelineView({ projectId, doc }: TimelineViewProps) {
 					)}
 				</div>
 			</header>
-			<div className="flex-1 overflow-auto p-4">
-				{model.lanes.length === 0 ? (
-					<EmptyTimeline cycle={model.cycle} />
-				) : (
+			<div ref={scrollRef} className="flex-1 overflow-auto">
+				{hasLanes ? (
 					<TimelineStrip
 						rows={rows}
 						axisMax={model.axisMax}
 						projectDuration={model.projectDuration}
+						pxPerDay={pxPerDay}
 						selectedTaskId={selectedTaskId}
 						onSelect={(taskId) => selectTask(projectId, taskId)}
 					/>
+				) : (
+					<EmptyTimeline cycle={model.cycle} />
 				)}
 			</div>
 		</div>
 	);
+}
+
+// Pick a pxPerDay that fills the bars area of the given scroll container.
+// Returns null when we can't measure yet (no element, zero width before
+// first paint, empty timeline). Caller should treat null as "skip".
+function computeFitPxPerDay(
+	container: HTMLElement | null,
+	axisMax: number,
+): number | null {
+	if (!container) return null;
+	const width = container.clientWidth;
+	if (width <= 0 || axisMax <= 0) return null;
+	// Leave a small right gutter so the project-end marker isn't flush
+	// against the right edge / scrollbar.
+	const available = width - LABEL_WIDTH - 16;
+	if (available < 50) return MIN_PX_PER_DAY;
+	return clamp(available / axisMax, MIN_PX_PER_DAY, MAX_PX_PER_DAY);
+}
+
+function clamp(n: number, lo: number, hi: number): number {
+	return Math.min(Math.max(n, lo), hi);
 }
 
 // Renderable row in the strip. Header rows label a group node; lane rows
@@ -171,183 +276,319 @@ function TimelineStrip({
 	rows,
 	axisMax,
 	projectDuration,
+	pxPerDay,
 	selectedTaskId,
 	onSelect,
 }: {
 	rows: TimelineRow[];
 	axisMax: number;
 	projectDuration: number;
+	pxPerDay: number;
 	selectedTaskId: string | null;
 	onSelect: (taskId: string) => void;
 }) {
 	const ticks = useMemo(() => timelineTicks(axisMax), [axisMax]);
-	// Pre-compute the y-offset of each row (rows have variable heights —
-	// headers are shorter than lanes). Last entry of `tops` is the total
-	// stack height below the axis.
+	// Pre-compute the y-offset of each row. Heights are mixed (headers
+	// are shorter than lanes); we add LANE_GAP *between* rows, not after
+	// the last one, so the HTML label column (flex with gap) and the
+	// SVG bars area share the same total height.
 	const tops = useMemo(() => {
 		const out: number[] = [];
-		let cursor = AXIS_HEIGHT;
-		for (const row of rows) {
+		let cursor = 0;
+		for (let i = 0; i < rows.length; i++) {
 			out.push(cursor);
-			cursor += rowHeight(row) + LANE_GAP;
+			cursor += rowHeight(rows[i]);
+			if (i < rows.length - 1) cursor += LANE_GAP;
 		}
 		out.push(cursor);
 		return out;
 	}, [rows]);
-	const height = tops[tops.length - 1];
+	const rowsHeight = tops[tops.length - 1];
+	// Floor the bars area so very short / 1-day projects still have a
+	// usable click target before the user zooms in.
+	const contentWidth = Math.max(axisMax * pxPerDay, 200);
 	const laneCount = rows.reduce((n, r) => (r.type === "lane" ? n + 1 : n), 0);
 
 	return (
-		<svg
+		<div
 			role="img"
 			aria-label={`Timeline of ${laneCount} tasks across ${fmt(axisMax)} days`}
-			width="100%"
-			height={height}
-			viewBox={`0 0 1000 ${height}`}
-			preserveAspectRatio="none"
-			className="block min-w-[640px] font-sans"
 			data-testid="timeline-svg"
+			className="grid font-sans"
+			style={{
+				gridTemplateColumns: `${LABEL_WIDTH}px ${contentWidth}px`,
+				gridTemplateRows: `${AXIS_HEIGHT}px ${rowsHeight}px`,
+				width: LABEL_WIDTH + contentWidth,
+			}}
 		>
-			<title>Timeline of {laneCount} tasks</title>
-			{/* Axis grid */}
-			<g>
-				{ticks.map((tick) => {
-					const x = LABEL_WIDTH + (tick / axisMax) * (1000 - LABEL_WIDTH);
+			{/* Top-left corner: sticky in both directions so neither axis nor
+			    label column scrolls over it. */}
+			<div
+				className="sticky left-0 top-0 z-30 border-b border-r bg-background"
+				style={{ gridArea: "1 / 1" }}
+			/>
+
+			{/* Axis: sticky top, scrolls horizontally with the bars below. */}
+			<div
+				className="sticky top-0 z-20 border-b bg-background"
+				style={{ gridArea: "1 / 2", height: AXIS_HEIGHT }}
+				data-testid="timeline-axis"
+			>
+				<svg
+					width={contentWidth}
+					height={AXIS_HEIGHT}
+					className="block"
+					aria-hidden="true"
+				>
+					{ticks.map((tick) => {
+						const x = tick * pxPerDay;
+						return (
+							<g key={`axis-${tick}`}>
+								<line
+									x1={x}
+									y1={AXIS_HEIGHT - 6}
+									x2={x}
+									y2={AXIS_HEIGHT}
+									className="stroke-border"
+									strokeWidth={0.5}
+								/>
+								<text
+									x={x}
+									y={AXIS_HEIGHT - 10}
+									textAnchor="middle"
+									className="fill-muted-foreground text-[10px]"
+								>
+									d{fmt(tick)}
+								</text>
+							</g>
+						);
+					})}
+				</svg>
+			</div>
+
+			{/* Label column: sticky left, scrolls vertically with the bars
+			    to its right. Rows are stacked in document order using a
+			    flex gap that matches the SVG row gap. */}
+			<div
+				className="sticky left-0 z-10 flex flex-col border-r bg-background"
+				style={{ gridArea: "2 / 1", gap: LANE_GAP }}
+			>
+				{rows.map((row) => {
+					if (row.type === "header") {
+						return <HeaderLabel key={`hdr-${row.path}`} row={row} />;
+					}
 					return (
-						<g key={`tick-${tick}`}>
-							<line
-								x1={x}
-								y1={0}
-								x2={x}
-								y2={height}
-								className="stroke-border"
-								strokeWidth={0.5}
-							/>
-							<text
-								x={x}
-								y={AXIS_HEIGHT - 8}
-								textAnchor="middle"
-								className="fill-muted-foreground text-[10px]"
-							>
-								d{fmt(tick)}
-							</text>
-						</g>
+						<LaneLabel
+							key={`lbl-${row.lane.taskId}`}
+							row={row}
+							isSelected={row.lane.taskId === selectedTaskId}
+							onSelect={onSelect}
+						/>
 					);
 				})}
-				<line
-					x1={LABEL_WIDTH}
-					y1={AXIS_HEIGHT}
-					x2={1000}
-					y2={AXIS_HEIGHT}
-					className="stroke-border"
-				/>
-				{/* Project end marker */}
+			</div>
+
+			{/* Bars: scrolls in both directions. Click on the row background
+			    (anywhere along the row, not just the bar) selects the task. */}
+			<svg
+				style={{ gridArea: "2 / 2" }}
+				width={contentWidth}
+				height={rowsHeight}
+				className="block"
+				data-testid="timeline-bars"
+			>
+				<title>Timeline of {laneCount} tasks</title>
+				{/* Vertical grid lines aligned with axis ticks. */}
+				{ticks.map((tick) => {
+					const x = tick * pxPerDay;
+					return (
+						<line
+							key={`grid-${tick}`}
+							x1={x}
+							y1={0}
+							x2={x}
+							y2={rowsHeight}
+							className="stroke-border"
+							strokeWidth={0.5}
+						/>
+					);
+				})}
+				{/* Project end marker (dashed). */}
 				{projectDuration > 0 && (
 					<line
-						x1={
-							LABEL_WIDTH + (projectDuration / axisMax) * (1000 - LABEL_WIDTH)
-						}
-						y1={AXIS_HEIGHT}
-						x2={
-							LABEL_WIDTH + (projectDuration / axisMax) * (1000 - LABEL_WIDTH)
-						}
-						y2={height}
+						x1={projectDuration * pxPerDay}
+						y1={0}
+						x2={projectDuration * pxPerDay}
+						y2={rowsHeight}
 						className="stroke-destructive/60"
 						strokeDasharray="4 4"
 					/>
 				)}
-			</g>
-			{/* Rows — group headers + lanes, in render order */}
-			{rows.map((row, i) => {
-				const top = tops[i];
-				if (row.type === "header") {
-					return <HeaderRowG key={`hdr-${row.path}`} row={row} top={top} />;
-				}
-				return (
-					<LaneRowG
-						key={`lane-${row.lane.taskId}`}
-						row={row}
-						top={top}
-						axisMax={axisMax}
-						isSelected={row.lane.taskId === selectedTaskId}
-						onSelect={onSelect}
-					/>
-				);
-			})}
-		</svg>
+				{/* Rows — group headers + lanes, in render order. */}
+				{rows.map((row, i) => {
+					const top = tops[i];
+					if (row.type === "header") {
+						return (
+							<HeaderRowG
+								key={`hdrb-${row.path}`}
+								row={row}
+								top={top}
+								width={contentWidth}
+							/>
+						);
+					}
+					return (
+						<LaneRowG
+							key={`lnb-${row.lane.taskId}`}
+							row={row}
+							top={top}
+							width={contentWidth}
+							pxPerDay={pxPerDay}
+							isSelected={row.lane.taskId === selectedTaskId}
+							onSelect={onSelect}
+						/>
+					);
+				})}
+			</svg>
+		</div>
 	);
 }
 
-function HeaderRowG({ row, top }: { row: HeaderRow; top: number }) {
+function HeaderLabel({ row }: { row: HeaderRow }) {
 	const indent = row.depth * INDENT_PX;
 	return (
-		<g data-testid={`timeline-header-${row.path}`} data-depth={row.depth}>
-			{/* Heavier divider for top-level groups; lighter for deeper nests. */}
-			<line
-				x1={0}
-				y1={top}
-				x2={1000}
-				y2={top}
-				className={cn(
-					row.depth === 0 ? "stroke-foreground/40" : "stroke-border",
-				)}
-				strokeWidth={row.depth === 0 ? 1.5 : 1}
-			/>
-			<foreignObject x={0} y={top} width={LABEL_WIDTH} height={HEADER_HEIGHT}>
-				<div
-					className="flex h-full items-center gap-1.5 truncate text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
-					style={{ paddingLeft: 8 + indent }}
-				>
-					<span className="truncate font-mono normal-case tracking-normal">
-						{row.label}
-					</span>
-					<span className="text-muted-foreground/70">({row.count})</span>
-				</div>
-			</foreignObject>
-		</g>
+		<div
+			data-testid={`timeline-header-${row.path}`}
+			data-depth={row.depth}
+			className={cn(
+				"flex shrink-0 items-center gap-1.5 truncate border-t text-[10px] font-medium uppercase tracking-wide text-muted-foreground",
+				row.depth === 0 ? "border-foreground/40" : "border-border",
+			)}
+			style={{ height: HEADER_HEIGHT, paddingLeft: 8 + indent }}
+		>
+			<span className="truncate font-mono normal-case tracking-normal">
+				{row.label}
+			</span>
+			<span className="text-muted-foreground/70">({row.count})</span>
+		</div>
+	);
+}
+
+function LaneLabel({
+	row,
+	isSelected,
+	onSelect,
+}: {
+	row: LaneRow;
+	isSelected: boolean;
+	onSelect: (taskId: string) => void;
+}) {
+	const { lane, depth } = row;
+	const isMilestone = lane.kind === "milestone";
+	const indent = depth * INDENT_PX;
+	return (
+		<button
+			type="button"
+			data-testid={`timeline-lane-${lane.taskId}`}
+			data-selected={isSelected}
+			data-critical={lane.critical}
+			data-depth={depth}
+			onClick={() => onSelect(lane.taskId)}
+			aria-pressed={isSelected}
+			className={cn(
+				"flex shrink-0 items-center gap-1.5 truncate bg-transparent text-left text-xs",
+				isSelected && "bg-accent/40 font-medium",
+			)}
+			style={{
+				height: LANE_HEIGHT,
+				paddingLeft: 8 + indent,
+				paddingRight: 4,
+			}}
+		>
+			{isMilestone ? (
+				<CircleDotIcon className="size-3 shrink-0 text-muted-foreground" />
+			) : lane.critical ? (
+				<ZapIcon className="size-3 shrink-0 text-destructive" />
+			) : (
+				<span className="size-1.5 shrink-0 rounded-full bg-muted-foreground" />
+			)}
+			<span className="truncate">{lane.title}</span>
+		</button>
+	);
+}
+
+function HeaderRowG({
+	row,
+	top,
+	width,
+}: {
+	row: HeaderRow;
+	top: number;
+	width: number;
+}) {
+	return (
+		<line
+			x1={0}
+			y1={top}
+			x2={width}
+			y2={top}
+			className={cn(row.depth === 0 ? "stroke-foreground/40" : "stroke-border")}
+			strokeWidth={row.depth === 0 ? 1.5 : 1}
+		/>
 	);
 }
 
 function LaneRowG({
 	row,
 	top,
-	axisMax,
+	width,
+	pxPerDay,
 	isSelected,
 	onSelect,
 }: {
 	row: LaneRow;
 	top: number;
-	axisMax: number;
+	width: number;
+	pxPerDay: number;
 	isSelected: boolean;
 	onSelect: (taskId: string) => void;
 }) {
-	const { lane, depth } = row;
-	const xStart =
-		LABEL_WIDTH + (lane.earliestStart / axisMax) * (1000 - LABEL_WIDTH);
-	const xFinish =
-		LABEL_WIDTH + (lane.earliestFinish / axisMax) * (1000 - LABEL_WIDTH);
+	const { lane } = row;
+	const xStart = lane.earliestStart * pxPerDay;
+	const xFinish = lane.earliestFinish * pxPerDay;
 	const barWidth = Math.max(xFinish - xStart, MIN_BAR_WIDTH);
 	const isMilestone = lane.kind === "milestone";
-	const indent = depth * INDENT_PX;
 
 	return (
-		<g
-			data-testid={`timeline-lane-${lane.taskId}`}
-			data-selected={isSelected}
-			data-critical={lane.critical}
-			data-depth={depth}
-		>
+		<g data-critical={lane.critical}>
+			{/* Full-row background — visually marks the current selection.
+			    Selection itself is handled by the matching LaneLabel button
+			    on the left so the click target stays keyboard-accessible. */}
 			<rect
 				x={0}
 				y={top}
-				width={1000}
+				width={width}
 				height={LANE_HEIGHT}
 				className={cn("fill-transparent", isSelected && "fill-accent/40")}
 			/>
-			{/* Bar (or milestone diamond) — purely decorative; the
-			    overlay button below catches all pointer events. */}
+			{/* Transparent button overlay covering the rest of the row so
+			    clicking on the bar area (or empty space to its right) also
+			    selects. Hidden from keyboard nav and a11y tree — the label
+			    button on the left is the canonical control. */}
+			<foreignObject x={0} y={top} width={width} height={LANE_HEIGHT}>
+				<button
+					type="button"
+					tabIndex={-1}
+					aria-hidden="true"
+					onClick={() => onSelect(lane.taskId)}
+					className="block size-full cursor-pointer bg-transparent"
+				/>
+			</foreignObject>
 			{isMilestone ? (
-				<g transform={`translate(${xStart}, ${top + LANE_HEIGHT / 2})`}>
+				<g
+					transform={`translate(${xStart}, ${top + LANE_HEIGHT / 2})`}
+					className="pointer-events-none"
+				>
 					<polygon
 						points="-6,0 0,-6 6,0 0,6"
 						className={cn(
@@ -363,6 +604,7 @@ function LaneRowG({
 					height={LANE_HEIGHT - 12}
 					rx={3}
 					className={cn(
+						"pointer-events-none",
 						lane.critical
 							? "fill-destructive/80 stroke-destructive"
 							: "fill-primary/70 stroke-primary",
@@ -380,30 +622,6 @@ function LaneRowG({
 					{fmt(lane.duration)}d
 				</text>
 			)}
-			<foreignObject x={0} y={top} width={1000} height={LANE_HEIGHT}>
-				<button
-					type="button"
-					onClick={() => onSelect(lane.taskId)}
-					aria-pressed={isSelected}
-					className={cn(
-						"flex h-full w-full items-center gap-1.5 truncate bg-transparent text-left text-xs",
-						isSelected && "font-medium",
-					)}
-					style={{
-						paddingLeft: 8 + indent,
-						paddingRight: 1000 - LABEL_WIDTH + 4,
-					}}
-				>
-					{isMilestone ? (
-						<CircleDotIcon className="size-3 shrink-0 text-muted-foreground" />
-					) : lane.critical ? (
-						<ZapIcon className="size-3 shrink-0 text-destructive" />
-					) : (
-						<span className="size-1.5 shrink-0 rounded-full bg-muted-foreground" />
-					)}
-					<span className="truncate">{lane.title}</span>
-				</button>
-			</foreignObject>
 		</g>
 	);
 }
