@@ -176,9 +176,85 @@ export function ChatPanel({
 	autoSendInitial = false,
 	showDockControls = false,
 }: ChatPanelProps) {
-	const projectId = useStore(projectDocStore, (s) => s.projectId);
+	// Chat scoping follows the URL, not the Automerge doc. Reading from
+	// `projectDocStore.projectId` would stall the panel on the no-project
+	// state until the doc materialises — that race shows up in e2e where
+	// sync is disabled and on slow networks for real users. The doc-store
+	// value still wins when the URL has no projectId (Storybook seeds it,
+	// share-link routes don't carry one).
+	const routeParams = useParams({ strict: false }) as { projectId?: string };
+	const docStoreProjectId = useStore(projectDocStore, (s) => s.projectId);
+	const projectId = routeParams.projectId ?? docStoreProjectId;
 	const scopeKey = getScopeKey(projectId);
 
+	if (scopeKey === null) {
+		return (
+			<NoProjectChat
+				className={className}
+				showDockControls={showDockControls}
+			/>
+		);
+	}
+	return (
+		<BoundChatPanel
+			className={className}
+			endpoint={endpoint}
+			initialPrompt={initialPrompt}
+			autoSendInitial={autoSendInitial}
+			showDockControls={showDockControls}
+			scopeKey={scopeKey}
+		/>
+	);
+}
+
+// The chat is bound to a project — without one there's no thread index to
+// load, the AI's tools all fail (`No active project`), and the conversation
+// would have nowhere to live. Render a small explainer in place of the panel
+// instead of letting the user start a thread that will be wiped when they
+// open a project.
+function NoProjectChat({
+	className,
+	showDockControls,
+}: {
+	className?: string;
+	showDockControls: boolean;
+}) {
+	return (
+		<div
+			data-testid="chat-panel"
+			data-state="no-project"
+			className={cn("flex h-full min-h-0 flex-col", className)}
+		>
+			<header className="flex shrink-0 items-center gap-2 border-b bg-card/40 px-3 py-2">
+				<BotIcon className="size-3.5 text-muted-foreground" />
+				<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+					Chat
+				</div>
+				<div className="ml-auto flex items-center gap-1">
+					{showDockControls && <ChatDockControls />}
+				</div>
+			</header>
+			<div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
+				<p className="text-sm font-medium">No project open</p>
+				<p className="max-w-xs text-xs text-muted-foreground">
+					The assistant works against the active plan — open a project from the
+					sidebar to start a chat about it.
+				</p>
+			</div>
+		</div>
+	);
+}
+
+type BoundChatPanelProps = ChatPanelProps & { scopeKey: string };
+
+function BoundChatPanel({
+	className,
+	endpoint = "/api/chat",
+	initialPrompt,
+	autoSendInitial = false,
+	showDockControls = false,
+	scopeKey,
+}: BoundChatPanelProps) {
 	// Thread index for the current scope. Seeded from localStorage on first
 	// access; re-read whenever the scope changes (e.g. user opens a different
 	// project). The seed call guarantees `threads.length >= 1`.

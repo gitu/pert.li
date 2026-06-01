@@ -298,8 +298,10 @@ function DesktopShell({
 				leftCollapsed={leftCollapsed}
 				bottomCollapsed={bottomCollapsed}
 				// Hide the bottom-panel toggle on routes without a bottom
-				// panel — nothing to collapse.
+				// panel — nothing to collapse. The chat trigger is gated on
+				// the same flag: chat is bound to the active project.
 				showBottomToggle={inProject}
+				showChatTrigger={inProject}
 				onToggleLeft={toggleLeft}
 				onToggleBottom={toggleBottom}
 			/>
@@ -458,6 +460,7 @@ function TopBar({
 	leftCollapsed,
 	bottomCollapsed,
 	showBottomToggle,
+	showChatTrigger,
 	onToggleLeft,
 	onToggleBottom,
 }: {
@@ -472,6 +475,7 @@ function TopBar({
 	leftCollapsed: boolean;
 	bottomCollapsed: boolean;
 	showBottomToggle: boolean;
+	showChatTrigger: boolean;
 	onToggleLeft: () => void;
 	onToggleBottom: () => void;
 }) {
@@ -518,7 +522,7 @@ function TopBar({
 				<PlusIcon className="size-4" />
 				New project
 			</Button>
-			<ChatTrigger />
+			{showChatTrigger && <ChatTrigger />}
 			{showBottomToggle && (
 				<Button
 					type="button"

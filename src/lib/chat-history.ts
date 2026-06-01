@@ -8,8 +8,8 @@
 //
 // Storage layout
 // --------------
-// Threads are grouped by *scope* (one default thread per project plus extras,
-// or a fallback "global" scope when no project is active). Each scope has:
+// Threads are scoped per project — the chat is only available when a project
+// is open, so `getScopeKey` returns null without one. Each project scope has:
 //
 //   pertli.chatThreads.v1.<scopeKey>   →  ThreadIndex (active id + metadata)
 //   pertli.chatThread.v1.<threadId>    →  ChatMessagesSnapshot (opaque)
@@ -18,7 +18,6 @@
 // creating / switching tabs doesn't have to rewrite (potentially long)
 // transcripts.
 
-const LEGACY_MESSAGES_KEY = "pertli.chatMessages.v1";
 const INDEX_KEY_PREFIX = "pertli.chatThreads.v1.";
 const THREAD_KEY_PREFIX = "pertli.chatThread.v1.";
 const CHANNEL_NAME = "pertli.chat";
@@ -43,8 +42,10 @@ export type ThreadIndex = {
 
 export const DEFAULT_THREAD_TITLE = "New chat";
 
-export function getScopeKey(projectId: string | null | undefined): string {
-	return projectId ? `project:${projectId}` : "global";
+export function getScopeKey(
+	projectId: string | null | undefined,
+): string | null {
+	return projectId ? `project:${projectId}` : null;
 }
 
 function indexStorageKey(scopeKey: string): string {
@@ -94,8 +95,6 @@ function isThreadIndex(value: unknown): value is ThreadIndex {
 }
 
 // Returns the thread index for a scope, ensuring at least one thread exists.
-// Also runs the one-shot migration from the legacy single-key storage into
-// the "global" scope the first time it sees legacy data.
 export function readThreadIndex(scopeKey: string): ThreadIndex {
 	if (typeof window === "undefined") {
 		// SSR fallback — caller will re-read on the client.
@@ -103,7 +102,6 @@ export function readThreadIndex(scopeKey: string): ThreadIndex {
 		const t = makeEmptyThread(now);
 		return { activeThreadId: t.id, threads: [t] };
 	}
-	maybeMigrateLegacy();
 	const raw = safeGet(indexStorageKey(scopeKey));
 	if (raw) {
 		try {
@@ -201,57 +199,6 @@ function extractText(msg: Record<string, unknown>): string {
 		if (text) chunks.push(text);
 	}
 	return chunks.join(" ").trim();
-}
-
-// One-shot migration: if the legacy single-key transcript is present and the
-// global scope hasn't been seeded yet, fold the legacy messages into a single
-// "global" thread and drop the legacy key. Idempotent — subsequent calls find
-// the legacy key gone (or the global index already populated) and do nothing.
-let legacyMigrationDone = false;
-function maybeMigrateLegacy(): void {
-	if (legacyMigrationDone) return;
-	if (typeof window === "undefined") return;
-	legacyMigrationDone = true;
-	const legacy = safeGet(LEGACY_MESSAGES_KEY);
-	if (!legacy) return;
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(legacy);
-	} catch {
-		safeRemove(LEGACY_MESSAGES_KEY);
-		return;
-	}
-	if (!Array.isArray(parsed) || parsed.length === 0) {
-		safeRemove(LEGACY_MESSAGES_KEY);
-		return;
-	}
-	const globalKey = indexStorageKey("global");
-	if (safeGet(globalKey)) {
-		// Already migrated previously (or user has a fresh global index).
-		safeRemove(LEGACY_MESSAGES_KEY);
-		return;
-	}
-	const now = Date.now();
-	const thread: ThreadMeta = {
-		id: newThreadId(),
-		title: deriveThreadTitle(parsed) ?? DEFAULT_THREAD_TITLE,
-		createdAt: now,
-		updatedAt: now,
-	};
-	safeSet(threadStorageKey(thread.id), JSON.stringify(parsed));
-	safeSet(
-		globalKey,
-		JSON.stringify({
-			activeThreadId: thread.id,
-			threads: [thread],
-		} satisfies ThreadIndex),
-	);
-	safeRemove(LEGACY_MESSAGES_KEY);
-}
-
-// Test-only escape hatch: lets specs replay migration on a fresh DOM.
-export function __resetMigrationFlagForTests(): void {
-	legacyMigrationDone = false;
 }
 
 function safeGet(key: string): string | null {
