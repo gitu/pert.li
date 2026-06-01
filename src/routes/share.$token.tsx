@@ -144,7 +144,7 @@ function ShareCanvas({
 	// share name. View-mode recipients skip the broadcast entirely (no name set).
 	useEffect(() => {
 		if (mode === "edit" && displayName) {
-			const buf = new Uint8Array(8);
+			const buf = new Uint8Array(16);
 			crypto.getRandomValues(buf);
 			const suffix = Array.from(buf, (b) =>
 				b.toString(16).padStart(2, "0"),
