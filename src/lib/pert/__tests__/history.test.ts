@@ -15,7 +15,12 @@ function entry(
 	return {
 		actor: "actor1",
 		time: null,
-		message: null,
+		rawMessage: null,
+		source: "user",
+		systemKind: null,
+		payload: null,
+		userId: null,
+		userName: null,
 		...overrides,
 	};
 }
@@ -39,7 +44,44 @@ describe("readHistory", () => {
 		// internal init may be folded into the first change). At minimum
 		// readHistory captures both user edits.
 		expect(entries.length).toBeGreaterThanOrEqual(2);
-		expect(entries.at(-1)?.message).toBe("rename A");
+		expect(entries.at(-1)?.rawMessage).toBe("rename A");
+	});
+
+	it("parses structured change messages into source + payload", () => {
+		let doc = Automerge.from<PertDoc>(createEmptyPertDoc("h"));
+		doc = Automerge.change(
+			doc,
+			{
+				message: JSON.stringify({
+					source: "ai",
+					payload: { tool: "set_title" },
+				}),
+			},
+			(d) => {
+				d.title = "from AI";
+			},
+		);
+		const entries = readHistory(doc);
+		const ai = entries.at(-1);
+		expect(ai?.source).toBe("ai");
+		expect(ai?.payload).toEqual({ tool: "set_title" });
+	});
+
+	it("resolves actor → user via doc.meta.actors", () => {
+		let doc = Automerge.from<PertDoc>(createEmptyPertDoc("h"));
+		doc = Automerge.change(doc, (d) => {
+			d.title = "v2";
+		});
+		const actorId = Automerge.getActorId(doc);
+		doc = Automerge.change(doc, (d) => {
+			d.meta = {
+				actors: { [actorId]: { userId: "u1", name: "Ada", firstSeenAt: 1 } },
+			};
+		});
+		const entries = readHistory(doc);
+		const tail = entries.at(-1);
+		expect(tail?.userId).toBe("u1");
+		expect(tail?.userName).toBe("Ada");
 	});
 });
 
@@ -102,15 +144,61 @@ describe("coalesceEntries", () => {
 		expect(groups[0].count).toBe(3);
 	});
 
-	it("treats different messages as boundaries", () => {
+	it("treats source changes as boundaries (user → ai never folds)", () => {
 		const groups = coalesceEntries(
 			[
-				entry({ index: 0, heads: ["h0"], time: 1_000, message: "edit a" }),
-				entry({ index: 1, heads: ["h1"], time: 2_000, message: "edit b" }),
+				entry({ index: 0, heads: ["h0"], time: 1_000, source: "user" }),
+				entry({ index: 1, heads: ["h1"], time: 2_000, source: "ai" }),
 			],
 			30_000,
 		);
 		expect(groups).toHaveLength(2);
+	});
+
+	it("groups by userId across different actors when both map to the same user", () => {
+		// Two sessions of the same user: different `actor` ids but the same
+		// `userId` via the registry. The drawer should see one group.
+		const groups = coalesceEntries(
+			[
+				entry({
+					index: 0,
+					heads: ["h0"],
+					time: 1_000,
+					actor: "a1",
+					userId: "u1",
+					userName: "Ada",
+				}),
+				entry({
+					index: 1,
+					heads: ["h1"],
+					time: 2_000,
+					actor: "a2",
+					userId: "u1",
+					userName: "Ada",
+				}),
+			],
+			30_000,
+		);
+		expect(groups).toHaveLength(1);
+		expect(groups[0].count).toBe(2);
+	});
+
+	it("never folds system markers into adjacent groups", () => {
+		const groups = coalesceEntries(
+			[
+				entry({ index: 0, heads: ["h0"], time: 1_000, source: "user" }),
+				entry({
+					index: 1,
+					heads: ["h1"],
+					time: 1_500,
+					source: "system",
+					systemKind: "branch-created",
+				}),
+				entry({ index: 2, heads: ["h2"], time: 2_000, source: "user" }),
+			],
+			30_000,
+		);
+		expect(groups).toHaveLength(3);
 	});
 
 	it("returns an empty list on empty input", () => {

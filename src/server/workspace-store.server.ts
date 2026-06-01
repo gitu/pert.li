@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import * as Automerge from "@automerge/automerge";
 import type { AutomergeUrl } from "@automerge/automerge-repo";
 import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { db } from "#/db";
@@ -10,6 +11,7 @@ import {
 	workspaceInvitation,
 	workspaceMember,
 } from "#/db/schema";
+import { changeWith } from "#/lib/pert/change-meta";
 import { createEmptyPertDoc, type PertDoc } from "#/lib/pert/types";
 import type {
 	AcceptInvitationResult,
@@ -133,37 +135,83 @@ export async function getWritableWorkspaceRole(
 	return role === "owner" || role === "editor" ? role : null;
 }
 
-export async function listProjectsForWorkspace(
-	workspaceId: string,
-): Promise<ProjectSummary[]> {
-	const rows = await db
-		.select({
-			id: project.id,
-			workspaceId: project.workspaceId,
-			title: project.title,
-			automergeDocUrl: project.automergeDocUrl,
-			createdAt: project.createdAt,
-			createdBy: project.createdBy,
-		})
-		.from(project)
-		.where(
-			and(eq(project.workspaceId, workspaceId), isNull(project.archivedAt)),
-		)
-		.orderBy(desc(project.createdAt));
-	return rows.map((r) => ({
+// Internal selector — keep DB column listing in one place so list/get/fork
+// all return the same `ProjectSummary` shape without drift.
+const projectColumns = {
+	id: project.id,
+	workspaceId: project.workspaceId,
+	title: project.title,
+	description: project.description,
+	automergeDocUrl: project.automergeDocUrl,
+	createdAt: project.createdAt,
+	createdBy: project.createdBy,
+	parentProjectId: project.parentProjectId,
+	branchedFromHeads: project.branchedFromHeads,
+	branchedAt: project.branchedAt,
+	archivedAt: project.archivedAt,
+} as const;
+
+type ProjectRow = {
+	id: string;
+	workspaceId: string;
+	title: string;
+	description: string | null;
+	automergeDocUrl: string;
+	createdAt: Date;
+	createdBy: string;
+	parentProjectId: string | null;
+	branchedFromHeads: string | null;
+	branchedAt: Date | null;
+	archivedAt: Date | null;
+};
+
+function projectRowToSummary(r: ProjectRow): ProjectSummary {
+	let branchedFromHeads: string[] | null = null;
+	if (r.branchedFromHeads) {
+		try {
+			const parsed = JSON.parse(r.branchedFromHeads);
+			if (Array.isArray(parsed) && parsed.every((h) => typeof h === "string")) {
+				branchedFromHeads = parsed;
+			}
+		} catch {
+			// Stored value was malformed — surface as missing rather than crash.
+		}
+	}
+	return {
 		id: r.id,
 		workspaceId: r.workspaceId,
 		title: r.title,
+		description: r.description,
 		automergeDocUrl: r.automergeDocUrl as AutomergeUrl,
 		createdAt: r.createdAt.toISOString(),
 		createdBy: r.createdBy,
-	}));
+		parentProjectId: r.parentProjectId,
+		branchedFromHeads,
+		branchedAt: r.branchedAt?.toISOString() ?? null,
+		archivedAt: r.archivedAt?.toISOString() ?? null,
+	};
+}
+
+export async function listProjectsForWorkspace(
+	workspaceId: string,
+	opts?: { includeArchived?: boolean },
+): Promise<ProjectSummary[]> {
+	const conditions = opts?.includeArchived
+		? eq(project.workspaceId, workspaceId)
+		: and(eq(project.workspaceId, workspaceId), isNull(project.archivedAt));
+	const rows = await db
+		.select(projectColumns)
+		.from(project)
+		.where(conditions)
+		.orderBy(desc(project.createdAt));
+	return rows.map(projectRowToSummary);
 }
 
 export async function createProjectRow(opts: {
 	workspaceId: string;
 	title: string;
 	createdBy: string;
+	description?: string | null;
 	// Optional seed doc — used by the import flow to start a new project from
 	// an uploaded .pert.json instead of an empty one. The title field on the
 	// passed doc is overridden with `opts.title` so the DB row and the doc
@@ -180,17 +228,195 @@ export async function createProjectRow(opts: {
 		id,
 		workspaceId: opts.workspaceId,
 		title: opts.title,
+		description: opts.description?.trim() || null,
 		automergeDocUrl: handle.url,
 		createdBy: opts.createdBy,
 	});
-	return {
+	const createdAt = new Date();
+	return projectRowToSummary({
 		id,
 		workspaceId: opts.workspaceId,
 		title: opts.title,
-		automergeDocUrl: handle.url as AutomergeUrl,
-		createdAt: new Date().toISOString(),
+		description: opts.description?.trim() || null,
+		automergeDocUrl: handle.url,
+		createdAt,
 		createdBy: opts.createdBy,
-	};
+		parentProjectId: null,
+		branchedFromHeads: null,
+		branchedAt: null,
+		archivedAt: null,
+	});
+}
+
+// Fork an existing project into a sibling "branch" project. Clones the
+// parent's Automerge doc (preserving history + new actor id), captures heads
+// at fork time as the merge base, and stamps system markers on both docs so
+// the History drawer can show the fork point.
+export async function forkProjectRow(opts: {
+	parentProjectId: string;
+	title: string;
+	description?: string | null;
+	createdBy: string;
+}): Promise<ProjectSummary> {
+	const parentRows = await db
+		.select(projectColumns)
+		.from(project)
+		.where(eq(project.id, opts.parentProjectId))
+		.limit(1);
+	if (parentRows.length === 0) throw new Error("Parent project not found");
+	const parent = parentRows[0];
+
+	const repo = getServerRepo();
+	const parentHandle = await repo.find<PertDoc>(
+		parent.automergeDocUrl as AutomergeUrl,
+	);
+	// Make sure the parent's history is fully loaded before we clone — without
+	// this the clone can capture a partial state (and the merge base heads we
+	// snapshot below would diverge from what's actually on storage).
+	await parentHandle.whenReady();
+	const parentDoc = parentHandle.doc();
+	const heads = Automerge.getHeads(parentDoc);
+
+	const branchHandle = repo.clone<PertDoc>(parentHandle);
+	await branchHandle.whenReady();
+	const id = randomUUID();
+	const title = opts.title.trim();
+	if (!title) throw new Error("Branch title is required");
+	const description = opts.description?.trim() || null;
+
+	// System markers so the History drawer can show where the branch happened
+	// on both sides. The branch gets a "branch-created" entry as the first
+	// change after the clone; the parent gets a "branched-out" entry that
+	// pins the fork point in its own timeline.
+	branchHandle.change(
+		(d) => {
+			d.title = title;
+		},
+		{
+			message: JSON.stringify({
+				source: "system",
+				kind: "branch-created",
+				payload: {
+					parentProjectId: opts.parentProjectId,
+					parentTitle: parent.title,
+					branchTitle: title,
+					heads,
+				},
+			}),
+			time: Math.floor(Date.now() / 1000),
+		},
+	);
+	changeWith(parentHandle, "system", () => {}, {
+		kind: "branched-out",
+		payload: {
+			branchTitle: title,
+			heads,
+		},
+	});
+
+	await db.insert(project).values({
+		id,
+		workspaceId: parent.workspaceId,
+		title,
+		description,
+		automergeDocUrl: branchHandle.url,
+		createdBy: opts.createdBy,
+		parentProjectId: opts.parentProjectId,
+		branchedFromHeads: JSON.stringify(heads),
+		branchedAt: new Date(),
+	});
+
+	// Flush both docs so the storage adapter persists the cloned doc + the
+	// system markers before we return. Otherwise a client racing the response
+	// can request the new URL via sync before any bytes hit the storage layer.
+	await repo.flush();
+
+	const branchedAt = new Date();
+	return projectRowToSummary({
+		id,
+		workspaceId: parent.workspaceId,
+		title,
+		description,
+		automergeDocUrl: branchHandle.url,
+		createdAt: branchedAt,
+		createdBy: opts.createdBy,
+		parentProjectId: opts.parentProjectId,
+		branchedFromHeads: JSON.stringify(heads),
+		branchedAt,
+		archivedAt: null,
+	});
+}
+
+// Count existing branches of a parent project. Used by the branch dialog to
+// suggest a non-colliding default name ("<parent> — branch 2").
+export async function countBranchesOfProject(
+	parentProjectId: string,
+): Promise<number> {
+	const rows = await db
+		.select({ id: project.id })
+		.from(project)
+		.where(
+			and(
+				eq(project.parentProjectId, parentProjectId),
+				isNull(project.archivedAt),
+			),
+		);
+	return rows.length;
+}
+
+// Update a project's title and/or description. Both fields are optional;
+// undefined leaves them untouched. Trims and rejects empty title.
+export async function updateProjectMeta(opts: {
+	projectId: string;
+	title?: string;
+	description?: string | null;
+}): Promise<void> {
+	const patch: Record<string, unknown> = {};
+	if (opts.title !== undefined) {
+		const t = opts.title.trim();
+		if (!t) throw new Error("Title cannot be empty");
+		patch.title = t;
+	}
+	if (opts.description !== undefined) {
+		patch.description = opts.description?.trim() || null;
+	}
+	if (Object.keys(patch).length === 0) return;
+	await db.update(project).set(patch).where(eq(project.id, opts.projectId));
+
+	// Keep the Automerge doc's `title` in sync with the DB row, so existing
+	// in-doc title surfaces (download as JSON, etc.) don't drift after rename.
+	if (typeof patch.title === "string") {
+		const row = await db
+			.select({ url: project.automergeDocUrl })
+			.from(project)
+			.where(eq(project.id, opts.projectId))
+			.limit(1);
+		if (row.length > 0) {
+			const repo = getServerRepo();
+			const handle = await repo.find<PertDoc>(row[0].url as AutomergeUrl);
+			const title = patch.title;
+			handle.change(
+				(d) => {
+					d.title = title;
+				},
+				{
+					message: JSON.stringify({ source: "system", kind: "renamed" }),
+					time: Math.floor(Date.now() / 1000),
+				},
+			);
+		}
+	}
+}
+
+// Archive a branch (typically after a successful merge). Sets archivedAt so
+// the row drops out of the active project list but remains restorable.
+export async function closeBranchProject(opts: {
+	projectId: string;
+}): Promise<void> {
+	await db
+		.update(project)
+		.set({ archivedAt: new Date() })
+		.where(eq(project.id, opts.projectId));
 }
 
 export async function getProjectForUser(opts: {
@@ -198,14 +424,7 @@ export async function getProjectForUser(opts: {
 	userId: string;
 }): Promise<ProjectSummary | null> {
 	const rows = await db
-		.select({
-			id: project.id,
-			workspaceId: project.workspaceId,
-			title: project.title,
-			automergeDocUrl: project.automergeDocUrl,
-			createdAt: project.createdAt,
-			createdBy: project.createdBy,
-		})
+		.select(projectColumns)
 		.from(project)
 		.innerJoin(
 			workspaceMember,
@@ -219,15 +438,7 @@ export async function getProjectForUser(opts: {
 		)
 		.limit(1);
 	if (rows.length === 0) return null;
-	const r = rows[0];
-	return {
-		id: r.id,
-		workspaceId: r.workspaceId,
-		title: r.title,
-		automergeDocUrl: r.automergeDocUrl as AutomergeUrl,
-		createdAt: r.createdAt.toISOString(),
-		createdBy: r.createdBy,
-	};
+	return projectRowToSummary(rows[0]);
 }
 
 export async function addMemberByEmail(opts: {

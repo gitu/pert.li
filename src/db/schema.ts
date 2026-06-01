@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+	type AnyPgColumn,
 	boolean,
 	customType,
 	index,
@@ -149,19 +150,57 @@ export const workspaceInvitation = pgTable(
 	(t) => [index("workspace_invitation_workspace_idx").on(t.workspaceId)],
 );
 
-export const project = pgTable("project", {
-	id: text("id").primaryKey(),
-	workspaceId: text("workspace_id")
-		.notNull()
-		.references(() => workspace.id, { onDelete: "cascade" }),
-	title: text("title").notNull(),
-	automergeDocUrl: text("automerge_doc_url").notNull().unique(),
-	createdBy: text("created_by")
-		.notNull()
-		.references(() => user.id, { onDelete: "restrict" }),
-	createdAt: timestamp("created_at").notNull().defaultNow(),
-	archivedAt: timestamp("archived_at"),
-});
+export const project = pgTable(
+	"project",
+	{
+		id: text("id").primaryKey(),
+		workspaceId: text("workspace_id")
+			.notNull()
+			.references(() => workspace.id, { onDelete: "cascade" }),
+		title: text("title").notNull(),
+		// Optional human-authored description; on branches it answers "why this
+		// what-if exists." Free-form; the dialog caps input at ~200 chars.
+		description: text("description"),
+		automergeDocUrl: text("automerge_doc_url").notNull().unique(),
+		// Branch lineage. `parentProjectId` is null on roots and set on branches.
+		// `branchedFromHeads` is the JSON-encoded Automerge heads[] captured at
+		// fork time — used as the merge base for the 3-way diff. Both stay null
+		// for root projects.
+		parentProjectId: text("parent_project_id").references(
+			(): AnyPgColumn => project.id,
+			{ onDelete: "set null" },
+		),
+		branchedFromHeads: text("branched_from_heads"),
+		branchedAt: timestamp("branched_at"),
+		createdBy: text("created_by")
+			.notNull()
+			.references(() => user.id, { onDelete: "restrict" }),
+		createdAt: timestamp("created_at").notNull().defaultNow(),
+		archivedAt: timestamp("archived_at"),
+	},
+	(t) => [index("project_parent_idx").on(t.parentProjectId)],
+);
+
+// Threaded comments on a project — long-form discussion that doesn't fit in
+// the single-line `description`. Most useful on branches (review a what-if
+// before merging) but available on roots too. Author-only edit/delete; reads
+// are gated by workspace membership at the server-fn layer.
+export const projectComment = pgTable(
+	"project_comment",
+	{
+		id: text("id").primaryKey(),
+		projectId: text("project_id")
+			.notNull()
+			.references(() => project.id, { onDelete: "cascade" }),
+		authorId: text("author_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "restrict" }),
+		body: text("body").notNull(),
+		createdAt: timestamp("created_at").notNull().defaultNow(),
+		editedAt: timestamp("edited_at"),
+	},
+	(t) => [index("project_comment_project_idx").on(t.projectId)],
+);
 
 // One personal "workspace document" per user — Automerge doc holding pins,
 // last-opened project, UI prefs. Lives separately from the org workspaces above.

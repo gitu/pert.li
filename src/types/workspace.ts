@@ -16,9 +16,27 @@ export type ProjectSummary = {
 	id: string;
 	workspaceId: string;
 	title: string;
+	description: string | null;
 	automergeDocUrl: AutomergeUrl;
 	createdAt: string;
 	createdBy: string;
+	// Branch lineage. `parentProjectId` is null on root projects. When set,
+	// `branchedFromHeads` carries the Automerge heads[] (parsed from JSON)
+	// captured at fork time — used as the merge base for 3-way diffs.
+	parentProjectId: string | null;
+	branchedFromHeads: string[] | null;
+	branchedAt: string | null;
+	archivedAt: string | null;
+};
+
+export type ProjectComment = {
+	id: string;
+	projectId: string;
+	authorId: string;
+	authorName: string;
+	body: string;
+	createdAt: string;
+	editedAt: string | null;
 };
 
 export type WorkspaceRole = "owner" | "editor" | "viewer";

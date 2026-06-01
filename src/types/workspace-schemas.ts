@@ -34,6 +34,53 @@ export const getProjectInput = z.object({
 
 export type GetProjectInput = z.infer<typeof getProjectInput>;
 
+// --- Branch + project metadata --------------------------------------------
+// Cap description length at the request layer; the DB column is unbounded but
+// the dialog UI advertises a ~200-char limit and we don't want headlines.
+export const forkProjectInput = z.object({
+	parentProjectId: z.string().uuid(),
+	title: z.string().trim().min(1, "Title is required").max(120),
+	description: z.string().trim().max(500).nullable().optional(),
+});
+export type ForkProjectInput = z.infer<typeof forkProjectInput>;
+
+export const updateProjectMetaInput = z.object({
+	projectId: z.string().uuid(),
+	title: z.string().trim().min(1).max(120).optional(),
+	description: z.string().trim().max(500).nullable().optional(),
+});
+export type UpdateProjectMetaInput = z.infer<typeof updateProjectMetaInput>;
+
+export const closeBranchInput = z.object({
+	projectId: z.string().uuid(),
+});
+export type CloseBranchInput = z.infer<typeof closeBranchInput>;
+
+// --- Project comments -----------------------------------------------------
+export const listProjectCommentsInput = z.object({
+	projectId: z.string().uuid(),
+});
+export type ListProjectCommentsInput = z.infer<typeof listProjectCommentsInput>;
+
+export const addProjectCommentInput = z.object({
+	projectId: z.string().uuid(),
+	body: z.string().trim().min(1, "Comment body is required").max(4000),
+});
+export type AddProjectCommentInput = z.infer<typeof addProjectCommentInput>;
+
+export const editProjectCommentInput = z.object({
+	commentId: z.string().uuid(),
+	body: z.string().trim().min(1, "Comment body is required").max(4000),
+});
+export type EditProjectCommentInput = z.infer<typeof editProjectCommentInput>;
+
+export const deleteProjectCommentInput = z.object({
+	commentId: z.string().uuid(),
+});
+export type DeleteProjectCommentInput = z.infer<
+	typeof deleteProjectCommentInput
+>;
+
 // Only owner/editor are grantable through the API. The "viewer" enum value
 // still exists in the DB for forward-compat with a future real read-only
 // sync story, but Automerge has no read-only peer mode today, so admitting a

@@ -1,21 +1,28 @@
 import { createServerFn } from "@tanstack/react-start";
 import { fromExchange } from "#/lib/pert/exchange";
 import {
+	addProjectCommentInput,
+	closeBranchInput,
 	createJoinLinkInput,
 	createProjectInput,
 	createShareInput,
 	createWorkspaceInput,
+	deleteProjectCommentInput,
+	editProjectCommentInput,
 	extendShareInput,
+	forkProjectInput,
 	getProjectInput,
 	importProjectInput,
 	inviteMemberInput,
 	joinTokenInput,
 	listJoinLinksInput,
+	listProjectCommentsInput,
 	listProjectsInput,
 	listSharesInput,
 	resolveShareInput,
 	revokeJoinLinkInput,
 	shareIdInput,
+	updateProjectMetaInput,
 } from "#/types/workspace-schemas";
 
 // Server-only helpers are loaded lazily so the depscanner never walks their
@@ -32,6 +39,14 @@ async function shareHelpers() {
 	const [{ requireSession }, store] = await Promise.all([
 		import("./auth-context.server.ts"),
 		import("./project-share-store.server.ts"),
+	]);
+	return { requireSession, ...store };
+}
+
+async function commentHelpers() {
+	const [{ requireSession }, store] = await Promise.all([
+		import("./auth-context.server.ts"),
+		import("./project-comments.server.ts"),
 	]);
 	return { requireSession, ...store };
 }
@@ -157,6 +172,145 @@ export const getProjectById = createServerFn({ method: "GET" })
 		});
 		if (!result) throw new Error("Project not found");
 		return result;
+	});
+
+// --- Branching --------------------------------------------------------------
+// Forks an existing project into a sibling branch. The branch lives in the
+// same workspace and is a first-class project — its own row, share links,
+// chat history. Membership on the parent's workspace is required.
+export const forkProject = createServerFn({ method: "POST" })
+	.inputValidator(forkProjectInput)
+	.handler(async ({ data }) => {
+		const {
+			requireSession,
+			getProjectForUser,
+			getWritableWorkspaceRole,
+			forkProjectRow,
+		} = await helpers();
+		const session = await requireSession();
+		const parent = await getProjectForUser({
+			projectId: data.parentProjectId,
+			userId: session.userId,
+		});
+		if (!parent) throw new Error("Parent project not found");
+		const role = await getWritableWorkspaceRole(
+			session.userId,
+			parent.workspaceId,
+		);
+		if (!role) throw new Error("Write access to this workspace is required");
+		return forkProjectRow({
+			parentProjectId: data.parentProjectId,
+			title: data.title,
+			description: data.description ?? null,
+			createdBy: session.userId,
+		});
+	});
+
+export const updateProjectMeta = createServerFn({ method: "POST" })
+	.inputValidator(updateProjectMetaInput)
+	.handler(async ({ data }) => {
+		const {
+			requireSession,
+			getProjectForUser,
+			getWritableWorkspaceRole,
+			updateProjectMeta: updateProjectMetaImpl,
+		} = await helpers();
+		const session = await requireSession();
+		const proj = await getProjectForUser({
+			projectId: data.projectId,
+			userId: session.userId,
+		});
+		if (!proj) throw new Error("Project not found");
+		const role = await getWritableWorkspaceRole(
+			session.userId,
+			proj.workspaceId,
+		);
+		if (!role) throw new Error("Write access to this workspace is required");
+		await updateProjectMetaImpl({
+			projectId: data.projectId,
+			title: data.title,
+			description: data.description,
+		});
+		return { ok: true } as const;
+	});
+
+export const closeBranch = createServerFn({ method: "POST" })
+	.inputValidator(closeBranchInput)
+	.handler(async ({ data }) => {
+		const {
+			requireSession,
+			getProjectForUser,
+			getWritableWorkspaceRole,
+			closeBranchProject,
+		} = await helpers();
+		const session = await requireSession();
+		const proj = await getProjectForUser({
+			projectId: data.projectId,
+			userId: session.userId,
+		});
+		if (!proj) throw new Error("Project not found");
+		if (!proj.parentProjectId)
+			throw new Error("Only branches can be closed via this endpoint");
+		const role = await getWritableWorkspaceRole(
+			session.userId,
+			proj.workspaceId,
+		);
+		if (!role) throw new Error("Write access to this workspace is required");
+		await closeBranchProject({ projectId: data.projectId });
+		return { ok: true } as const;
+	});
+
+// --- Project comments -------------------------------------------------------
+export const listProjectComments = createServerFn({ method: "GET" })
+	.inputValidator(listProjectCommentsInput)
+	.handler(async ({ data }) => {
+		const { requireSession, listProjectCommentsForUser } =
+			await commentHelpers();
+		const session = await requireSession();
+		return listProjectCommentsForUser({
+			projectId: data.projectId,
+			userId: session.userId,
+		});
+	});
+
+export const addProjectComment = createServerFn({ method: "POST" })
+	.inputValidator(addProjectCommentInput)
+	.handler(async ({ data }) => {
+		const { requireSession, addProjectComment: addProjectCommentImpl } =
+			await commentHelpers();
+		const session = await requireSession();
+		return addProjectCommentImpl({
+			projectId: data.projectId,
+			userId: session.userId,
+			body: data.body,
+		});
+	});
+
+export const editProjectComment = createServerFn({ method: "POST" })
+	.inputValidator(editProjectCommentInput)
+	.handler(async ({ data }) => {
+		const { requireSession, editProjectComment: editProjectCommentImpl } =
+			await commentHelpers();
+		const session = await requireSession();
+		await editProjectCommentImpl({
+			commentId: data.commentId,
+			userId: session.userId,
+			body: data.body,
+		});
+		return { ok: true } as const;
+	});
+
+export const deleteProjectComment = createServerFn({ method: "POST" })
+	.inputValidator(deleteProjectCommentInput)
+	.handler(async ({ data }) => {
+		const { requireSession, deleteProjectComment: deleteProjectCommentImpl } =
+			await commentHelpers();
+		const session = await requireSession();
+		await deleteProjectCommentImpl({
+			commentId: data.commentId,
+			userId: session.userId,
+		});
+		return { ok: true } as const;
 	});
 
 export const inviteMember = createServerFn({ method: "POST" })
