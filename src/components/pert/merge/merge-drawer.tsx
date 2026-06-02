@@ -14,6 +14,7 @@ import { snapshotAt } from "#/lib/pert/history";
 import {
 	computeMerge,
 	type MergeChange,
+	type MergeResult,
 	type MergeSide,
 } from "#/lib/pert/merge";
 import type { PertDoc } from "#/lib/pert/types";
@@ -64,16 +65,37 @@ export function MergeDrawer({
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 
-	const merge = useMemo(() => {
-		if (!parentDoc) return null;
-		const base = snapshotAt(parentDoc, branch.branchedFromHeads);
-		if (direction === "branch-to-main") {
-			return computeMerge({ base, main: parentDoc, branch: branch.doc });
+	const mergeResult = useMemo(() => {
+		if (!parentDoc)
+			return {
+				merge: null as MergeResult | null,
+				error: null as string | null,
+			};
+		try {
+			const base = snapshotAt(parentDoc, branch.branchedFromHeads);
+			const computed =
+				direction === "branch-to-main"
+					? computeMerge({ base, main: parentDoc, branch: branch.doc })
+					: // Inverse direction: pull main's changes into the branch.
+						// Swap roles — the "main" of the merge engine is now the branch.
+						computeMerge({ base, main: branch.doc, branch: parentDoc });
+			return { merge: computed, error: null };
+		} catch (err) {
+			// snapshotAt can throw if the stored fork-point heads are missing
+			// or malformed on the parent (e.g. the parent doc was rebuilt from
+			// a different storage). Surface as an error state instead of
+			// crashing the whole drawer mid-render.
+			return {
+				merge: null,
+				error:
+					err instanceof Error
+						? `Couldn't compute merge against the fork point: ${err.message}`
+						: "Couldn't compute merge against the fork point.",
+			};
 		}
-		// Inverse direction: pull main's changes into the branch. Swap roles
-		// — the "main" of the merge engine is now the branch, and vice versa.
-		return computeMerge({ base, main: branch.doc, branch: parentDoc });
 	}, [parentDoc, branch.branchedFromHeads, branch.doc, direction]);
+	const merge = mergeResult.merge;
+	const computeError = mergeResult.error;
 
 	const archiveMutation = useMutation({
 		mutationFn: () => closeBranch({ data: { projectId: branch.projectId } }),
@@ -198,6 +220,19 @@ export function MergeDrawer({
 				{!parentDoc && (
 					<div className="grid h-full place-items-center p-6 text-xs text-muted-foreground">
 						Loading {parent.title}…
+					</div>
+				)}
+				{parentDoc && computeError && (
+					<div
+						className="grid h-full place-items-center p-6 text-center text-xs text-destructive"
+						data-testid="merge-drawer-error"
+					>
+						<div className="max-w-sm space-y-2">
+							<div>{computeError}</div>
+							<div className="text-muted-foreground">
+								Try reopening the branch or re-syncing the parent project.
+							</div>
+						</div>
 					</div>
 				)}
 				{parentDoc && merge && (

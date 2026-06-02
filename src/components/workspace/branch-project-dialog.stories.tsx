@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	createMemoryHistory,
 	createRootRoute,
+	createRoute,
 	createRouter,
 	Outlet,
 	RouterProvider,
@@ -13,19 +14,27 @@ import { BranchProjectDialog } from "./branch-project-dialog";
 // can't run in Storybook. The stories render the dialog open so visuals can
 // be inspected; submit is a no-op (network request fails harmlessly, error
 // rendered inline in the dialog body).
+//
+// The dialog uses `useNavigate()`, so it has to live INSIDE the router (not
+// as a sibling of RouterProvider). We register the story tree as the index
+// route's component and let TanStack Router mount it for us.
 function withProviders(children: React.ReactNode) {
 	const qc = new QueryClient({
 		defaultOptions: { queries: { retry: false } },
 	});
-	const root = createRootRoute({ component: () => <Outlet /> });
+	const rootRoute = createRootRoute({ component: () => <Outlet /> });
+	const indexRoute = createRoute({
+		getParentRoute: () => rootRoute,
+		path: "/",
+		component: () => <>{children}</>,
+	});
 	const router = createRouter({
-		routeTree: root,
+		routeTree: rootRoute.addChildren([indexRoute]),
 		history: createMemoryHistory({ initialEntries: ["/"] }),
 	});
 	return (
 		<QueryClientProvider client={qc}>
 			<RouterProvider router={router} defaultPreload={false} />
-			{children}
 		</QueryClientProvider>
 	);
 }

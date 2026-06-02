@@ -306,13 +306,34 @@ export async function forkProjectRow(opts: {
 			time: Math.floor(Date.now() / 1000),
 		},
 	);
-	changeWith(parentHandle, "system", () => {}, {
-		kind: "branched-out",
-		payload: {
-			branchTitle: title,
-			heads,
+	// Mutate something inside the callback — Automerge skips changes that
+	// don't touch the doc, so a pure no-op callback wouldn't actually land
+	// the "branched-out" history entry. We push the marker into a
+	// `meta.branchedOut` log keyed by branch id so subsequent forks each
+	// record their own entry without overwriting earlier ones.
+	changeWith(
+		parentHandle,
+		"system",
+		(d) => {
+			if (!d.meta) d.meta = {};
+			const meta = d.meta as Record<string, unknown>;
+			let log = meta.branchedOut as
+				| Record<string, { branchTitle: string; heads: string[]; at: number }>
+				| undefined;
+			if (!log) {
+				log = {};
+				meta.branchedOut = log;
+			}
+			log[id] = { branchTitle: title, heads, at: Date.now() };
 		},
-	});
+		{
+			kind: "branched-out",
+			payload: {
+				branchTitle: title,
+				heads,
+			},
+		},
+	);
 
 	await db.insert(project).values({
 		id,
