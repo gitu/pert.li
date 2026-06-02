@@ -110,6 +110,15 @@ export default defineWebSocketHandler({
 		const id = getPeerId(peer);
 		const auth = await authenticatePeer(peer);
 		if (!auth) {
+			// Log instead of failing silently: a client whose session cookie is
+			// stale (or whose share token expired) reconnects in a loop and the
+			// document never loads — without this line there is zero server-side
+			// trace of why. If this fires for a user who IS signed in, check that
+			// the websocket module graph shares the same DB instance as the HTTP
+			// handlers (see the globalThis singleton in src/db/index.ts).
+			console.warn(
+				"[sync] websocket peer rejected: no valid session or share token",
+			);
 			pendingMessages.delete(id);
 			peer.close();
 			return;
@@ -126,10 +135,24 @@ export default defineWebSocketHandler({
 			sock.shareExpiresAt = auth.shareExpiresAt;
 			registerShareSocket(auth.shareId, sock);
 		}
-		peerSockets.set(id, sock);
 		const { wss } = getServerRepoBundle();
+		// The Automerge adapter attaches its "connection" listener asynchronously
+		// after the repo bundle is constructed (Repo wires adapters only once the
+		// storage subsystem's id has loaded). When this peer is the FIRST
+		// connection — the one that lazily created the bundle — emitting before
+		// that listener exists would lose the client's join message: the socket
+		// stays open but the server never answers, and the client's repo never
+		// becomes ready. Wait for the listener before emitting.
+		await wss.listening;
 		wss.clients.add(sock);
+		// Ordering matters here: the adapter only attaches per-socket listeners
+		// while handling the "connection" event, and the message hook below only
+		// delivers directly once the peer is in `peerSockets`. Emitting first and
+		// registering second means every message that raced in during the awaits
+		// above is still sitting in `pendingMessages` — nothing is ever emitted at
+		// a listener-less socket.
 		wss.emit("connection", sock);
+		peerSockets.set(id, sock);
 		const queued = pendingMessages.get(id);
 		if (queued && queued.length > 0) {
 			pendingMessages.delete(id);

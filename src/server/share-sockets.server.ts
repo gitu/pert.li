@@ -9,9 +9,17 @@
 // adapter, the Repo, or the storage adapter — all heavy and unnecessary
 // for the store layer's DB-only operations.
 
+import { globalSingleton } from "#/lib/global-singleton";
+
 type ClosableSocket = { close: () => void };
 
-const sockets = new Map<string, Set<ClosableSocket>>();
+// Anchored on globalThis: sockets are registered by the websocket handler's
+// module graph but closed (on revoke) from the HTTP API's module graph — a
+// plain module-level Map would give each graph its own empty registry.
+const sockets = globalSingleton(
+	"share-sockets",
+	() => new Map<string, Set<ClosableSocket>>(),
+);
 
 export function registerShareSocket(shareId: string, sock: ClosableSocket) {
 	const set = sockets.get(shareId);

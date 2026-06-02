@@ -7,6 +7,7 @@ import {
 } from "@automerge/automerge-repo";
 import { WebSocketServerAdapter } from "@automerge/automerge-repo-network-websocket";
 import { NodeFSStorageAdapter } from "@automerge/automerge-repo-storage-nodefs";
+import { globalSingleton } from "#/lib/global-singleton";
 import { PostgresStorageAdapter } from "./automerge-pg-storage.server";
 import { userCanWriteDoc } from "./workspace-store.server";
 
@@ -68,6 +69,25 @@ export class PeerSocket extends EventEmitter {
 
 class FakeWebSocketServer extends EventEmitter {
 	clients = new Set<PeerSocket>();
+
+	// Resolves once the WebSocketServerAdapter has attached its "connection"
+	// handler. The adapter attaches it asynchronously — Repo construction kicks
+	// off `adapter.connect()` only after the storage subsystem's id has been
+	// read from disk — so a peer that connects while the bundle is still
+	// initialising must wait for this before `emit("connection")`. Emitting
+	// earlier sends the event (and the client's buffered join message) into the
+	// void: the socket stays open but the server never answers, and the client
+	// waits forever.
+	readonly listening: Promise<void>;
+
+	constructor() {
+		super();
+		this.listening = new Promise((resolve) => {
+			this.on("newListener", (event) => {
+				if (event === "connection") resolve();
+			});
+		});
+	}
 }
 
 // --- Repo singleton --------------------------------------------------------
@@ -77,8 +97,6 @@ type ServerRepoBundle = {
 	adapter: WebSocketServerAdapter;
 	wss: FakeWebSocketServer;
 };
-
-let _bundle: ServerRepoBundle | undefined;
 
 function buildBundle(): ServerRepoBundle {
 	const wss = new FakeWebSocketServer();
@@ -147,9 +165,14 @@ function resolveStorage(): {
 	};
 }
 
+// Anchored on globalThis (not a module-level variable): the dev server's
+// HTTP/API module graph and the websocket handler's module graph must share
+// ONE repo. With two instances, documents created through server fns (project
+// create / import / fork) lived only in the HTTP graph's repo, so the sync
+// handler could never deliver them — the browser waited on "Loading document…"
+// forever and every chat tool failed with "No active project".
 export function getServerRepoBundle(): ServerRepoBundle {
-	if (!_bundle) _bundle = buildBundle();
-	return _bundle;
+	return globalSingleton("automerge-server-repo", buildBundle);
 }
 
 export function getServerRepo(): Repo {

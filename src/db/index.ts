@@ -103,8 +103,34 @@ function initNodePg(url: string): AppDatabase {
 	return drizzleNodePg(pool, { schema }) as unknown as AppDatabase;
 }
 
-let _db: AppDatabase | undefined;
-let _initPromise: Promise<AppDatabase> | undefined;
+// The Vite dev server evaluates this module in MULTIPLE module graphs within
+// one process: the SSR/API graph (route handlers, server fns) and the Nitro
+// graph that hosts the /sync websocket handler. Module-level state is NOT
+// shared between them — so each graph used to open its own PGLite on the same
+// data dir. Two embedded Postgres instances on one directory means writes from
+// one are invisible to the other: a session created through the HTTP API
+// didn't exist as far as the websocket handler was concerned, so every sync
+// connection was rejected and documents never loaded. Anchor the singleton on
+// globalThis (process-wide) so every module graph shares one instance.
+// NOTE: this stays inline (instead of using #/lib/global-singleton.ts) because
+// this module is also imported by pglite-vite-plugin.ts from the Vite config
+// context, where the #/ alias doesn't resolve.
+type DbSingleton = {
+	db?: AppDatabase;
+	initPromise?: Promise<AppDatabase>;
+};
+
+const DB_SINGLETON_KEY = Symbol.for("pertli.singleton.db");
+
+function getSingleton(): DbSingleton {
+	const g = globalThis as unknown as Record<symbol, DbSingleton | undefined>;
+	let slot = g[DB_SINGLETON_KEY];
+	if (!slot) {
+		slot = {};
+		g[DB_SINGLETON_KEY] = slot;
+	}
+	return slot;
+}
 
 async function init(): Promise<AppDatabase> {
 	const mode = resolveMode();
@@ -132,35 +158,40 @@ async function init(): Promise<AppDatabase> {
 }
 
 export async function ensureDb(): Promise<AppDatabase> {
-	if (_db) return _db;
-	if (!_initPromise) {
-		_initPromise = init().then((d) => {
-			_db = d;
+	const singleton = getSingleton();
+	if (singleton.db) return singleton.db;
+	if (!singleton.initPromise) {
+		singleton.initPromise = init().then((d) => {
+			singleton.db = d;
 			return d;
 		});
 	}
-	return _initPromise;
+	return singleton.initPromise;
 }
 
 export function getDb(): AppDatabase {
-	if (!_db) {
+	const singleton = getSingleton();
+	if (!singleton.db) {
 		throw new Error(
 			"db accessed before init. PGLite paths are async — call `await ensureDb()` once at startup.",
 		);
 	}
-	return _db;
+	return singleton.db;
 }
 
 /**
  * Close the underlying PGLite client and forget the singleton. Used by the
  * dev pre-warm plugin so its instance doesn't linger alongside the one the
- * nitro dev worker opens on the same data dir. No-op for URL-based drivers.
+ * request-handling module graphs open on the same data dir. No-op for
+ * URL-based drivers.
  */
 export async function closeDb(): Promise<void> {
-	const client = (_db as { $client?: { close?: () => Promise<void> } })
-		?.$client;
-	_db = undefined;
-	_initPromise = undefined;
+	const singleton = getSingleton();
+	const client = (
+		singleton.db as { $client?: { close?: () => Promise<void> } } | undefined
+	)?.$client;
+	singleton.db = undefined;
+	singleton.initPromise = undefined;
 	await client?.close?.();
 }
 
@@ -196,11 +227,12 @@ if (
 
 export const db = new Proxy({} as NeonHttpDatabase<typeof schema>, {
 	get: (_target, prop, receiver) => {
-		if (!_db) {
+		const singleton = getSingleton();
+		if (!singleton.db) {
 			// Synchronous fallback: only the URL-based drivers (Neon / node-pg)
 			// can be constructed lazily here. PGLite paths must have gone through
 			// ensureDb() during startup (the top-level await above covers dev and
-			// e2e); getting here without an initialized _db means the boot
+			// e2e); getting here without an initialized db means the boot
 			// sequence missed its init hook.
 			const url = process.env.DATABASE_URL;
 			if (!url) {
@@ -210,8 +242,8 @@ export const db = new Proxy({} as NeonHttpDatabase<typeof schema>, {
 						"or set DATABASE_URL (Neon / Postgres).",
 				);
 			}
-			_db = isNeonUrl(url) ? initNeon(url) : initNodePg(url);
+			singleton.db = isNeonUrl(url) ? initNeon(url) : initNodePg(url);
 		}
-		return Reflect.get(_db, prop, receiver);
+		return Reflect.get(singleton.db, prop, receiver);
 	},
 });
