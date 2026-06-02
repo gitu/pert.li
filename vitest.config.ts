@@ -14,5 +14,9 @@ export default defineConfig({
 			// live next to them — pick them up too.
 			"scripts/**/*.test.mjs",
 		],
+		// Repairs the localStorage / sessionStorage globals that node's
+		// experimental Web Storage API shadows in jsdom environments. See the
+		// comment in the setup file.
+		setupFiles: ["./src/test/setup-dom.ts"],
 	},
 });
