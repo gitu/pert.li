@@ -287,6 +287,75 @@ export const WithContainer: Story = {
 	},
 };
 
+// Two-level nesting: outer group > inner group > leaf task. Z-ordering must
+// go outer < inner < task so the inner frame/header stays visible and the
+// task stays clickable inside both groups.
+function nestedContainerDoc(): PertDoc {
+	const d = createEmptyPertDoc("Nested groups demo");
+	d.tasksById.outer = {
+		id: "outer",
+		kind: "container",
+		title: "Outer group",
+		parentId: null,
+	};
+	d.tasksById.inner = {
+		id: "inner",
+		kind: "container",
+		title: "Inner group",
+		parentId: "outer",
+	};
+	d.tasksById.deep = {
+		id: "deep",
+		kind: "task",
+		title: "Deep task",
+		parentId: "inner",
+		estimate: est(1, 2, 4),
+		layout: { position: { x: 320, y: 200 } },
+	};
+	ensureContainerInterfaces(d, "outer");
+	ensureContainerInterfaces(d, "inner");
+	return d;
+}
+
+// Reads the zIndex React Flow applied to the node wrapper containing the
+// given testid element.
+function nodeZIndex(canvasElement: HTMLElement, testId: string): number {
+	const el = canvasElement.querySelector(`[data-testid="${testId}"]`);
+	const wrapper = el?.closest(".react-flow__node") as HTMLElement | null;
+	return wrapper ? Number(wrapper.style.zIndex || 0) : Number.NaN;
+}
+
+export const NestedContainers: Story = {
+	args: {
+		seed: nestedContainerDoc(),
+		projectId: "story-canvas-nested-containers",
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(
+			canvas.getByTestId("container-expanded-outer"),
+		).toBeInTheDocument();
+		await expect(
+			canvas.getByTestId("container-expanded-inner"),
+		).toBeInTheDocument();
+		await expect(canvas.getByTestId("task-node-deep")).toBeInTheDocument();
+		// Z-ordering: outer group < inner group < leaf task.
+		const outerZ = nodeZIndex(canvasElement, "container-expanded-outer");
+		const innerZ = nodeZIndex(canvasElement, "container-expanded-inner");
+		const taskZ = nodeZIndex(canvasElement, "task-node-deep");
+		expect(outerZ).toBeLessThan(innerZ);
+		expect(innerZ).toBeLessThan(taskZ);
+		// The deep task is still clickable (nothing covers it): clicking selects.
+		await userEvent.click(canvas.getByTestId("task-node-deep"));
+		await waitFor(() => {
+			const selected = canvasElement.querySelector(
+				'.react-flow__node.selected [data-testid="task-node-deep"]',
+			);
+			expect(selected).not.toBeNull();
+		});
+	},
+};
+
 export const ContainerCollapsed: Story = {
 	args: {
 		seed: containerDoc(),

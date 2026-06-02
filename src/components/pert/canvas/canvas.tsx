@@ -28,6 +28,7 @@ import {
 } from "#/lib/pert/canvas-prefs";
 import { toggleCollapse, useCollapsedSet } from "#/lib/pert/collapse";
 import { cycleEdgeSet, cycleTaskSet } from "#/lib/pert/cycle";
+import { getAncestors } from "#/lib/pert/hierarchy";
 import {
 	ensureContainerInterfaces,
 	removeContainerInterfaces,
@@ -87,6 +88,15 @@ const CONTAINER_PADDING_TOP = 44; // header height
 const CONTAINER_PADDING_BOTTOM = 36;
 const CONTAINER_MIN_WIDTH = 440;
 const CONTAINER_MIN_HEIGHT = 280;
+
+// Z-ordering. Containers stack by NESTING DEPTH — an outer group sits lowest,
+// each nested group one layer above it — so inner frames and headers stay
+// visible and clickable inside their parents. Edges paint above every
+// container body (an edge crossing a group is never hidden), and leaf /
+// milestone nodes paint above everything.
+const CONTAINER_BASE_Z = 1; // + nesting depth
+const EDGE_Z = 50; // safely above any realistic container nesting depth
+const LEAF_Z = 100;
 
 function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const scheduleResult = useMemo(() => computeSchedule(doc), [doc]);
@@ -1062,7 +1072,10 @@ function buildBaseNodes(
 				// outside the leaf area, so it's still clickable for collapse +
 				// drag. Selection on the container itself works via React Flow's
 				// hit-testing of the bordered frame around the children.
-				zIndex: 1,
+				//
+				// Depth-based: nested groups paint ABOVE their parent group so an
+				// inner frame/header is never hidden behind the outer one.
+				zIndex: CONTAINER_BASE_Z + getAncestors(doc, projected.task.id).length,
 				draggable: true,
 				selectable: true,
 				focusable: true,
@@ -1096,7 +1109,9 @@ function buildBaseNodes(
 				data: data as unknown as Record<string, unknown>,
 				width: Math.max(COLLAPSED_CARD_WIDTH, storedWidth),
 				height: Math.max(autoHeight, storedHeight),
-				zIndex: 1,
+				// Same depth-based stacking as expanded containers — a collapsed
+				// inner group still paints above its parent group's body.
+				zIndex: CONTAINER_BASE_Z + getAncestors(doc, containerId).length,
 			});
 		} else {
 			pushLeafNode(
@@ -1219,8 +1234,9 @@ function pushLeafNode(
 		data: data as unknown as Record<string, unknown>,
 		width: TASK_WIDTH,
 		height: TASK_HEIGHT,
-		// Leaves sit above container backgrounds so they remain interactive.
-		zIndex: 10,
+		// Leaves sit above every container body and every edge, no matter how
+		// deeply nested — they must always be visible and interactive.
+		zIndex: LEAF_Z,
 	});
 }
 
@@ -1260,11 +1276,11 @@ function buildEdges(
 			animated: edge.critical || onCycle,
 			style,
 			data: { onCycle },
-			// Sit above expanded containers (zIndex 1) but below leaf task
-			// nodes (zIndex 10) so an edge passing through a container's
-			// area is never visually hidden by the container body, while
-			// leaves still paint on top of the edge stroke.
-			zIndex: 5,
+			// Sit above every container body (containers stack by nesting depth
+			// starting at CONTAINER_BASE_Z) but below leaf task nodes, so an edge
+			// passing through a group is never visually hidden while leaves still
+			// paint on top of the edge stroke.
+			zIndex: EDGE_Z,
 		};
 	});
 }
