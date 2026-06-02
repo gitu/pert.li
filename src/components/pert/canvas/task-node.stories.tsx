@@ -186,6 +186,34 @@ export const NoEstimate: Story = {
 	},
 };
 
+// Long titles truncate to one line normally and expand to the full text on
+// hover (the title element carries group-hover utilities; the card grows past
+// its min-height and overlays neighbours via the styles.css hover z rule).
+export const LongTitleExpandsOnHover: Story = {
+	args: {
+		data: {
+			title:
+				"Implement the cross-region failover orchestration runbook including automated database promotion and DNS cutover validation",
+			kind: "task",
+			durationDays: 5,
+			slackDays: 0,
+			critical: true,
+			hasEstimate: true,
+			status: "not_started",
+			progress: 0,
+		},
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const title = await canvas.findByText(/cross-region failover/);
+		// Truncated single-line by default…
+		await expect(title).toHaveClass("truncate");
+		// …with the hover-expand utilities wired up.
+		await expect(title.className).toContain("group-hover:whitespace-normal");
+		await expect(title.className).toContain("group-hover:break-words");
+	},
+};
+
 // Radial quick-add cluster — a task button and a milestone button on each
 // side, centred on the source/target connectors. Always-visible here so
 // reviewers see the affordance without hovering the screenshot. The `play`

@@ -142,7 +142,8 @@ function CollapsedImpl(props: NodeProps) {
 			<div className="flex items-start gap-2">
 				<FolderIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 				<div className="min-w-0 flex-1">
-					<div className="truncate text-sm font-semibold">
+					{/* Truncated normally; expands to the full title on hover. */}
+					<div className="truncate text-sm font-semibold group-hover:overflow-visible group-hover:whitespace-normal group-hover:break-words">
 						{data.title || "Container"}
 					</div>
 					<div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
@@ -285,7 +286,10 @@ function ExpandedImpl(props: NodeProps) {
 					<ChevronDownIcon className="size-3.5" />
 				</button>
 				<FolderIcon className="size-3.5 text-muted-foreground" />
-				<span className="truncate">{data.title || "Container"}</span>
+				{/* Truncated normally; expands to the full title on hover. */}
+				<span className="truncate group-hover:overflow-visible group-hover:whitespace-normal group-hover:break-words">
+					{data.title || "Container"}
+				</span>
 			</div>
 		</div>
 	);

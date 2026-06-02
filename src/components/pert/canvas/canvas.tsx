@@ -26,7 +26,11 @@ import {
 	setLayoutSpacing,
 	useCanvasPrefs,
 } from "#/lib/pert/canvas-prefs";
-import { toggleCollapse, useCollapsedSet } from "#/lib/pert/collapse";
+import {
+	setCollapsed,
+	toggleCollapse,
+	useCollapsedSet,
+} from "#/lib/pert/collapse";
 import { cycleEdgeSet, cycleTaskSet } from "#/lib/pert/cycle";
 import { getAncestors } from "#/lib/pert/hierarchy";
 import {
@@ -134,6 +138,24 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const handleToggleContinuous = useCallback(() => {
 		setContinuousLayout(projectId, !prefs.continuousLayout);
 	}, [projectId, prefs.continuousLayout]);
+
+	// Collapse / expand every container at once (toolbar buttons). The buttons
+	// only render when the project actually has containers.
+	const hasContainers = useMemo(
+		() => Object.values(doc.tasksById).some((t) => t.kind === "container"),
+		[doc],
+	);
+	const handleCollapseAll = useCallback(() => {
+		for (const t of Object.values(doc.tasksById)) {
+			if (t.kind === "container") setCollapsed(projectId, t.id, true);
+		}
+	}, [doc, projectId]);
+	const handleExpandAll = useCallback(() => {
+		for (const t of Object.values(doc.tasksById)) {
+			if (t.kind === "container") setCollapsed(projectId, t.id, false);
+		}
+	}, [doc, projectId]);
+
 	useContinuousLayout(
 		projectId,
 		doc,
@@ -900,11 +922,11 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 					if (node.type === "task") setEditingNodeId(node.id);
 				}}
 				fitView
-				// React Flow's auto-fit slightly over-zooms on phone-sized
-				// viewports — small projects render at near 1×, hiding nearby
-				// nodes off-screen. A lower minimum lets two-finger pinch zoom
-				// out far enough to see the whole graph at once.
-				minZoom={isMobile ? 0.2 : 0.5}
+				// The minimum zoom bounds both pinch/scroll zoom-out AND how far
+				// fitView can shrink the graph. Keep it very low so any layout —
+				// however large — can always be brought fully into view; fitView
+				// only zooms out as far as it actually needs.
+				minZoom={isMobile ? 0.05 : 0.02}
 				deleteKeyCode={["Backspace", "Delete"]}
 				className="bg-background"
 				colorMode={resolvedTheme}
@@ -947,6 +969,8 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 							onSetSpacing={handleSetSpacing}
 							onRelayout={handleRelayout}
 							onToggleContinuous={handleToggleContinuous}
+							onCollapseAll={hasContainers ? handleCollapseAll : undefined}
+							onExpandAll={hasContainers ? handleExpandAll : undefined}
 						/>
 					</div>
 				</div>

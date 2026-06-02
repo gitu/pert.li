@@ -325,6 +325,43 @@ function nodeZIndex(canvasElement: HTMLElement, testId: string): number {
 	return wrapper ? Number(wrapper.style.zIndex || 0) : Number.NaN;
 }
 
+// Toolbar collapse-all / expand-all: every container folds to its summary
+// card in one click, and unfolds again.
+export const CollapseAllContainers: Story = {
+	args: {
+		seed: nestedContainerDoc(),
+		projectId: "story-canvas-collapse-all",
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(
+			canvas.getByTestId("container-expanded-outer"),
+		).toBeInTheDocument();
+		// Collapse all → both containers render as collapsed cards. (The inner
+		// one is inside a collapsed ancestor, so only the outer card remains
+		// visible — the inner disappears from the projection.)
+		await userEvent.click(canvas.getByTestId("toolbar-collapse-all"));
+		await waitFor(async () => {
+			await expect(
+				canvas.getByTestId("container-collapsed-outer"),
+			).toBeInTheDocument();
+		});
+		expect(canvas.queryByTestId("container-expanded-outer")).toBeNull();
+		expect(canvas.queryByTestId("task-node-deep")).toBeNull();
+		// Expand all → back to expanded frames with the deep task visible.
+		await userEvent.click(canvas.getByTestId("toolbar-expand-all"));
+		await waitFor(async () => {
+			await expect(
+				canvas.getByTestId("container-expanded-outer"),
+			).toBeInTheDocument();
+		});
+		await expect(
+			canvas.getByTestId("container-expanded-inner"),
+		).toBeInTheDocument();
+		await expect(canvas.getByTestId("task-node-deep")).toBeInTheDocument();
+	},
+};
+
 export const NestedContainers: Story = {
 	args: {
 		seed: nestedContainerDoc(),
