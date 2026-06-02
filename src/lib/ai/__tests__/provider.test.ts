@@ -2,12 +2,19 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	createTextAdapter,
 	DEFAULT_MODELS,
+	resolveOpenAiApiFormat,
 	resolveProvider,
 } from "#/lib/ai/provider";
 
 vi.mock("@tanstack/ai-openai", () => ({
 	createOpenaiChat: vi.fn((model, apiKey, config) => ({
 		__kind: "openai-mock",
+		model,
+		apiKey,
+		config,
+	})),
+	createOpenaiChatCompletions: vi.fn((model, apiKey, config) => ({
+		__kind: "openai-chat-completions-mock",
 		model,
 		apiKey,
 		config,
@@ -128,21 +135,25 @@ describe("createTextAdapter — OpenAI base URL override", () => {
 		const adapter = createTextAdapter(
 			{ provider: "openai", model: "gpt-4o" },
 			{ OPENAI_API_KEY: "sk" },
-		) as unknown as { config: unknown };
+		) as unknown as { __kind: string; config: unknown };
 		expect(adapter.config).toBeUndefined();
+		// Real OpenAI speaks the newer Responses API.
+		expect(adapter.__kind).toBe("openai-mock");
 	});
 
-	it("passes a custom baseURL through to createOpenaiChat (Azure / OpenRouter / Ollama / vLLM)", () => {
+	it("passes a custom baseURL through (Azure / OpenRouter / Ollama / vLLM / corporate gateways)", () => {
 		const adapter = createTextAdapter(
 			{ provider: "openai", model: "gpt-4o" },
 			{
 				OPENAI_API_KEY: "sk",
 				OPENAI_BASE_URL: "https://my-openrouter-proxy.example.com/v1",
 			},
-		) as unknown as { config: { baseURL: string } };
+		) as unknown as { __kind: string; config: { baseURL: string } };
 		expect(adapter.config).toEqual({
 			baseURL: "https://my-openrouter-proxy.example.com/v1",
 		});
+		// Custom endpoints default to the broadly-supported Chat Completions API.
+		expect(adapter.__kind).toBe("openai-chat-completions-mock");
 	});
 
 	it("trims surrounding whitespace on OPENAI_BASE_URL", () => {
@@ -160,7 +171,84 @@ describe("createTextAdapter — OpenAI base URL override", () => {
 		const adapter = createTextAdapter(
 			{ provider: "openai", model: "gpt-4o" },
 			{ OPENAI_API_KEY: "sk", OPENAI_BASE_URL: "   " },
-		) as unknown as { config: unknown };
+		) as unknown as { __kind: string; config: unknown };
 		expect(adapter.config).toBeUndefined();
+		expect(adapter.__kind).toBe("openai-mock");
+	});
+});
+
+describe("createTextAdapter — OpenAI API format (Responses vs Chat Completions)", () => {
+	const gatewayEnv = {
+		OPENAI_API_KEY: "gateway-token",
+		OPENAI_BASE_URL: "https://llm-gateway.example.com/v1/",
+	};
+
+	it("uses the Chat Completions adapter when OPENAI_BASE_URL points at a custom endpoint", () => {
+		const adapter = createTextAdapter(
+			{ provider: "openai", model: "internal-model" },
+			gatewayEnv,
+		) as unknown as { __kind: string; model: string; config: unknown };
+		expect(adapter.__kind).toBe("openai-chat-completions-mock");
+		expect(adapter.model).toBe("internal-model");
+		expect(adapter.config).toEqual({
+			baseURL: "https://llm-gateway.example.com/v1/",
+		});
+	});
+
+	it("uses the Responses adapter against api.openai.com (no base URL)", () => {
+		const adapter = createTextAdapter(
+			{ provider: "openai", model: "gpt-5-mini" },
+			{ OPENAI_API_KEY: "sk" },
+		) as unknown as { __kind: string };
+		expect(adapter.__kind).toBe("openai-mock");
+	});
+
+	it("OPENAI_API_FORMAT=responses forces the Responses adapter even with a custom base URL", () => {
+		const adapter = createTextAdapter(
+			{ provider: "openai", model: "gpt-5-mini" },
+			{ ...gatewayEnv, OPENAI_API_FORMAT: "responses" },
+		) as unknown as { __kind: string };
+		expect(adapter.__kind).toBe("openai-mock");
+	});
+
+	it("OPENAI_API_FORMAT=chat-completions forces Chat Completions against api.openai.com", () => {
+		const adapter = createTextAdapter(
+			{ provider: "openai", model: "gpt-5-mini" },
+			{ OPENAI_API_KEY: "sk", OPENAI_API_FORMAT: "chat-completions" },
+		) as unknown as { __kind: string };
+		expect(adapter.__kind).toBe("openai-chat-completions-mock");
+	});
+});
+
+describe("resolveOpenAiApiFormat", () => {
+	it("defaults to responses without a base URL and chat-completions with one", () => {
+		expect(resolveOpenAiApiFormat({})).toBe("responses");
+		expect(
+			resolveOpenAiApiFormat({ OPENAI_BASE_URL: "https://gw.example.com/v1" }),
+		).toBe("chat-completions");
+	});
+
+	it("ignores a whitespace-only base URL", () => {
+		expect(resolveOpenAiApiFormat({ OPENAI_BASE_URL: "   " })).toBe(
+			"responses",
+		);
+	});
+
+	it("accepts chat_completions / completions spellings and normalizes case", () => {
+		expect(resolveOpenAiApiFormat({ OPENAI_API_FORMAT: "Responses" })).toBe(
+			"responses",
+		);
+		expect(
+			resolveOpenAiApiFormat({ OPENAI_API_FORMAT: "chat_completions" }),
+		).toBe("chat-completions");
+		expect(resolveOpenAiApiFormat({ OPENAI_API_FORMAT: " completions " })).toBe(
+			"chat-completions",
+		);
+	});
+
+	it("throws on an unknown OPENAI_API_FORMAT so typos surface", () => {
+		expect(() =>
+			resolveOpenAiApiFormat({ OPENAI_API_FORMAT: "websocket" }),
+		).toThrow(/not one of responses\|chat-completions/);
 	});
 });

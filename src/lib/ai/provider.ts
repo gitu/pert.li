@@ -1,7 +1,10 @@
 import type { AnyTextAdapter } from "@tanstack/ai";
 import { createAnthropicChat } from "@tanstack/ai-anthropic";
 import { createGeminiChat } from "@tanstack/ai-gemini";
-import { createOpenaiChat } from "@tanstack/ai-openai";
+import {
+	createOpenaiChat,
+	createOpenaiChatCompletions,
+} from "@tanstack/ai-openai";
 
 // Unified LLM provider selection. `@tanstack/ai`'s `chat()` already speaks to
 // any adapter; this module just picks one based on env. Adding a fourth
@@ -19,6 +22,14 @@ import { createOpenaiChat } from "@tanstack/ai-openai";
 //   OPENAI_BASE_URL  optional — override the OpenAI API endpoint. Lets you
 //                    point at Azure OpenAI, OpenRouter, LM Studio, Ollama,
 //                    vLLM, or any other OpenAI-compatible /v1 server.
+//   OPENAI_API_FORMAT optional — which OpenAI wire API to speak:
+//                    'responses' (the newer /v1/responses API) or
+//                    'chat-completions' (the classic /v1/chat/completions).
+//                    Defaults to 'responses' against api.openai.com and to
+//                    'chat-completions' whenever OPENAI_BASE_URL is set,
+//                    because most OpenAI-compatible servers (vLLM, Ollama,
+//                    llama.cpp, LM Studio, corporate gateways) only
+//                    implement /v1/chat/completions.
 //   GOOGLE_API_KEY  (Gemini also accepts GEMINI_API_KEY)
 //
 // The adapter creators read API keys from process.env themselves — we just
@@ -44,6 +55,7 @@ export type ProviderEnv = Partial<{
 	ANTHROPIC_API_KEY: string;
 	OPENAI_API_KEY: string;
 	OPENAI_BASE_URL: string;
+	OPENAI_API_FORMAT: string;
 	GOOGLE_API_KEY: string;
 	GEMINI_API_KEY: string;
 }>;
@@ -125,11 +137,12 @@ export function createTextAdapter(
 			return createAnthropicChat(model, env.ANTHROPIC_API_KEY ?? "");
 		case "openai": {
 			const baseURL = env.OPENAI_BASE_URL?.trim();
-			return createOpenaiChat(
-				model,
-				env.OPENAI_API_KEY ?? "",
-				baseURL ? { baseURL } : undefined,
-			);
+			const apiKey = env.OPENAI_API_KEY ?? "";
+			const clientConfig = baseURL ? { baseURL } : undefined;
+			if (resolveOpenAiApiFormat(env) === "chat-completions") {
+				return createOpenaiChatCompletions(model, apiKey, clientConfig);
+			}
+			return createOpenaiChat(model, apiKey, clientConfig);
 		}
 		case "gemini":
 			return createGeminiChat(
@@ -137,6 +150,35 @@ export function createTextAdapter(
 				env.GOOGLE_API_KEY ?? env.GEMINI_API_KEY ?? "",
 			);
 	}
+}
+
+export type OpenAiApiFormat = "responses" | "chat-completions";
+
+// Which OpenAI wire API to speak. api.openai.com prefers the newer Responses
+// API; everything reachable via OPENAI_BASE_URL (vLLM, Ollama, llama.cpp,
+// LM Studio, corporate LLM gateways) typically only implements the
+// classic /v1/chat/completions, so that becomes the default as soon as a
+// custom base URL is configured. OPENAI_API_FORMAT overrides the default in
+// either direction (e.g. Azure OpenAI's v1 endpoint does speak Responses).
+export function resolveOpenAiApiFormat(env: ProviderEnv): OpenAiApiFormat {
+	const explicit = env.OPENAI_API_FORMAT?.toLowerCase().trim();
+	if (explicit) {
+		// Accept a few obvious spellings; anything else throws (same contract
+		// as an unknown LLM_PROVIDER) so typos surface instead of silently
+		// picking an API the backend may not speak.
+		if (explicit === "responses") return "responses";
+		if (
+			explicit === "chat-completions" ||
+			explicit === "chat_completions" ||
+			explicit === "completions"
+		) {
+			return "chat-completions";
+		}
+		throw new Error(
+			`OPENAI_API_FORMAT='${explicit}' is not one of responses|chat-completions`,
+		);
+	}
+	return env.OPENAI_BASE_URL?.trim() ? "chat-completions" : "responses";
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: deliberate boundary cast for runtime-chosen model names.

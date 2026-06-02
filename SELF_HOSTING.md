@@ -110,7 +110,8 @@ All optional — leave unset to disable the feature.
 Auto-detect order is **Anthropic → OpenAI → Gemini**; the first key found
 wins. Override with `LLM_PROVIDER` / `LLM_MODEL`. The OpenAI adapter
 accepts an `OPENAI_BASE_URL` so it can talk to any OpenAI-compatible `/v1`
-endpoint — **Azure OpenAI, OpenRouter, LM Studio, Ollama, vLLM, llama.cpp**.
+endpoint — **Azure OpenAI, OpenRouter, LM Studio, Ollama, vLLM, llama.cpp,
+corporate LLM gateways**.
 
 ```env
 ANTHROPIC_API_KEY=sk-ant-...
@@ -118,9 +119,17 @@ ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-...
 OPENAI_BASE_URL=http://ollama.internal:11434/v1   # optional
 LLM_MODEL=llama3.1:70b                            # optional
+OPENAI_API_FORMAT=                                # optional: responses | chat-completions
 # OR
 GEMINI_API_KEY=AIza...
 ```
+
+When `OPENAI_BASE_URL` is set, requests go to the classic
+`/v1/chat/completions` API (which is what most OpenAI-compatible servers
+implement); against api.openai.com the newer `/v1/responses` API is used.
+Set `OPENAI_API_FORMAT` to force one or the other — e.g.
+`OPENAI_API_FORMAT=responses` for an Azure OpenAI endpoint that supports
+the Responses API.
 
 Without a key set, the chat dock disables itself — the rest of the app
 (planning, sync, OIDC sign-in, etc.) still works.
