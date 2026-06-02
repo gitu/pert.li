@@ -151,6 +151,32 @@ describe("diffPertDoc", () => {
 		expect(fields).toEqual(["actualStart", "key", "progress", "status"]);
 	});
 
+	it("flags notes (task description text) changes", () => {
+		const before = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			notes: "Original line 1\nOriginal line 2",
+		});
+		const after = build({
+			id: "A",
+			kind: "task",
+			title: "A",
+			parentId: null,
+			notes: "Updated line 1\nUpdated line 2",
+		});
+		const diff = diffPertDoc(before, after);
+		expect(diff.tasks).toHaveLength(1);
+		expect(diff.tasks[0].fields).toEqual([
+			{
+				field: "notes",
+				before: "Original line 1\nOriginal line 2",
+				after: "Updated line 1\nUpdated line 2",
+			},
+		]);
+	});
+
 	it("flags dependency lag and endpoint changes as field-level deltas", () => {
 		const before = build(leaf("A", "A"), leaf("B", "B"), leaf("C", "C"));
 		before.dependenciesById.ab = {
