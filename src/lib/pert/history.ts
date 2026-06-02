@@ -49,6 +49,9 @@ export type HistoryGroup = {
 	count: number;
 	firstIndex: number;
 	lastIndex: number;
+	// Last raw change message on the group — kept so adjacent groups can be
+	// compared on "same message?" without re-walking the entries array.
+	rawMessage: string | null;
 };
 
 export function readHistory(doc: PertDoc): HistoryEntry[] {
@@ -107,12 +110,16 @@ export function coalesceEntries(
 		// own group, and system markers never fold into adjacent edits.
 		const entryKey = entry.userId ?? entry.actor;
 		const tailKey = tail ? (tail.userId ?? tail.actor) : null;
+		// Preserve the original message-boundary semantics: an Automerge
+		// `change(doc, "msg", fn)` is the writer flagging a logical unit, so
+		// different `msg` values shouldn't collapse into a single row.
 		const canFold =
 			tail &&
 			entry.source !== "system" &&
 			tail.source !== "system" &&
 			tailKey === entryKey &&
 			tail.source === entry.source &&
+			tail.rawMessage === entry.rawMessage &&
 			(tail.endTime === null ||
 				entry.time === null ||
 				entry.time - tail.endTime <= windowMs);
@@ -136,6 +143,7 @@ export function coalesceEntries(
 			count: 1,
 			firstIndex: entry.index,
 			lastIndex: entry.index,
+			rawMessage: entry.rawMessage,
 		});
 	}
 	return groups;

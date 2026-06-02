@@ -22,7 +22,7 @@ function entry(
 		userId: null,
 		userName: null,
 		...overrides,
-	};
+	} satisfies HistoryEntry;
 }
 
 describe("readHistory", () => {
