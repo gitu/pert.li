@@ -217,7 +217,7 @@ function DrawerInner({
 			onSourcesChange={onSourcesChange}
 		>
 			<div className="grid h-full min-h-0 flex-1 grid-cols-[260px_1fr] divide-x divide-border">
-				<ScrollArea className="h-full">
+				<ScrollArea className="h-full min-h-0">
 					{groups.length === 0 ? (
 						<EmptyState>No edits yet.</EmptyState>
 					) : (

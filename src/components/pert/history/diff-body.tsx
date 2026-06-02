@@ -228,6 +228,7 @@ function FieldDiffRow({
 	actionMode: DiffActionMode;
 	onAction?: () => void;
 }) {
+	const isTextBlockField = field.field === "notes";
 	return (
 		<li
 			className="flex items-start gap-2 rounded bg-muted/40 px-2 py-1 text-[11px]"
@@ -237,13 +238,25 @@ function FieldDiffRow({
 				{field.field}
 			</span>
 			<div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-				<span className="truncate text-muted-foreground line-through">
+				<span
+					className={cn(
+						isTextBlockField
+							? "break-words whitespace-pre-wrap text-muted-foreground line-through"
+							: "truncate text-muted-foreground line-through",
+					)}
+				>
 					{renderValue(field, "before")}
 				</span>
 				<span aria-hidden className="text-muted-foreground">
 					→
 				</span>
-				<span className="truncate font-medium">
+				<span
+					className={cn(
+						isTextBlockField
+							? "break-words whitespace-pre-wrap font-medium"
+							: "truncate font-medium",
+					)}
+				>
 					{renderValue(field, "after")}
 				</span>
 			</div>
