@@ -67,6 +67,15 @@ async function initPglite(dataDir?: string): Promise<AppDatabase> {
 		import("drizzle-orm/pglite"),
 		import(/* @vite-ignore */ "drizzle-kit/api"),
 	]);
+	if (dataDir) {
+		// PGlite's NodeFS backend mkdirs the data dir NON-recursively, so on a
+		// fresh checkout / git worktree (where the gitignored ./.data doesn't
+		// exist yet) construction dies with ENOENT — and drizzle-kit's renderer
+		// swallows that error into a bare `process.exit(1)`. Create the full
+		// path up front so first-run `pnpm dev` stays zero-config.
+		const { mkdir } = await import("node:fs/promises");
+		await mkdir(dataDir, { recursive: true });
+	}
 	const client = dataDir ? new PGlite(dataDir) : new PGlite();
 	const drizzleDb = pgliteDriver.drizzle(client, { schema });
 	// pushSchema's signature requires a PgDatabase whose schema generic erases
@@ -142,15 +151,34 @@ export function getDb(): AppDatabase {
 	return _db;
 }
 
+/**
+ * Close the underlying PGLite client and forget the singleton. Used by the
+ * dev pre-warm plugin so its instance doesn't linger alongside the one the
+ * nitro dev worker opens on the same data dir. No-op for URL-based drivers.
+ */
+export async function closeDb(): Promise<void> {
+	const client = (_db as { $client?: { close?: () => Promise<void> } })
+		?.$client;
+	_db = undefined;
+	_initPromise = undefined;
+	await client?.close?.();
+}
+
 // E2E mode: in-process, throw-away DB per server start. The schema push is
 // async, so we resolve it at module load via top-level await. Playwright
 // only probes once Vite reports ready, so this is safe in the test harness.
 //
-// Local dev (PGLite on disk) is *not* eagerly initialized here because top-
-// level await blocks the SSR module graph, racing with Vite's HMR WS
-// upgrade through Nitro's proxy. Instead, the Vite plugin in
-// `pglite-vite-plugin.ts` calls `ensureDb()` during `configureServer` so
-// the DB is ready before the server starts listening.
+// Local dev (PGLite on disk): the nitro dev worker evaluates this module in
+// its OWN module graph — the pre-warm in `pglite-vite-plugin.ts` runs in the
+// Vite main process and cannot hand its `_db` over here. So the worker also
+// initializes via top-level await. The pre-warm still matters: it creates
+// the data dir and pushes the schema before Vite starts listening, so the
+// TLA here is just "open the existing dir + no-op schema diff" instead of a
+// cold multi-second init racing Vite's HMR WebSocket upgrade.
+//
+// Both paths are dev/test-only (`import.meta.env.DEV` is injected by Vite's
+// module runner and by Vitest; it's undefined in plain Node and falsy in
+// production bundles).
 //
 // Production: the synchronous Proxy fallback below handles Neon and vanilla
 // Postgres lazily on first access. PGLite-in-production is intentionally not
@@ -159,7 +187,10 @@ export function getDb(): AppDatabase {
 // schema management for self-hosted deployments goes through the container
 // entrypoint (`scripts/docker-entrypoint.sh`) which runs the unbundled
 // `pnpm db:push` against a real Postgres before the server starts.
-if (process.env.E2E_PGLITE === "1") {
+if (
+	process.env.E2E_PGLITE === "1" ||
+	(import.meta.env?.DEV && resolveMode() === "local-pglite")
+) {
 	await ensureDb();
 }
 
@@ -168,8 +199,9 @@ export const db = new Proxy({} as NeonHttpDatabase<typeof schema>, {
 		if (!_db) {
 			// Synchronous fallback: only the URL-based drivers (Neon / node-pg)
 			// can be constructed lazily here. PGLite paths must have gone through
-			// ensureDb() during startup; getting here without an initialized _db
-			// means the boot sequence missed its init hook.
+			// ensureDb() during startup (the top-level await above covers dev and
+			// e2e); getting here without an initialized _db means the boot
+			// sequence missed its init hook.
 			const url = process.env.DATABASE_URL;
 			if (!url) {
 				throw new Error(

@@ -7,7 +7,12 @@ import {
 } from "@tanstack/ai";
 import dotenv from "dotenv";
 import { toGeminiCompatibleTools } from "#/lib/ai/gemini-compat";
-import { type ProviderEnv, selectTextAdapter } from "#/lib/ai/provider";
+import { toOpenAiCompatibleTools } from "#/lib/ai/openai-compat";
+import {
+	type ProviderEnv,
+	type ProviderName,
+	selectTextAdapter,
+} from "#/lib/ai/provider";
 import { requireSessionFromHeaders } from "#/server/auth-context.server";
 
 // Vite's environment runner sandboxes `process.env` inside the dev worker —
@@ -469,6 +474,30 @@ const SYSTEM_PROMPT = [
 	"    ask_choice — just ask them as text.",
 ].join("\n");
 
+// Tool input schemas are serialized from Zod on the client, and not every
+// provider accepts the full JSON Schema dialect Zod emits:
+//   • Gemini's function-declaration proto rejects `const` (emitted for every
+//     z.literal(), e.g. the `op` discriminators in propose_changes'
+//     operations array) → rewritten to single-value `enum`.
+//   • OpenAI structured output (strict function calling) rejects `oneOf`
+//     (emitted for every z.discriminatedUnion()) → rewritten to the
+//     semantically-equivalent `anyOf`, plus the same `const` → `enum`
+//     rewrite for OpenAI-compatible gateways behind OPENAI_BASE_URL.
+//   • Anthropic accepts the raw schemas as-is.
+function toProviderCompatibleTools(
+	tools: ReturnType<typeof mergeAgentTools>,
+	provider: ProviderName,
+): ReturnType<typeof mergeAgentTools> {
+	switch (provider) {
+		case "gemini":
+			return toGeminiCompatibleTools(tools);
+		case "openai":
+			return toOpenAiCompatibleTools(tools);
+		case "anthropic":
+			return tools;
+	}
+}
+
 export async function handleChatRequest(request: Request): Promise<Response> {
 	// Gate every call on an authenticated session: the LLM adapter below uses
 	// server-held provider keys, so any anonymous caller would be spending the
@@ -488,13 +517,7 @@ export async function handleChatRequest(request: Request): Promise<Response> {
 	// runtime then ferries each tool call back to the browser, waits for
 	// `addToolResult(...)`, and continues the agent loop.
 	const merged = mergeAgentTools([], params.tools);
-	// Gemini's function-declaration schema dialect rejects the JSON Schema
-	// `const` keyword (which Zod emits for every z.literal(), e.g. the `op`
-	// discriminators in propose_changes' operations array). Rewrite those to
-	// single-value enums before they reach the Gemini adapter; other providers
-	// accept `const` natively.
-	const tools =
-		config.provider === "gemini" ? toGeminiCompatibleTools(merged) : merged;
+	const tools = toProviderCompatibleTools(merged, config.provider);
 	const stream = chat({
 		adapter,
 		messages: params.messages,

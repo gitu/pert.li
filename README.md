@@ -67,6 +67,8 @@ GEMINI_API_KEY=
 LLM_PROVIDER=             # openai | anthropic | gemini
 LLM_MODEL=
 OPENAI_BASE_URL=          # any OpenAI-compatible /v1 endpoint
+OPENAI_API_FORMAT=        # responses | chat-completions (defaults to
+                          # chat-completions when OPENAI_BASE_URL is set)
 
 # Optional: passwordless email (without either, /signin uses a dev console fallback).
 # SMTP takes precedence over Resend when both are set.
