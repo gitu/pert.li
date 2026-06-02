@@ -1,4 +1,15 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
+
+// /signin is SSR'd, so the form's onClick handlers don't bind until React
+// hydrates. Without a wait, the first click() in a test lands on the dead
+// pre-hydration DOM and setMode never runs (mode stays "signin", the new
+// heading never appears, the assertion times out). The form sets
+// `data-hydrated="true"` from a useEffect — wait on that before interacting.
+async function waitForHydration(page: Page): Promise<void> {
+	await expect(page.locator("form[data-hydrated='true']")).toBeVisible({
+		timeout: 15_000,
+	});
+}
 
 test.describe("/signin", () => {
 	// Pre-dismiss the cookie hint so it can't overlap the inline mode-toggle
@@ -26,6 +37,7 @@ test.describe("/signin", () => {
 		await expect(
 			page.getByRole("heading", { name: "Sign in", exact: true }),
 		).toBeVisible();
+		await waitForHydration(page);
 		await page
 			.getByText("No account?")
 			.locator("..")
@@ -49,6 +61,7 @@ test.describe("/signin", () => {
 		await expect(
 			page.getByRole("heading", { name: "Sign in", exact: true }),
 		).toBeVisible();
+		await waitForHydration(page);
 		await page
 			.getByRole("button", { name: "Email me a sign-in link instead" })
 			.click();

@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { z } from "zod";
 import { VersionFooter } from "#/components/legal/version-footer";
 import { Button } from "#/components/ui/button";
@@ -33,6 +33,14 @@ function SignInPage() {
 	const { callbackURL } = Route.useSearch();
 	const callback = callbackURL ?? "/";
 	const [mode, setMode] = useState<"signin" | "signup" | "link">("signin");
+	// Hydration marker the e2e tests wait on before clicking. The page is
+	// SSR'd; without this guard, Playwright's first click() lands on the
+	// pre-hydration DOM and the button's onClick is a no-op (setMode never
+	// runs, the heading stays "Sign in", and the assertion times out).
+	const [hydrated, setHydrated] = useState(false);
+	useEffect(() => {
+		setHydrated(true);
+	}, []);
 	const [name, setName] = useState("");
 	const [email, setEmail] = useState("");
 	const [password, setPassword] = useState("");
@@ -103,6 +111,7 @@ function SignInPage() {
 				<form
 					onSubmit={onSubmit}
 					className="w-full space-y-5 rounded-lg border bg-card p-6 shadow-sm"
+					data-hydrated={hydrated || undefined}
 				>
 					<div className="space-y-1">
 						<h1 className="text-xl font-semibold tracking-tight">
