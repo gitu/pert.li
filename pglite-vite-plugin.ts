@@ -1,17 +1,21 @@
 import type { Plugin } from "vite";
 
-// Pre-warms the local PGLite database during `configureServer` so the
-// schema push (~500ms) completes before Vite starts accepting connections.
+// Pre-warms the local PGLite database during `configureServer` so the data
+// dir exists and the schema push (~500ms) completes before Vite starts
+// accepting connections.
 //
-// Without this, top-level await in src/db/index.ts blocks the SSR module
-// graph for the duration of the schema push. During that window Vite's HMR
-// client opens a WebSocket upgrade through Nitro's proxy, the proxy can't
-// forward to the not-yet-loaded SSR handler, and httpxy throws "Upstream
-// server did not upgrade the connection" — crashing the dev process.
+// This plugin runs in the Vite main process; request handlers run in the
+// nitro dev worker, which evaluates src/db/index.ts in its own module graph
+// and opens its own PGLite on the same data dir (via top-level await there).
+// The pre-warm can't share its instance with the worker — its job is only to
+// make the worker's init fast: by the time the first request arrives, the
+// dir exists and the schema is current, so the worker's top-level await is a
+// quick open + no-op diff instead of a cold multi-second init racing Vite's
+// HMR WebSocket upgrade ("Upstream server did not upgrade the connection").
 //
-// Running the init from `configureServer` is the cleanest fix: Vite waits
-// for the hook's returned promise before listening, so PGLite is ready by
-// the time HMR upgrades arrive. No-op when not using local PGLite.
+// The pre-warm instance is closed right after the push so the worker's
+// instance is the only one holding the data dir open.
+// No-op when not using local PGLite.
 export default function pglitePreWarmPlugin(): Plugin {
 	return {
 		name: "pertli:pglite-prewarm",
@@ -22,8 +26,9 @@ export default function pglitePreWarmPlugin(): Plugin {
 				process.env.DATABASE_URL.trim() === "";
 			if (!useLocalPglite) return;
 			if (process.env.E2E_PGLITE === "1") return; // handled by TLA in db/index.ts
-			const { ensureDb } = await import("./src/db/index.ts");
+			const { ensureDb, closeDb } = await import("./src/db/index.ts");
 			await ensureDb();
+			await closeDb();
 		},
 	};
 }
