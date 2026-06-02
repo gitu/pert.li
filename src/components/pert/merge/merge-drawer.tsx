@@ -91,6 +91,21 @@ export function MergeDrawer({
 				};
 			});
 			const ops = mergeSelectionToOps(selection);
+			// Dry-run the ops on a deep clone of main first. If any fails we
+			// abort before touching the real doc, so we never land a partial
+			// merge or a misleading "merge-applied" marker.
+			const liveDoc = parentHandle.doc();
+			if (!liveDoc) throw new Error("Parent doc not available");
+			const probe = structuredClone(liveDoc) as PertDoc;
+			const dryRun = applyOperations(probe, ops);
+			const fails = dryRun.flatMap((r) =>
+				r.ok ? [] : [`${r.op} (op #${r.index}): ${r.error}`],
+			);
+			if (fails.length > 0) {
+				throw new Error(
+					`Merge aborted — ${fails.length} of ${ops.length} ops failed: ${fails.join("; ")}`,
+				);
+			}
 			// Tag the merge as a system event so it shows up in History.
 			const branchTitle = branch.title;
 			changeWith(

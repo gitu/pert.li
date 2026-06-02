@@ -23,18 +23,34 @@ type Group = {
 function groupByParent(projects: ProjectSummary[]): Group[] {
 	const byId = new Map<string, ProjectSummary>();
 	for (const p of projects) byId.set(p.id, p);
+	// Walk parent links up to the ultimate root in the list (handles
+	// "branch of a branch": p2 → p1 → p0 collapses to p0). Stops if the
+	// chain leaves the list (parent archived / different workspace), in
+	// which case the deepest still-visible ancestor becomes the bucket and
+	// the original keeps its branch glyph via the "orphan-branch" path.
+	const rootIdFor = (p: ProjectSummary): string => {
+		const seen = new Set<string>();
+		let current: ProjectSummary | undefined = p;
+		while (current?.parentProjectId && byId.has(current.parentProjectId)) {
+			if (seen.has(current.id)) break; // pathological cycle guard
+			seen.add(current.id);
+			current = byId.get(current.parentProjectId);
+		}
+		return current?.id ?? p.id;
+	};
+
 	const groups = new Map<string, Group>();
 	for (const p of projects) {
 		if (!p.parentProjectId || !byId.has(p.parentProjectId)) {
-			// Treat as root (orphan branches included).
 			if (!groups.has(p.id)) groups.set(p.id, { root: p, branches: [] });
 		}
 	}
 	for (const p of projects) {
-		if (p.parentProjectId && byId.has(p.parentProjectId)) {
-			const g = groups.get(p.parentProjectId);
-			if (g) g.branches.push(p);
-		}
+		if (!p.parentProjectId) continue;
+		const rootId = rootIdFor(p);
+		if (rootId === p.id) continue;
+		const g = groups.get(rootId);
+		if (g) g.branches.push(p);
 	}
 	// Sort branches deterministically — oldest fork first so the order doesn't
 	// shuffle when a new branch lands.

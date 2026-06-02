@@ -475,11 +475,41 @@ function compareEntitiesAsFields(
 	} else {
 		const b = branch as Dependency;
 		const m = main as Dependency;
-		for (const f of ["type", "lagDays", "from", "to"] as const) {
-			const bv = b[f];
-			const mv = m[f];
-			if (!jsonEqual(bv, mv))
-				out.push({ field: f, branchValue: bv, mainValue: mv });
+		// Field names match `DependencyFieldChange` in diff.ts (and the
+		// translator in merge-to-ops.ts). Don't surface `from`/`to` as flat
+		// fields here — the apply pipeline has no op that takes them as
+		// objects, so the row could never be applied.
+		if (b.type !== m.type) {
+			out.push({ field: "type", branchValue: b.type, mainValue: m.type });
+		}
+		const bl = b.lagDays ?? 0;
+		const ml = m.lagDays ?? 0;
+		if (bl !== ml) {
+			out.push({ field: "lagDays", branchValue: bl, mainValue: ml });
+		}
+		const bf = b.from.taskId ?? null;
+		const mf = m.from.taskId ?? null;
+		if (bf !== mf) {
+			out.push({ field: "fromTaskId", branchValue: bf, mainValue: mf });
+		}
+		const bt = b.to.taskId ?? null;
+		const mt = m.to.taskId ?? null;
+		if (bt !== mt) {
+			out.push({ field: "toTaskId", branchValue: bt, mainValue: mt });
+		}
+		const bfi = b.from.interfaceId ?? null;
+		const mfi = m.from.interfaceId ?? null;
+		if (bfi !== mfi) {
+			out.push({
+				field: "fromInterfaceId",
+				branchValue: bfi,
+				mainValue: mfi,
+			});
+		}
+		const bti = b.to.interfaceId ?? null;
+		const mti = m.to.interfaceId ?? null;
+		if (bti !== mti) {
+			out.push({ field: "toInterfaceId", branchValue: bti, mainValue: mti });
 		}
 	}
 	return out;

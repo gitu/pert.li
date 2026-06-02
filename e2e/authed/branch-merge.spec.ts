@@ -72,12 +72,14 @@ test.describe("Branch & merge", () => {
 
 		// Branch appears in the sidebar nested under the parent.
 		await page.goto("/");
-		const branchesGroup = page.locator(
-			`[data-testid^="project-branches-"]`,
-		).first();
+		const branchesGroup = page
+			.locator(`[data-testid^="project-branches-"]`)
+			.first();
 		await expect(branchesGroup).toBeVisible({ timeout: 10_000 });
 		await expect(
-			branchesGroup.getByRole("link", { name: new RegExp(escapeRegex(branchTitle)) }),
+			branchesGroup.getByRole("link", {
+				name: new RegExp(escapeRegex(branchTitle)),
+			}),
 		).toBeVisible();
 		// Description renders as a muted second line on the row.
 		await expect(
@@ -108,7 +110,9 @@ test.describe("Branch & merge", () => {
 		await page.goto("/");
 		await page.reload();
 		await expect(
-			page.getByRole("link", { name: new RegExp(escapeRegex(newTitle)) }).first(),
+			page
+				.getByRole("link", { name: new RegExp(escapeRegex(newTitle)) })
+				.first(),
 		).toBeVisible({ timeout: 15_000 });
 		await expect(
 			page.getByText("Description added via rename dialog", { exact: false }),

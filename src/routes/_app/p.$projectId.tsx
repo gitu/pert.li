@@ -71,7 +71,7 @@ import { useFullscreen } from "#/lib/use-fullscreen";
 import { useIsMobile } from "#/lib/use-media-query";
 import { cn } from "#/lib/utils";
 import { useViewMode } from "#/lib/view-mode";
-import { getProjectById } from "#/server/workspace";
+import { getProjectById, listProjects } from "#/server/workspace";
 
 export type ProjectView = "network" | "timeline" | "table" | "matrix";
 
@@ -282,6 +282,21 @@ function HeaderBranchMenu({ projectId }: { projectId: string }) {
 		queryKey: ["project", projectId],
 		queryFn: () => getProjectById({ data: { projectId } }),
 	});
+	// Count existing branches of *this* project in the workspace so the fork
+	// dialog can suggest a non-colliding default (Parent — branch 3 when 2
+	// siblings already exist). Reuses the same projects query the sidebar
+	// hydrates, so this is free.
+	const { data: workspaceProjects } = useQuery({
+		queryKey: ["projects", project?.workspaceId],
+		queryFn: () =>
+			listProjects({
+				data: project?.workspaceId ? { workspaceId: project.workspaceId } : {},
+			}),
+		enabled: !!project?.workspaceId,
+	});
+	const existingBranchCount =
+		workspaceProjects?.filter((p) => p.parentProjectId === projectId).length ??
+		0;
 
 	return (
 		<>
@@ -324,7 +339,7 @@ function HeaderBranchMenu({ projectId }: { projectId: string }) {
 					open={forkOpen}
 					onOpenChange={setForkOpen}
 					parent={{ id: project.id, title: project.title }}
-					existingBranchCount={0}
+					existingBranchCount={existingBranchCount}
 				/>
 			)}
 			{project && renameOpen && (
