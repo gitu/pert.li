@@ -171,6 +171,19 @@ export type ProjectCalendar = {
 	allocationMode?: AllocationMode;
 };
 
+// Doc-scoped metadata that doesn't fit anywhere else. Today it only holds the
+// actor → user registry used by the History drawer to render friendly names;
+// callers must always read with `?? {}` since old docs predate this field.
+export type DocMeta = {
+	// Map keyed by Automerge actor id → who that actor belongs to. Set once
+	// per actor at session start (see `useActorRegistration`). CRDT-friendly:
+	// concurrent writes only ever add new keys; we never mutate an entry.
+	actors?: Record<
+		string,
+		{ userId: string; name: string; firstSeenAt: number }
+	>;
+};
+
 export type PertDoc = {
 	schemaVersion: 1;
 	title: string;
@@ -182,6 +195,7 @@ export type PertDoc = {
 	>;
 	viewsById: Record<ViewId, ViewState>;
 	calendar?: ProjectCalendar;
+	meta?: DocMeta;
 };
 
 export function createEmptyPertDoc(title: string): PertDoc {

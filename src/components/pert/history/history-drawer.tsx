@@ -1,13 +1,23 @@
 import * as Automerge from "@automerge/automerge";
 import { useStore } from "@tanstack/react-store";
-import { ClockIcon, GitCompareIcon, HistoryIcon } from "lucide-react";
+import {
+	ClockIcon,
+	GitBranchIcon,
+	GitCompareIcon,
+	GitMergeIcon,
+	HistoryIcon,
+	SparklesIcon,
+	UserIcon,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { ScrollArea } from "#/components/ui/scroll-area";
 import { actorColor, shortActor } from "#/lib/pert/actor-format";
 import {
 	coalesceEntries,
+	filterEntries,
 	type HistoryGroup,
+	type HistorySource,
 	readHistory,
 	snapshotAt,
 } from "#/lib/pert/history";
@@ -15,6 +25,11 @@ import { projectDocStore } from "#/lib/pert/store";
 import type { PertDoc } from "#/lib/pert/types";
 import { cn } from "#/lib/utils";
 import { DiffPane } from "./diff-pane";
+
+// Toggleable filter chips at the top of the drawer. Selecting nothing or
+// everything is equivalent — the filter only applies when a strict subset of
+// sources is active.
+const ALL_SOURCES: HistorySource[] = ["user", "ai", "system"];
 
 // Bottom-drawer history view. Reads commit metadata off the active project
 // doc (lifted into projectDocStore by the project route), coalesces bursty
@@ -38,10 +53,17 @@ export function HistoryDrawer() {
 		null,
 	);
 	const [secondFirstIndex, setSecondFirstIndex] = useState<number | null>(null);
+	const [activeSources, setActiveSources] =
+		useState<HistorySource[]>(ALL_SOURCES);
 
 	if (!doc || !changeDoc || !projectId) {
 		return (
-			<DrawerShell mode={mode} onModeChange={setMode}>
+			<DrawerShell
+				mode={mode}
+				onModeChange={setMode}
+				activeSources={activeSources}
+				onSourcesChange={setActiveSources}
+			>
 				<EmptyState>
 					Open a project to browse history, compare versions, and restore
 					earlier values.
@@ -55,6 +77,8 @@ export function HistoryDrawer() {
 			doc={doc}
 			changeDoc={changeDoc}
 			mode={mode}
+			activeSources={activeSources}
+			onSourcesChange={setActiveSources}
 			onModeChange={(next) => {
 				setMode(next);
 				setSelectedFirstIndex(null);
@@ -103,6 +127,8 @@ function DrawerInner({
 	selectedFirstIndex,
 	secondFirstIndex,
 	onSelect,
+	activeSources,
+	onSourcesChange,
 }: {
 	doc: PertDoc;
 	changeDoc: (mutate: (d: PertDoc) => void) => void;
@@ -111,11 +137,17 @@ function DrawerInner({
 	selectedFirstIndex: number | null;
 	secondFirstIndex: number | null;
 	onSelect: (firstIndex: number) => void;
+	activeSources: HistorySource[];
+	onSourcesChange: (sources: HistorySource[]) => void;
 }) {
 	const groups = useMemo(() => {
 		const entries = readHistory(doc);
-		return coalesceEntries(entries).reverse(); // newest first
-	}, [doc]);
+		const filtered =
+			activeSources.length === ALL_SOURCES.length
+				? entries
+				: filterEntries(entries, { sources: activeSources });
+		return coalesceEntries(filtered).reverse(); // newest first
+	}, [doc, activeSources]);
 
 	const selectedGroup = useMemo(() => {
 		if (selectedFirstIndex === null) return null;
@@ -181,6 +213,8 @@ function DrawerInner({
 			mode={mode}
 			onModeChange={onModeChange}
 			commitCount={groups.length}
+			activeSources={activeSources}
+			onSourcesChange={onSourcesChange}
 		>
 			<div className="grid h-full min-h-0 flex-1 grid-cols-[260px_1fr] divide-x divide-border">
 				<ScrollArea className="h-full">
@@ -275,21 +309,31 @@ function DrawerShell({
 	mode,
 	onModeChange,
 	commitCount,
+	activeSources,
+	onSourcesChange,
 	children,
 }: {
 	mode: CompareMode;
 	onModeChange: (mode: CompareMode) => void;
 	commitCount?: number;
+	activeSources?: HistorySource[];
+	onSourcesChange?: (sources: HistorySource[]) => void;
 	children: React.ReactNode;
 }) {
 	const compareActive = mode === "two-snapshots";
 	return (
 		<div className="flex h-full flex-col" data-testid="history-drawer">
-			<header className="flex shrink-0 items-center justify-between gap-3 border-b bg-card/40 px-4 py-2">
+			<header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b bg-card/40 px-4 py-2">
 				<div className="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 					<HistoryIcon className="size-3.5" />
 					History
 				</div>
+				{activeSources && onSourcesChange && (
+					<SourceFilterChips
+						active={activeSources}
+						onChange={onSourcesChange}
+					/>
+				)}
 				<div className="flex items-center gap-2">
 					<Button
 						type="button"
@@ -318,6 +362,63 @@ function DrawerShell({
 	);
 }
 
+function SourceFilterChips({
+	active,
+	onChange,
+}: {
+	active: HistorySource[];
+	onChange: (sources: HistorySource[]) => void;
+}) {
+	const isActive = (s: HistorySource) => active.includes(s);
+	const toggle = (s: HistorySource) => {
+		if (isActive(s)) {
+			const next = active.filter((x) => x !== s);
+			// Always keep at least one source selected — clearing all would just
+			// hide every row with no escape hatch in the chip UI.
+			onChange(next.length === 0 ? ALL_SOURCES : next);
+		} else {
+			onChange([...active, s]);
+		}
+	};
+	return (
+		<fieldset
+			className="flex items-center gap-1 border-0 p-0 m-0"
+			aria-label="Filter history by source"
+		>
+			{ALL_SOURCES.map((s) => (
+				<button
+					key={s}
+					type="button"
+					data-testid={`history-source-${s}`}
+					aria-pressed={isActive(s)}
+					onClick={() => toggle(s)}
+					className={cn(
+						"h-6 gap-1 rounded-md border px-2 text-[10px] uppercase tracking-wide transition-colors flex items-center",
+						isActive(s)
+							? "border-transparent bg-primary text-primary-foreground"
+							: "border-border bg-card text-muted-foreground hover:bg-accent/40",
+					)}
+				>
+					<SourceIcon source={s} className="size-3" />
+					{s === "user" ? "You" : s === "ai" ? "AI" : "System"}
+				</button>
+			))}
+		</fieldset>
+	);
+}
+
+function SourceIcon({
+	source,
+	className,
+}: {
+	source: HistorySource;
+	className?: string;
+}) {
+	if (source === "ai") return <SparklesIcon className={className} />;
+	if (source === "system") return <GitBranchIcon className={className} />;
+	return <UserIcon className={className} />;
+}
+
 function EmptyState({ children }: { children: React.ReactNode }) {
 	return (
 		<div className="grid h-full place-items-center p-4 text-center text-sm text-muted-foreground">
@@ -339,6 +440,8 @@ function HistoryRow({
 }) {
 	const time = group.endTime ?? group.startTime;
 	const isSelected = selectionTag !== null;
+	const label = labelForGroup(group);
+	const isSystem = group.source === "system";
 	return (
 		<button
 			type="button"
@@ -346,21 +449,36 @@ function HistoryRow({
 			data-testid={`history-row-${group.firstIndex}`}
 			data-selected={isSelected}
 			data-selection-tag={selectionTag ?? ""}
+			data-source={group.source}
+			data-system-kind={group.systemKind ?? ""}
 			className={cn(
-				"flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs",
+				"flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs",
 				isSelected ? "bg-accent text-accent-foreground" : "hover:bg-accent/50",
+				isSystem && "border-l-2 border-primary/50 bg-primary/[0.04]",
 			)}
 		>
 			<span
-				className="block size-2 shrink-0 rounded-full"
-				style={{ backgroundColor: actorColor(group.actor) }}
+				className="mt-0.5 block size-2 shrink-0 rounded-full"
+				style={{
+					backgroundColor: isSystem
+						? "hsl(var(--primary))"
+						: actorColor(group.actor),
+				}}
 				aria-hidden
 			/>
 			<div className="min-w-0 flex-1">
 				<div className="flex items-center gap-1.5">
-					<span className="truncate font-medium">
-						{group.message ?? (group.count > 1 ? "Edit burst" : "Edit")}
-					</span>
+					{group.source === "ai" && (
+						<span
+							className="inline-flex items-center gap-0.5 rounded bg-accent px-1 text-[9px] uppercase tracking-wide text-accent-foreground"
+							title="Change made by the AI assistant"
+						>
+							<SparklesIcon className="size-2.5" />
+							AI
+						</span>
+					)}
+					{isSystem && <SystemKindBadge kind={group.systemKind} />}
+					<span className="truncate font-medium">{label}</span>
 					{isLatest && (
 						<span className="rounded bg-primary/15 px-1 text-[9px] uppercase tracking-wide text-primary">
 							latest
@@ -375,15 +493,74 @@ function HistoryRow({
 				<div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
 					<ClockIcon className="size-3" />
 					<span>{formatTime(time)}</span>
+					{!isSystem && (
+						<>
+							<span aria-hidden>·</span>
+							<span>
+								{group.count} {group.count === 1 ? "edit" : "edits"}
+							</span>
+						</>
+					)}
 					<span aria-hidden>·</span>
-					<span>
-						{group.count} {group.count === 1 ? "edit" : "edits"}
+					<span title={group.userId ? `User ${group.userId}` : group.actor}>
+						{group.userName ?? shortActor(group.actor)}
 					</span>
-					<span aria-hidden>·</span>
-					<span title={group.actor}>{shortActor(group.actor)}</span>
 				</div>
 			</div>
 		</button>
+	);
+}
+
+function labelForGroup(group: HistoryGroup): string {
+	if (group.source === "system") {
+		if (group.systemKind === "branch-created") {
+			const parent =
+				typeof group.payload?.parentTitle === "string"
+					? group.payload.parentTitle
+					: "main";
+			return `Branched from “${parent}”`;
+		}
+		if (group.systemKind === "branched-out") {
+			const branch =
+				typeof group.payload?.branchTitle === "string"
+					? group.payload.branchTitle
+					: "branch";
+			return `Branch created: “${branch}”`;
+		}
+		if (group.systemKind === "merge-applied") {
+			const branch =
+				typeof group.payload?.branchTitle === "string"
+					? group.payload.branchTitle
+					: "branch";
+			return `Merged from “${branch}”`;
+		}
+		if (group.systemKind === "renamed") return "Project renamed";
+		if (group.systemKind === "actor-registered") return "Joined the project";
+		return group.systemKind ?? "System change";
+	}
+	if (group.source === "ai") {
+		return group.count > 1 ? "AI burst" : "AI edit";
+	}
+	return group.count > 1 ? "Edit burst" : "Edit";
+}
+
+function SystemKindBadge({ kind }: { kind: string | null }) {
+	const isMerge = kind === "merge-applied";
+	const isBranch = kind === "branch-created" || kind === "branched-out";
+	return (
+		<span
+			className={cn(
+				"inline-flex items-center gap-0.5 rounded px-1 text-[9px] uppercase tracking-wide",
+				"bg-primary/15 text-primary",
+			)}
+		>
+			{isMerge ? (
+				<GitMergeIcon className="size-2.5" />
+			) : isBranch ? (
+				<GitBranchIcon className="size-2.5" />
+			) : null}
+			{isMerge ? "Merge" : isBranch ? "Branch" : "System"}
+		</span>
 	);
 }
 

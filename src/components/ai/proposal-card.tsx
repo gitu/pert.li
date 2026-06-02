@@ -13,6 +13,7 @@ import {
 	proposalsStore,
 	rejectProposal,
 } from "#/lib/ai/proposals-store";
+import { changeWith } from "#/lib/pert/change-meta";
 import { projectDocStore } from "#/lib/pert/store";
 
 // Renders a single staged AI proposal as an inline card under the assistant
@@ -28,6 +29,15 @@ export type ProposalCardProps = {
 export function ProposalCard({ proposalId }: ProposalCardProps) {
 	const proposal = useStore(proposalsStore, (s) => s.byId[proposalId] ?? null);
 	const changeDoc = useStore(projectDocStore, (s) => s.changeDoc);
+	const handle = useStore(projectDocStore, (s) => s.handle);
+	// Route AI-applied changes through changeWith so they're tagged in the
+	// History drawer with the "AI" badge. Falls back to the bare changeDoc
+	// when the handle isn't available (read-only / non-collab paths) so the
+	// proposal can still apply, just without source attribution.
+	const aiChangeDoc = handle
+		? (fn: (d: import("#/lib/pert/types").PertDoc) => void) =>
+				changeWith(handle, "ai", fn)
+		: changeDoc;
 
 	if (!proposal) {
 		// Either applied or rejected. Show a small acknowledging stub so the
@@ -45,17 +55,17 @@ export function ProposalCard({ proposalId }: ProposalCardProps) {
 	}
 
 	const handleRow = (row: DiffRowKind) => {
-		if (!changeDoc) return;
+		if (!aiChangeDoc) return;
 		applyProposalRow(
 			proposalId,
 			row as Parameters<typeof applyProposalRow>[1],
-			changeDoc,
+			aiChangeDoc,
 		);
 	};
 
 	const handleApplyAll = () => {
-		if (!changeDoc) return;
-		applyProposal(proposalId, changeDoc);
+		if (!aiChangeDoc) return;
+		applyProposal(proposalId, aiChangeDoc);
 	};
 
 	const handleReject = () => {

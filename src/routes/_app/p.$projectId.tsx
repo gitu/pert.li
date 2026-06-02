@@ -3,6 +3,7 @@ import {
 	useDocHandle,
 	useDocument,
 } from "@automerge/automerge-repo-react-hooks";
+import { useQuery } from "@tanstack/react-query";
 import {
 	createFileRoute,
 	Link,
@@ -11,15 +12,17 @@ import {
 } from "@tanstack/react-router";
 import { useStore } from "@tanstack/react-store";
 import {
+	GitBranchIcon,
 	GridIcon,
 	ListIcon,
 	MaximizeIcon,
 	MinimizeIcon,
 	NetworkIcon,
+	PencilIcon,
 	Share2Icon,
 	TimerIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CanvasLoading } from "#/components/canvas/canvas-loading";
 import { PertCanvas } from "#/components/pert/canvas/canvas";
 import { ExportProjectButton } from "#/components/pert/exchange/export-button";
@@ -29,10 +32,21 @@ import { TaskCardList } from "#/components/pert/list/task-card-list";
 import { TaskListView } from "#/components/pert/list/task-list-view";
 import { MatrixMobile } from "#/components/pert/matrix/matrix-mobile";
 import { MatrixView } from "#/components/pert/matrix/matrix-view";
+import { BranchBanner } from "#/components/pert/merge/branch-banner";
+import { MergeDrawer } from "#/components/pert/merge/merge-drawer";
 import { ProjectCalendarSheet } from "#/components/pert/project-calendar-sheet";
 import { TimelineMobile } from "#/components/pert/timeline/timeline-mobile";
 import { TimelineView } from "#/components/pert/timeline/timeline-view";
 import { Button } from "#/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "#/components/ui/dropdown-menu";
+import { Sheet, SheetContent } from "#/components/ui/sheet";
+import { BranchProjectDialog } from "#/components/workspace/branch-project-dialog";
+import { ProjectCommentsPanel } from "#/components/workspace/project-comments-panel";
 import { ShareProjectDialog } from "#/components/workspace/share-project-dialog";
 import { authClient } from "#/lib/auth-client";
 import { useOptionalRepo } from "#/lib/automerge/provider";
@@ -41,6 +55,9 @@ import {
 	type PertProjectDoc,
 	useProjectDoc,
 } from "#/lib/automerge/use-project-doc";
+import { useActorRegistration } from "#/lib/pert/actor-registry";
+import { diffPertDoc } from "#/lib/pert/diff";
+import { snapshotAt } from "#/lib/pert/history";
 import { ensureContainerInterfaces } from "#/lib/pert/interfaces";
 import {
 	clearActiveProjectDoc,
@@ -54,6 +71,7 @@ import { useFullscreen } from "#/lib/use-fullscreen";
 import { useIsMobile } from "#/lib/use-media-query";
 import { cn } from "#/lib/utils";
 import { useViewMode } from "#/lib/view-mode";
+import { getProjectById, listProjects } from "#/server/workspace";
 
 export type ProjectView = "network" | "timeline" | "table" | "matrix";
 
@@ -193,6 +211,7 @@ function ProjectViewHeader({
 			<HeaderCalendarSheet projectId={projectId} />
 			<HeaderExportButton projectId={projectId} />
 			<HeaderShareButton projectId={projectId} />
+			<HeaderBranchMenu projectId={projectId} />
 			<Button
 				type="button"
 				size="sm"
@@ -247,6 +266,95 @@ function HeaderShareButton({ projectId }: { projectId: string }) {
 				open={open}
 				onOpenChange={setOpen}
 			/>
+		</>
+	);
+}
+
+// Branch / rename menu, plus the dialog state. The fork action needs the
+// project's title to seed a default branch name; we already load the
+// ProjectSummary down inside PertProjectPanel for the banner, but the menu
+// lives in the *header* (sibling of the panel), so we run our own thin query
+// here. Cheap and cached — both queries share the same key.
+function HeaderBranchMenu({ projectId }: { projectId: string }) {
+	const [forkOpen, setForkOpen] = useState(false);
+	const [renameOpen, setRenameOpen] = useState(false);
+	const { data: project } = useQuery({
+		queryKey: ["project", projectId],
+		queryFn: () => getProjectById({ data: { projectId } }),
+	});
+	// Count existing branches of *this* project in the workspace so the fork
+	// dialog can suggest a non-colliding default (Parent — branch 3 when 2
+	// siblings already exist). Reuses the same projects query the sidebar
+	// hydrates, so this is free.
+	const { data: workspaceProjects } = useQuery({
+		queryKey: ["projects", project?.workspaceId],
+		queryFn: () =>
+			listProjects({
+				data: project?.workspaceId ? { workspaceId: project.workspaceId } : {},
+			}),
+		enabled: !!project?.workspaceId,
+	});
+	const existingBranchCount =
+		workspaceProjects?.filter((p) => p.parentProjectId === projectId).length ??
+		0;
+
+	return (
+		<>
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						className="h-8 gap-1.5 text-xs"
+						data-testid="project-branch-menu"
+						title="Branch / rename"
+					>
+						<GitBranchIcon className="size-3.5" />
+						Branch
+					</Button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent align="end">
+					<DropdownMenuItem
+						onSelect={() => setForkOpen(true)}
+						data-testid="project-branch-action"
+						disabled={!project}
+					>
+						<GitBranchIcon className="size-3.5" />
+						Branch this plan
+					</DropdownMenuItem>
+					<DropdownMenuItem
+						onSelect={() => setRenameOpen(true)}
+						data-testid="project-rename-action"
+						disabled={!project}
+					>
+						<PencilIcon className="size-3.5" />
+						Rename / edit description
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+			{project && forkOpen && (
+				<BranchProjectDialog
+					mode="fork"
+					open={forkOpen}
+					onOpenChange={setForkOpen}
+					parent={{ id: project.id, title: project.title }}
+					existingBranchCount={existingBranchCount}
+				/>
+			)}
+			{project && renameOpen && (
+				<BranchProjectDialog
+					mode="edit"
+					open={renameOpen}
+					onOpenChange={setRenameOpen}
+					project={{
+						id: project.id,
+						title: project.title,
+						description: project.description,
+						isBranch: project.parentProjectId != null,
+					}}
+				/>
+			)}
 		</>
 	);
 }
@@ -407,15 +515,131 @@ export function PertProjectPanel({
 	const canvasChangeDoc = mode === "mobile-readonly" ? () => {} : changeDoc;
 
 	return (
-		<div className="h-full">
+		<div className="flex h-full flex-col">
 			{handle && <PresenceBroadcaster projectId={projectId} handle={handle} />}
-			<MobileOrDesktopViews
+			<ProjectBranchChrome
 				projectId={projectId}
 				doc={doc}
-				changeDoc={canvasChangeDoc}
-				view={view}
+				handle={handle ?? null}
 			/>
+			<div className="flex-1 min-h-0">
+				<MobileOrDesktopViews
+					projectId={projectId}
+					doc={doc}
+					changeDoc={canvasChangeDoc}
+					view={view}
+				/>
+			</div>
 		</div>
+	);
+}
+
+// Wraps the branch banner + merge drawer + comments sheet that the project
+// view needs to surface. Also kicks off the actor registry (writes the
+// signed-in user's identity into doc.meta.actors so History shows real names
+// instead of actor hashes).
+function ProjectBranchChrome({
+	projectId,
+	doc,
+	handle,
+}: {
+	projectId: string;
+	doc: PertProjectDoc;
+	handle: DocHandle<PertProjectDoc> | null;
+}) {
+	const { data: session } = authClient.useSession();
+	const sessionUser = session?.user
+		? {
+				id: session.user.id,
+				name: session.user.name ?? session.user.email ?? "Unknown",
+			}
+		: null;
+	useActorRegistration(handle ?? undefined, sessionUser);
+
+	const { data: project } = useQuery({
+		queryKey: ["project", projectId],
+		queryFn: () => getProjectById({ data: { projectId } }),
+	});
+
+	const { data: parent } = useQuery({
+		queryKey: ["project", project?.parentProjectId],
+		queryFn: () =>
+			project?.parentProjectId
+				? getProjectById({ data: { projectId: project.parentProjectId } })
+				: Promise.resolve(null),
+		enabled: !!project?.parentProjectId,
+	});
+
+	const [mergeOpen, setMergeOpen] = useState(false);
+	const [commentsOpen, setCommentsOpen] = useState(false);
+
+	const changeCount = useMemo(() => {
+		if (!project?.branchedFromHeads) return 0;
+		try {
+			const base = snapshotAt(doc, project.branchedFromHeads);
+			const d = diffPertDoc(base, doc);
+			return (
+				d.counts.tasksAdded +
+				d.counts.tasksRemoved +
+				d.counts.tasksChanged +
+				d.counts.depsAdded +
+				d.counts.depsRemoved +
+				d.counts.depsChanged
+			);
+		} catch {
+			return 0;
+		}
+	}, [doc, project?.branchedFromHeads]);
+
+	if (!project) return null;
+	const isBranch =
+		project.parentProjectId != null &&
+		project.branchedFromHeads != null &&
+		parent != null;
+
+	return (
+		<>
+			{isBranch && parent && project.branchedFromHeads && (
+				<BranchBanner
+					parent={{ id: parent.id, title: parent.title }}
+					branchTitle={project.title}
+					description={project.description}
+					changeCount={changeCount}
+					onOpenMerge={() => setMergeOpen(true)}
+					onOpenComments={() => setCommentsOpen(true)}
+				/>
+			)}
+			{isBranch && parent && project.branchedFromHeads && (
+				<MergeDrawer
+					open={mergeOpen}
+					onOpenChange={setMergeOpen}
+					branch={{
+						projectId: project.id,
+						title: project.title,
+						doc,
+						branchedFromHeads: project.branchedFromHeads,
+					}}
+					parent={{
+						projectId: parent.id,
+						title: parent.title,
+						automergeDocUrl: parent.automergeDocUrl as AnyDocumentId,
+					}}
+				/>
+			)}
+			{sessionUser && (
+				<Sheet open={commentsOpen} onOpenChange={setCommentsOpen}>
+					<SheetContent
+						side="right"
+						className="flex w-[420px] flex-col p-0 sm:max-w-[80vw]"
+					>
+						<ProjectCommentsPanel
+							projectId={project.id}
+							currentUserId={sessionUser.id}
+						/>
+					</SheetContent>
+				</Sheet>
+			)}
+		</>
 	);
 }
 
