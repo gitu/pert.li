@@ -18,6 +18,7 @@ vi.mock("@tanstack/ai", () => ({
 	chat: vi.fn(),
 	chatParamsFromRequest: (...args: unknown[]) =>
 		chatParamsFromRequestMock(...args),
+	maxIterations: vi.fn((max: number) => ({ max })),
 	mergeAgentTools: vi.fn(() => []),
 	toServerSentEventsResponse: vi.fn(() => new Response("ok", { status: 200 })),
 }));

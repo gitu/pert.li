@@ -5,6 +5,7 @@ import {
 	addInterfaceMutation,
 	addTaskMutation,
 	moveTaskMutation,
+	newId,
 	pinDependencyMutation,
 	removeDependencyMutation,
 	removeInterfaceMutation,
@@ -30,17 +31,140 @@ export type OpResult =
 	| { op: EditOp["op"]; index: number; ok: false; error: string };
 
 export function applyOperations(doc: PertDoc, ops: EditOp[]): OpResult[] {
-	const results: OpResult[] = [];
-	for (let i = 0; i < ops.length; i++) {
-		results.push(runOp(doc, ops[i], i));
+	// Pre-scan 1: client-provided ids that collide with entities already in
+	// the doc get remapped to fresh ids — and every reference in the batch
+	// follows the remap. The model's "phase_1" means *its* phase_1; without
+	// the remap, applying two independently-staged proposals that both say
+	// `add_task id=phase_1` silently overwrites the first one's task.
+	const remap = new Map<string, string>();
+	for (const op of ops) {
+		if (op.op === "add_task" && op.id && doc.tasksById[op.id]) {
+			remap.set(op.id, newId("task"));
+		} else if (
+			op.op === "add_dependency" &&
+			op.id &&
+			doc.dependenciesById[op.id]
+		) {
+			remap.set(op.id, newId("dep"));
+		}
 	}
+	const remapped = remap.size > 0 ? ops.map((op) => remapOp(op, remap)) : ops;
+
+	// Pre-scan 2: container ids this batch will add. add_task ops may
+	// forward-reference them as parentId (children are often emitted before
+	// their parent container).
+	const pendingContainerIds = new Set<string>();
+	for (const op of remapped) {
+		if (op.op === "add_task" && op.id && (op.kind ?? "task") === "container") {
+			pendingContainerIds.add(op.id);
+		}
+	}
+
+	const results: OpResult[] = [];
+	for (let i = 0; i < remapped.length; i++) {
+		results.push(runOp(doc, remapped[i], i, pendingContainerIds));
+	}
+
+	// Post-batch normalisation: a task whose parent op failed (or whose
+	// forward references form a cycle) would be invisible on the nested
+	// canvas. Re-root it instead so the user still sees what was added.
+	const addedTaskIds: string[] = [];
+	for (let i = 0; i < remapped.length; i++) {
+		const op = remapped[i];
+		const r = results[i];
+		if (op.op === "add_task" && r.ok && r.id) addedTaskIds.push(r.id);
+	}
+	for (const id of addedTaskIds) {
+		const task = doc.tasksById[id];
+		if (!task) continue;
+		if (hasBrokenParentChain(doc, id)) task.parentId = null;
+	}
+
 	return results;
 }
 
-function runOp(doc: PertDoc, op: EditOp, index: number): OpResult {
+// Walks parentId up from `id`; broken = a missing ancestor or a cycle.
+function hasBrokenParentChain(doc: PertDoc, id: string): boolean {
+	const seen = new Set<string>([id]);
+	let cursor = doc.tasksById[id]?.parentId ?? null;
+	while (cursor) {
+		if (seen.has(cursor)) return true;
+		const parent = doc.tasksById[cursor];
+		if (!parent) return true;
+		seen.add(cursor);
+		cursor = parent.parentId ?? null;
+	}
+	return false;
+}
+
+// Rewrites every entity-id reference in an op through the collision remap.
+// Only ids present in the map change; references to pre-existing doc entities
+// pass through untouched.
+function remapOp(op: EditOp, remap: Map<string, string>): EditOp {
+	const id = (v: string): string => remap.get(v) ?? v;
+	const idOrNull = (v: string | null | undefined) =>
+		v == null ? v : (remap.get(v) ?? v);
+	switch (op.op) {
+		case "add_task":
+			return {
+				...op,
+				id: op.id ? id(op.id) : op.id,
+				parentId: idOrNull(op.parentId),
+			};
+		case "remove_task":
+		case "set_title":
+		case "set_kind":
+		case "set_key":
+		case "set_notes":
+		case "set_estimate":
+		case "set_status":
+		case "set_progress":
+		case "set_actual_dates":
+			return { ...op, taskId: id(op.taskId) };
+		case "move_task":
+			return {
+				...op,
+				taskId: id(op.taskId),
+				parentId: op.parentId === null ? null : id(op.parentId),
+			};
+		case "add_dependency":
+			return {
+				...op,
+				id: op.id ? id(op.id) : op.id,
+				fromTaskId: id(op.fromTaskId),
+				toTaskId: id(op.toTaskId),
+			};
+		case "remove_dependency":
+		case "set_dependency":
+			return { ...op, dependencyId: id(op.dependencyId) };
+		case "pin_dependency":
+			return { ...op, dependencyId: id(op.dependencyId) };
+		case "add_interface":
+			return {
+				...op,
+				containerId: id(op.containerId),
+				taskRef: idOrNull(op.taskRef),
+			};
+		case "remove_interface":
+			return { ...op, containerId: id(op.containerId) };
+		case "set_interface":
+			return {
+				...op,
+				containerId: id(op.containerId),
+				taskRef: idOrNull(op.taskRef),
+			};
+	}
+}
+
+function runOp(
+	doc: PertDoc,
+	op: EditOp,
+	index: number,
+	pendingContainerIds: ReadonlySet<string>,
+): OpResult {
 	switch (op.op) {
 		case "add_task": {
-			const { id } = addTaskMutation(
+			const r = addTaskMutation(
 				doc,
 				{
 					title: op.title,
@@ -49,8 +173,10 @@ function runOp(doc: PertDoc, op: EditOp, index: number): OpResult {
 					estimate: op.estimate,
 				},
 				op.id,
+				{ pendingContainerIds },
 			);
-			return { op: op.op, index, ok: true, id };
+			if ("id" in r) return { op: op.op, index, ok: true, id: r.id };
+			return { op: op.op, index, ok: false, error: r.error };
 		}
 		case "remove_task": {
 			const r = removeTaskMutation(doc, { taskId: op.taskId });

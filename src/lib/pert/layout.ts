@@ -147,28 +147,73 @@ async function computeFlatLayout(
 	return positions;
 }
 
+// Buckets tasks by the parent the LAYOUT should nest them under. A task only
+// nests when its parentId resolves to an existing container; anything else —
+// dangling parentId from a half-applied AI proposal, a parent that was
+// converted to a leaf, a parentId cycle — is promoted to the root bucket so
+// every task always participates in layout. Without this, orphaned tasks got
+// no position at all AND their edges referenced nodes missing from the ELK
+// graph, which fails the entire layout pass.
+function bucketTasksByLayoutParent(doc: PertDoc): Map<TaskId | null, Task[]> {
+	const byParent = new Map<TaskId | null, Task[]>();
+	const put = (key: TaskId | null, t: Task) => {
+		const bucket = byParent.get(key);
+		if (bucket) bucket.push(t);
+		else byParent.set(key, [t]);
+	};
+	for (const t of Object.values(doc.tasksById)) {
+		const p = t.parentId ?? null;
+		const parent = p !== null ? doc.tasksById[p] : undefined;
+		put(parent && parent.kind === "container" ? p : null, t);
+	}
+	// Promote unreachable subtrees (parentId cycles) to the root. Reachability
+	// mirrors how the layout walks the buckets: from the root, descending only
+	// through containers.
+	const reachable = new Set<TaskId>();
+	const walk = (key: TaskId | null) => {
+		const queue: Array<TaskId | null> = [key];
+		while (queue.length > 0) {
+			const cur = queue.shift() as TaskId | null;
+			for (const t of byParent.get(cur) ?? []) {
+				if (reachable.has(t.id)) continue;
+				reachable.add(t.id);
+				if (t.kind === "container") queue.push(t.id);
+			}
+		}
+	};
+	walk(null);
+	for (const t of Object.values(doc.tasksById)) {
+		if (reachable.has(t.id)) continue;
+		put(null, t);
+		reachable.add(t.id);
+		if (t.kind === "container") walk(t.id);
+	}
+	return byParent;
+}
+
 async function computeHierarchicalLayout(
 	doc: PertDoc,
 	spacing: LayoutSpacing,
 	collapsed: ReadonlySet<TaskId>,
 ): Promise<LayoutResult> {
-	const tasksByParent = new Map<TaskId | null, Task[]>();
-	for (const t of Object.values(doc.tasksById)) {
-		const key = t.parentId ?? null;
-		if (!tasksByParent.has(key)) tasksByParent.set(key, []);
-		tasksByParent.get(key)?.push(t);
-	}
+	const tasksByParent = bucketTasksByLayoutParent(doc);
 
-	function buildNode(t: Task): ElkInputNode {
+	function buildNode(t: Task, ancestry: ReadonlySet<TaskId>): ElkInputNode {
 		// Collapsed containers behave like sized leaves: their children are
 		// hidden from the layout altogether, so ELK can route external edges
 		// straight to the container card.
 		if (t.kind === "container" && !collapsed.has(t.id)) {
-			const kids = tasksByParent.get(t.id) ?? [];
+			// `ancestry` guards against parentId cycles — a child that is also an
+			// ancestor would recurse forever.
+			const nextAncestry = new Set(ancestry);
+			nextAncestry.add(t.id);
+			const kids = (tasksByParent.get(t.id) ?? []).filter(
+				(k) => !nextAncestry.has(k.id),
+			);
 			return {
 				id: t.id,
 				layoutOptions: containerLayoutOptions(spacing),
-				children: kids.map(buildNode),
+				children: kids.map((k) => buildNode(k, nextAncestry)),
 			};
 		}
 		if (t.kind === "container") {
@@ -181,7 +226,10 @@ async function computeHierarchicalLayout(
 		return { id: t.id, width: NODE_WIDTH, height: NODE_HEIGHT };
 	}
 
-	const rootChildren = (tasksByParent.get(null) ?? []).map(buildNode);
+	const emptyAncestry: ReadonlySet<TaskId> = new Set();
+	const rootChildren = (tasksByParent.get(null) ?? []).map((t) =>
+		buildNode(t, emptyAncestry),
+	);
 
 	// Edges with at least one endpoint inside a collapsed container reroute
 	// to the container itself (matches the canvas projection). Edges fully
@@ -288,13 +336,9 @@ type ElkOutputNode = {
 // leaves.
 export function fallbackGridLayout(doc: PertDoc): LayoutResult {
 	const positions: LayoutResult = {};
-	const tasksByParent = new Map<TaskId | null, Task[]>();
-	for (const t of Object.values(doc.tasksById)) {
-		const key = t.parentId ?? null;
-		const bucket = tasksByParent.get(key);
-		if (bucket) bucket.push(t);
-		else tasksByParent.set(key, [t]);
-	}
+	// Same orphan-promoting bucketing as the ELK path — a task whose parent is
+	// missing or isn't a container still gets a grid slot at the root.
+	const tasksByParent = bucketTasksByLayoutParent(doc);
 
 	const colStep = NODE_WIDTH + 80;
 	const rowStep = NODE_HEIGHT + 40;
@@ -335,21 +379,30 @@ export function fallbackGridLayout(doc: PertDoc): LayoutResult {
 	// Place every container as its own region under the root grid. Sub-
 	// containers within a container nest recursively. Returns the region
 	// the container occupies (so callers can grid containers themselves).
+	// `ancestry` breaks parentId cycles.
 	function placeContainerRegion(
 		container: Task,
 		originX: number,
 		originY: number,
+		ancestry: ReadonlySet<TaskId>,
 	): Region {
 		const innerOriginX = originX + NODE_WIDTH / 2;
 		const innerOriginY = originY + rowStep / 2;
 		const leafRegion = placeLeaves(container.id, innerOriginX, innerOriginY);
 		let cursorY = innerOriginY + leafRegion.height + REGION_GAP;
 		let maxWidth = leafRegion.width;
+		const nextAncestry = new Set(ancestry);
+		nextAncestry.add(container.id);
 		const childContainers = (tasksByParent.get(container.id) ?? []).filter(
-			(t) => t.kind === "container",
+			(t) => t.kind === "container" && !nextAncestry.has(t.id),
 		);
 		for (const child of childContainers) {
-			const childRegion = placeContainerRegion(child, innerOriginX, cursorY);
+			const childRegion = placeContainerRegion(
+				child,
+				innerOriginX,
+				cursorY,
+				nextAncestry,
+			);
 			cursorY += childRegion.height + REGION_GAP;
 			if (childRegion.width > maxWidth) maxWidth = childRegion.width;
 		}
@@ -363,10 +416,11 @@ export function fallbackGridLayout(doc: PertDoc): LayoutResult {
 	// each top-level container as its own region to the right of them.
 	const rootLeafRegion = placeLeaves(null, 0, 0);
 	let cursorX = rootLeafRegion.width + REGION_GAP;
+	const emptyAncestry: ReadonlySet<TaskId> = new Set();
 	for (const container of (tasksByParent.get(null) ?? []).filter(
 		(t) => t.kind === "container",
 	)) {
-		const region = placeContainerRegion(container, cursorX, 0);
+		const region = placeContainerRegion(container, cursorX, 0, emptyAncestry);
 		cursorX += region.width + REGION_GAP;
 	}
 	return positions;

@@ -7,6 +7,7 @@ import type {
 	ProjectCalendar,
 	Task,
 	ViewState,
+	WorkPlan,
 } from "./types";
 
 const isoDate = z
@@ -141,6 +142,40 @@ export const projectCalendar: z.ZodType<ProjectCalendar> = z.object({
 	allocationMode: allocationMode.optional(),
 });
 
+export const workPlanStepStatus = z.enum([
+	"pending",
+	"in_progress",
+	"completed",
+	"failed",
+	"skipped",
+]);
+
+export const workPlanStep = z.object({
+	id: z.string().min(1),
+	title: z.string().min(1),
+	description: z.string(),
+	status: workPlanStepStatus,
+	result: z.string().optional(),
+});
+
+export const workPlanStatus = z.enum([
+	"draft",
+	"approved",
+	"executing",
+	"completed",
+	"cancelled",
+]);
+
+export const workPlan: z.ZodType<WorkPlan> = z.object({
+	id: z.string().min(1),
+	title: z.string().min(1),
+	rationale: z.string(),
+	steps: z.array(workPlanStep),
+	status: workPlanStatus,
+	createdAt: z.number(),
+	updatedAt: z.number(),
+});
+
 export const pertDoc: z.ZodType<PertDoc> = z.object({
 	schemaVersion: z.literal(1),
 	title: z.string(),
@@ -152,4 +187,5 @@ export const pertDoc: z.ZodType<PertDoc> = z.object({
 	),
 	viewsById: z.record(z.string(), viewState),
 	calendar: projectCalendar.optional(),
+	workPlan: workPlan.optional(),
 });

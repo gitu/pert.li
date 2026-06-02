@@ -338,7 +338,7 @@ export const proposeChangesTool = toolDefinition({
 			.array(editOpSchema)
 			.min(1)
 			.describe(
-				"Edit operations in the order they should apply. Each operation mirrors one of the single-task tools. You may use client-provided ids on add_task / add_dependency / add_interface to reference newly-added entities in later operations within the same batch.",
+				"Edit operations in the order they should apply. Each operation mirrors one of the single-task tools. You may use client-provided ids on add_task / add_dependency / add_interface to reference newly-added entities in later operations within the same batch. Every entry must be a REAL edit — never include placeholder or probe operations (they fail to stage and the user sees an empty proposal). Top-level tasks take parentId: null; there is no task id for the project itself.",
 			),
 	}),
 	outputSchema: z.union([
@@ -350,8 +350,199 @@ export const proposeChangesTool = toolDefinition({
 				depsAffected: z.number(),
 				operationsApplied: z.number(),
 				operationsFailed: z.number(),
+				// Operations that could NOT be staged and are excluded from the
+				// user's preview, with the reason each one failed. When this is
+				// non-empty, fix those operations and call propose_changes again —
+				// the most common causes are referencing a task id that doesn't
+				// exist (use read_project or ids returned by earlier operations)
+				// and inventing placeholder ids like "__ROOT__" or "__PROJECT__";
+				// top-level tasks take parentId: null.
+				failures: z.array(
+					z.object({
+						operationIndex: z.number(),
+						op: z.string(),
+						error: z.string(),
+					}),
+				),
 			}),
+			// Present (true) when an approved work plan is executing: the staged
+			// changes were applied to the document immediately — no user click
+			// needed. Absent when the proposal awaits the user's review.
+			autoApplied: z.boolean().optional(),
+			// Per-operation failures from the auto-apply pass (op existed in the
+			// staging preview but couldn't be applied to the live doc).
+			applyFailures: z
+				.array(z.object({ op: z.string(), error: z.string() }))
+				.optional(),
 		}),
+		z.object({ ok: z.literal(false), error: z.string() }),
+	]),
+});
+
+// ── Work plan tools ──────────────────────────────────────────────────────────
+// Plan-and-execute mode for large changes (bulk imports, restructurings).
+// The assistant drafts a structured plan of steps, the USER approves it on
+// the plan card (no chat tool can approve), and execution then runs step by
+// step with changes applying directly to the doc.
+
+const workPlanStepStatusSchema = z.enum([
+	"pending",
+	"in_progress",
+	"completed",
+	"failed",
+	"skipped",
+]);
+
+const workPlanStepInputSchema = z.object({
+	title: z
+		.string()
+		.min(1)
+		.describe("Short imperative step name, e.g. 'Create phase containers'."),
+	description: z
+		.string()
+		.min(1)
+		.describe(
+			"Everything needed to execute this step WITHOUT re-reading the source documents: the concrete tasks/containers/dependencies to create, with titles and estimates. One step should be 5–15 operations of work.",
+		),
+});
+
+const workPlanProgressSchema = z.object({
+	completed: z.number(),
+	failed: z.number(),
+	total: z.number(),
+});
+
+const workPlanSummarySchema = z.object({
+	planId: z.string(),
+	title: z.string(),
+	rationale: z.string(),
+	status: z.enum(["draft", "approved", "executing", "completed", "cancelled"]),
+	progress: workPlanProgressSchema,
+	steps: z.array(
+		z.object({
+			stepId: z.string(),
+			title: z.string(),
+			description: z.string(),
+			status: workPlanStepStatusSchema,
+			result: z.string().optional(),
+		}),
+	),
+});
+
+export const createWorkPlanTool = toolDefinition({
+	name: "create_work_plan",
+	description:
+		"Create a structured work plan (a todo list of steps) for a large multi-step change — importing an attached document, restructuring the whole project, bulk re-estimation. Each step should be 5–15 operations of work, with a description complete enough to execute later without the source document. The plan starts as a DRAFT: the user must approve it on the plan card before you may execute anything. Creating a new plan replaces any existing one.",
+	inputSchema: z.object({
+		title: z.string().min(1).max(120),
+		rationale: z
+			.string()
+			.min(1)
+			.describe("Why this plan exists — shown to the user on the plan card."),
+		steps: z.array(workPlanStepInputSchema).min(1).max(30),
+	}),
+	outputSchema: z.union([
+		z.object({ ok: z.literal(true), planId: z.string() }),
+		z.object({ ok: z.literal(false), error: z.string() }),
+	]),
+});
+
+export const updateWorkPlanTool = toolDefinition({
+	name: "update_work_plan",
+	description:
+		"Update the work plan: mark steps in_progress/completed/failed (with a result note), add steps (e.g. the user attached another document), remove or rewrite steps. Marking every step completed/skipped/failed completes the plan. Use this BEFORE and AFTER executing each step so the user sees live progress.",
+	inputSchema: z.object({
+		updateSteps: z
+			.array(
+				z.object({
+					stepId: z.string(),
+					title: z.string().optional(),
+					description: z.string().optional(),
+					status: workPlanStepStatusSchema.optional(),
+					result: z
+						.string()
+						.optional()
+						.describe(
+							"Outcome note once executed: what was created, or why it failed.",
+						),
+				}),
+			)
+			.optional(),
+		addSteps: z.array(workPlanStepInputSchema).optional(),
+		removeStepIds: z.array(z.string()).optional(),
+	}),
+	outputSchema: z.union([
+		z.object({ ok: z.literal(true), progress: workPlanProgressSchema }),
+		z.object({ ok: z.literal(false), error: z.string() }),
+	]),
+});
+
+export const getWorkPlanTool = toolDefinition({
+	name: "get_work_plan",
+	description:
+		"Read the current work plan: status (draft/approved/executing/completed/cancelled), steps with their stepIds and statuses, and progress. Call this when resuming execution to find the next pending step.",
+	inputSchema: z.object({}),
+	outputSchema: z.union([
+		z.object({ ok: z.literal(true), plan: workPlanSummarySchema }),
+		z.object({
+			ok: z.literal(false),
+			error: z.string(),
+		}),
+	]),
+});
+
+// Creates a branch (fork) of the project this chat is bound to. The client
+// handler calls the same forkProject server fn as the "Branch this plan"
+// dialog, so workspace membership and write access are enforced server-side.
+// The branch is a sibling project: same workspace, its own Automerge doc,
+// its own share links and chat history.
+export const createBranchTool = toolDefinition({
+	name: "create_branch",
+	description:
+		"Create a branch (an independent copy) of the current project. Use this when the user wants to explore an alternative plan — a what-if restructuring, a re-estimate, a descope — without touching the main plan. Returns the new branch's projectId. Changes in a branch can later be merged back via the app's Merge drawer. To continue THIS conversation inside the new branch, call move_chat_to_project with the returned projectId.",
+	inputSchema: z.object({
+		title: z
+			.string()
+			.min(1)
+			.max(120)
+			.describe(
+				"Name for the branch, e.g. 'Descope: launch without SSO'. Keep it short — it shows in the project sidebar.",
+			),
+		description: z
+			.string()
+			.max(500)
+			.optional()
+			.describe(
+				"Optional one-line description of why this branch exists. Shows as a muted second line in the sidebar.",
+			),
+	}),
+	outputSchema: z.union([
+		z.object({
+			ok: z.literal(true),
+			projectId: z.string(),
+			title: z.string(),
+		}),
+		z.object({ ok: z.literal(false), error: z.string() }),
+	]),
+});
+
+// Moves the current chat conversation to another project (typically a branch
+// created moments ago with create_branch) and navigates the app there. The
+// move happens after the current response finishes streaming so nothing is
+// cut off mid-sentence.
+export const moveChatTool = toolDefinition({
+	name: "move_chat_to_project",
+	description:
+		"Move this chat conversation to another project and navigate the app to it. Typical flow: create_branch → move_chat_to_project(projectId from the result) → keep working inside the branch. After the move, your tools operate on the target project's plan. The navigation happens when your current response finishes — tell the user the app is about to switch.",
+	inputSchema: z.object({
+		projectId: z
+			.string()
+			.describe(
+				"Target project id — e.g. the projectId returned by create_branch.",
+			),
+	}),
+	outputSchema: z.union([
+		z.object({ ok: z.literal(true), willNavigate: z.boolean() }),
 		z.object({ ok: z.literal(false), error: z.string() }),
 	]),
 });
@@ -417,5 +608,10 @@ export const CHAT_TOOL_DEFINITIONS = [
 	setInterfaceTool,
 	pinDependencyTool,
 	proposeChangesTool,
+	createWorkPlanTool,
+	updateWorkPlanTool,
+	getWorkPlanTool,
+	createBranchTool,
+	moveChatTool,
 	askChoiceTool,
 ] as const;

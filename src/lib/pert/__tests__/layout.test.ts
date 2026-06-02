@@ -1,3 +1,4 @@
+import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { computeLayout, fallbackGridLayout, NODE_WIDTH } from "../layout";
 import type { Estimate, PertDoc, Task } from "../types";
@@ -156,5 +157,121 @@ describe("fallbackGridLayout", () => {
 			expect(seen.has(key), `${id} collides at ${key}`).toBe(false);
 			seen.add(key);
 		}
+	});
+});
+
+// Orphan handling — a task whose parentId doesn't resolve to an existing
+// container (dangling reference from a half-applied AI proposal, parent
+// converted to a leaf, parentId cycle) must still be laid out. Before this
+// was fixed, orphans got no position at all and their edges referenced nodes
+// missing from the ELK graph, which failed the entire hierarchical layout.
+describe("layout with broken parent references", () => {
+	it("ELK layout places a task whose parentId is dangling", async () => {
+		const doc = createEmptyPertDoc("orphans");
+		doc.tasksById.box = task("box", { kind: "container" });
+		doc.tasksById.inside = task("inside", { parentId: "box" });
+		doc.tasksById.orphan = task("orphan", { parentId: "ghost_container" });
+		const positions = await computeLayout(doc, { forceReflow: true });
+		expect(positions.orphan).toBeDefined();
+		expect(positions.inside).toBeDefined();
+		expect(positions.box).toBeDefined();
+	});
+
+	it("ELK layout survives edges that touch an orphaned task", async () => {
+		const doc = createEmptyPertDoc("orphans");
+		doc.tasksById.box = task("box", { kind: "container" });
+		doc.tasksById.inside = task("inside", { parentId: "box" });
+		doc.tasksById.orphan = task("orphan", { parentId: "ghost_container" });
+		doc.dependenciesById.e = {
+			id: "e",
+			from: { taskId: "orphan" },
+			to: { taskId: "inside" },
+			type: "finish_to_start",
+		};
+		const positions = await computeLayout(doc, { forceReflow: true });
+		expect(positions.orphan).toBeDefined();
+		expect(positions.inside).toBeDefined();
+	});
+
+	it("ELK layout places tasks whose parent is not a container", async () => {
+		const doc = createEmptyPertDoc("orphans");
+		doc.tasksById.box = task("box", { kind: "container" });
+		doc.tasksById.leafparent = task("leafparent");
+		doc.tasksById.child = task("child", { parentId: "leafparent" });
+		const positions = await computeLayout(doc, { forceReflow: true });
+		expect(positions.child).toBeDefined();
+		expect(positions.leafparent).toBeDefined();
+	});
+
+	it("ELK layout terminates and places everything when parentIds form a cycle", async () => {
+		const doc = createEmptyPertDoc("cycle");
+		doc.tasksById.a = task("a", { kind: "container", parentId: "b" });
+		doc.tasksById.b = task("b", { kind: "container", parentId: "a" });
+		doc.tasksById.t = task("t", { parentId: "a" });
+		const positions = await computeLayout(doc, { forceReflow: true });
+		expect(positions.a).toBeDefined();
+		expect(positions.b).toBeDefined();
+		expect(positions.t).toBeDefined();
+	});
+
+	it("fallbackGridLayout places orphaned leaves", () => {
+		const doc = createEmptyPertDoc("orphans");
+		doc.tasksById.box = task("box", { kind: "container" });
+		doc.tasksById.orphan = task("orphan", { parentId: "ghost" });
+		const positions = fallbackGridLayout(doc);
+		expect(positions.orphan).toBeDefined();
+	});
+
+	it("fallbackGridLayout terminates on parentId cycles", () => {
+		const doc = createEmptyPertDoc("cycle");
+		doc.tasksById.a = task("a", { kind: "container", parentId: "b" });
+		doc.tasksById.b = task("b", { kind: "container", parentId: "a" });
+		doc.tasksById.t = task("t", { parentId: "b" });
+		const positions = fallbackGridLayout(doc);
+		expect(positions.t).toBeDefined();
+	});
+});
+
+// Property test (CLAUDE.md rule: src/lib/pert/ logic gets fast-check coverage):
+// for ANY parentId wiring — valid, dangling, non-container parents, cycles —
+// fallbackGridLayout returns a position for every non-container task.
+describe("fallbackGridLayout properties", () => {
+	const kindArb = fc.constantFrom<Task["kind"]>("task", "container");
+
+	it("every leaf task gets a position regardless of parentId validity", () => {
+		fc.assert(
+			fc.property(
+				fc.array(
+					fc.record({
+						idx: fc.integer({ min: 0, max: 11 }),
+						kind: kindArb,
+						// Parent picked from a wider id space than the tasks that
+						// exist, so dangling references and self/cyclic links occur.
+						parentIdx: fc.option(fc.integer({ min: 0, max: 15 }), {
+							nil: null,
+						}),
+					}),
+					{ minLength: 1, maxLength: 12 },
+				),
+				(specs) => {
+					const doc = createEmptyPertDoc("prop");
+					for (const spec of specs) {
+						const id = `t${spec.idx}`;
+						doc.tasksById[id] = task(id, {
+							kind: spec.kind,
+							parentId: spec.parentIdx === null ? null : `t${spec.parentIdx}`,
+						});
+					}
+					const positions = fallbackGridLayout(doc);
+					for (const t of Object.values(doc.tasksById)) {
+						if (t.kind === "container") continue;
+						expect(
+							positions[t.id],
+							`no position for ${t.id} (parentId=${t.parentId})`,
+						).toBeDefined();
+					}
+				},
+			),
+		);
 	});
 });

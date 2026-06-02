@@ -44,17 +44,53 @@ export type AddTaskArgs = {
 	estimate?: Estimate;
 };
 
+export type AddTaskOptions = {
+	// Ids an enclosing batch will create before it finishes (see
+	// applyOperations). parentId may forward-reference one of them — the AI
+	// often emits children before their parent container in the same
+	// propose_changes batch.
+	pendingContainerIds?: ReadonlySet<string>;
+};
+
 export function addTaskMutation(
 	d: PertDoc,
 	args: AddTaskArgs,
 	id: TaskId = newId("task"),
-): { id: TaskId } {
+	opts: AddTaskOptions = {},
+): { id: TaskId } | { ok: false; error: string } {
+	// Never overwrite an existing task. Client-provided ids collide when two
+	// independent proposals (e.g. two imports staged at the same time) both
+	// pick generic ids like "phase_1" — silently replacing the first task's
+	// content was how multi-import corruption happened.
+	if (d.tasksById[id]) {
+		return { ok: false, error: `task id ${id} already exists` };
+	}
+	// A dangling parentId makes the task invisible on the nested canvas (the
+	// layout only walks parents that exist), so reject unknown parents here
+	// rather than letting them in silently.
+	const parentId = args.parentId ?? null;
+	if (parentId !== null) {
+		const parent = d.tasksById[parentId];
+		if (parent) {
+			if (parent.kind !== "container") {
+				return {
+					ok: false,
+					error: `parent ${parentId} is not a container`,
+				};
+			}
+		} else if (!opts.pendingContainerIds?.has(parentId)) {
+			return {
+				ok: false,
+				error: `parent container ${parentId} not found`,
+			};
+		}
+	}
 	const kind: TaskKind = args.kind ?? "task";
 	const base: Task = {
 		id,
 		kind,
 		title: args.title,
-		parentId: args.parentId ?? null,
+		parentId,
 	};
 	if (kind === "task") {
 		base.estimate = args.estimate ?? {
@@ -276,7 +312,8 @@ export function moveTaskMutation(
 		if (!canReparent(d, args.taskId, args.parentId))
 			return {
 				ok: false,
-				error: "move would create a cycle in the hierarchy",
+				error:
+					"move would create a cycle in the hierarchy — a container cannot be moved into its own descendant. Check the parent/child direction: the CHILD's parentId points at the CONTAINER, never the other way around.",
 			};
 	}
 	task.parentId = args.parentId;

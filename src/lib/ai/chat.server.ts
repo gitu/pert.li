@@ -2,10 +2,12 @@ import { resolve } from "node:path";
 import {
 	chat,
 	chatParamsFromRequest,
+	maxIterations,
 	mergeAgentTools,
 	toServerSentEventsResponse,
 } from "@tanstack/ai";
 import dotenv from "dotenv";
+import { traceChatRequest, traceChatStream } from "#/lib/ai/chat-debug.server";
 import { toGeminiCompatibleTools } from "#/lib/ai/gemini-compat";
 import { toOpenAiCompatibleTools } from "#/lib/ai/openai-compat";
 import {
@@ -305,6 +307,17 @@ const SYSTEM_PROMPT = [
 	"  instead of resetting it. The system prompt is always added server-side",
 	"  and never stored in the browser.",
 	"",
+	"  Work plan surfaces (plan-and-execute mode) — when you create a work",
+	"  plan, two things appear:",
+	"    • A plan card inline in the conversation: title, rationale, the step",
+	"      list with status icons, and (while the plan is a draft) Approve /",
+	"      Reject buttons. Approval is the user's review gate.",
+	"    • A thin status bar above the chat input while a plan is active:",
+	"      progress (e.g. '3/10'), a Continue button that resumes execution,",
+	"      an Auto toggle (auto-continue: the chat keeps executing steps",
+	"      turn after turn until the plan finishes, a step fails, or the",
+	"      user presses Stop), and Cancel.",
+	"",
 	"  Theme — Light / Dark / System, accessible from the account menu.",
 	"  The account menu also has Edit profile, which lets the user set their",
 	"  display name; their avatar is whatever Gravatar serves for their email,",
@@ -431,6 +444,35 @@ const SYSTEM_PROMPT = [
 	"                         and Apply / Reject controls. Use this when a",
 	"                         change spans more than a handful of tasks or when",
 	"                         you re-estimate from an attached document.",
+	"  • create_work_plan   — start plan-and-execute mode: draft a structured",
+	"                         todo list of steps for a LARGE change (importing",
+	"                         an attached document, restructuring the project,",
+	"                         bulk re-estimation). Each step = 5–15 operations",
+	"                         of work. The plan renders as a card with an",
+	"                         Approve button — the USER must approve it before",
+	"                         you may execute anything. Replaces any existing",
+	"                         plan.",
+	"  • update_work_plan   — mark steps in_progress / completed / failed",
+	"                         (with a result note), add steps when the user",
+	"                         attaches new source documents, remove or rewrite",
+	"                         steps when reworking the plan.",
+	"  • get_work_plan      — read the plan and its step statuses. Call this",
+	"                         when resuming execution to find the next pending",
+	"                         step.",
+	"  • create_branch      — fork the current project into an independent",
+	"                         branch (sibling project, own canvas and chat).",
+	"                         Use when the user wants to explore a what-if",
+	"                         (restructure, descope, re-estimate) without",
+	"                         touching the main plan. Returns the branch's",
+	"                         projectId. Branch changes can be merged back",
+	"                         later via the Merge drawer.",
+	"  • move_chat_to_project — move THIS conversation to another project and",
+	"                         navigate the app there. Typical combo:",
+	"                         create_branch, then move_chat_to_project with",
+	"                         the returned projectId, then keep editing inside",
+	"                         the branch. The switch happens when your current",
+	"                         response finishes — tell the user that's about",
+	"                         to happen.",
 	"  • ask_choice         — pose a multiple-choice question. The UI renders",
 	"                         clickable chips for the options below your",
 	"                         message. The user can still type freeform.",
@@ -459,6 +501,69 @@ const SYSTEM_PROMPT = [
 	"    between those markers as the user's reference material. If the ask",
 	"    is to estimate or re-estimate against the attachment, use",
 	"    propose_changes so the user can review every estimate at once.",
+	"  • Importing structured documents — when building a plan out of an",
+	"    attached spec, emit add_task operations for parent containers BEFORE",
+	"    their children where possible, give every added entity a short",
+	"    client id (id: 'phase_1', 'task_design'), and reference those ids in",
+	"    parentId / dependency operations within the same batch. Never invent",
+	"    ids for tasks you have not added or read.",
+	"  • propose_changes must contain the REAL operations. NEVER emit",
+	"    placeholder or probe operations (set_title on 'nonexistent',",
+	"    remove_task on 'bogus', …) — they fail to stage, the user sees an",
+	"    empty proposal, and nothing gets imported.",
+	"",
+	"WORK PLAN MODE — how to handle LARGE changes (anything over ~10",
+	"operations: document imports, restructurings, bulk re-estimates):",
+	"  1. Create the plan: call create_work_plan with concrete steps. Each",
+	"     step's description must be self-contained — list the exact tasks,",
+	"     containers, estimates, and dependencies it will create, so it can",
+	"     be executed later without re-reading the attachment. Keep each step",
+	"     to 5–15 operations.",
+	"  2. STOP after creating the plan. Tell the user to review and approve",
+	"     it on the plan card. You CANNOT approve it yourself, and all edit",
+	"     tools are blocked while the plan is a draft.",
+	"  3. After the user approves: execute ONE step at a time —",
+	"       a. update_work_plan: mark the step in_progress",
+	"       b. propose_changes with that step's operations (while a plan is",
+	"          approved these apply to the document immediately — no user",
+	"          click needed). Use client ids ('phase_1') for new entities and",
+	"          reference them in later steps; they resolve across steps.",
+	"       c. update_work_plan: mark the step completed with a short result",
+	"          note (or failed with the reason).",
+	"     Then move to the next pending step. Complete as many steps as you",
+	"     can per turn; the user's Continue button (or auto-continue) resumes",
+	"     the loop in the next turn. Call get_work_plan when resuming.",
+	"  4. New attachments while a plan exists → update_work_plan to add or",
+	"     revise steps based on the new information, then continue.",
+	"  5. The user wants to rework the plan → either reset steps with",
+	"     update_work_plan, or create_work_plan again (replaces the old one)",
+	"     and wait for a fresh approval.",
+	"  Execution rules across steps:",
+	"  • Entities created in EARLIER steps already exist — reference their",
+	"    ids (call read_project if unsure); never re-add them. Re-adding the",
+	"    same client id creates a duplicate under a fresh id.",
+	"  • Hierarchy direction: the CHILD's parentId points at its container.",
+	"    Never move_task a container into one of its own descendants — that",
+	"    is a cycle and the operation fails.",
+	"  • Recovering a failed step: diagnose from the error, then set the",
+	"    step back to in_progress (update_work_plan), run the corrected",
+	"    operations, and mark it completed. Auto-continue stays paused while",
+	"    any step is failed — the user must press Continue (or you fix the",
+	"    step in the current turn).",
+	"  Small edits (a handful of operations) don't need a plan — use",
+	"  propose_changes or the individual tools directly.",
+	"  • The project itself is NOT a task: there is no '__PROJECT__' or",
+	"    '__ROOT__' id, and operations referencing them always fail.",
+	"    Top-level items take parentId: null. There is no tool to rename the",
+	"    project — suggest the project's rename dialog instead.",
+	"  • If propose_changes returns failures in its summary, fix exactly",
+	"    those operations and call it again; don't re-send operations that",
+	"    already staged successfully.",
+	"  • Branching workflow — when the user wants to try something without",
+	"    affecting the main plan: create_branch first, then (if they want to",
+	"    keep chatting about it) move_chat_to_project with the new projectId.",
+	"    Propose the actual plan edits AFTER the move so they land in the",
+	"    branch, not the original.",
 	"",
 	"Using ask_choice well:",
 	"  • Use it for branching questions during tutorials ('Ready for the",
@@ -498,6 +603,11 @@ function toProviderCompatibleTools(
 	}
 }
 
+// Tool-call iterations allowed per user turn (model round-trips). 25 covers a
+// few work-plan steps per turn with room to recover from failed operations;
+// the plan's Continue / auto-continue loop spans the rest across turns.
+const AGENT_MAX_ITERATIONS = 25;
+
 export async function handleChatRequest(request: Request): Promise<Response> {
 	// Gate every call on an authenticated session: the LLM adapter below uses
 	// server-held provider keys, so any anonymous caller would be spending the
@@ -518,6 +628,17 @@ export async function handleChatRequest(request: Request): Promise<Response> {
 	// `addToolResult(...)`, and continues the agent loop.
 	const merged = mergeAgentTools([], params.tools);
 	const tools = toProviderCompatibleTools(merged, config.provider);
+	// Trace the request + stream so tool-use failures (gateway schema
+	// rejections, malformed tool calls, run errors) are diagnosable from the
+	// server side. See chat-debug.server.ts for sinks.
+	traceChatRequest({
+		provider: config.provider,
+		model: config.model,
+		threadId: params.threadId,
+		runId: params.runId,
+		messageCount: params.messages.length,
+		toolNames: tools.map((t) => t.name),
+	});
 	const stream = chat({
 		adapter,
 		messages: params.messages,
@@ -525,8 +646,19 @@ export async function handleChatRequest(request: Request): Promise<Response> {
 		tools,
 		// Stream is the default but make it explicit so it shows up in code review.
 		stream: true,
+		// The library default is maxIterations(5) — far too low for work-plan
+		// execution, where one turn marks a step in_progress, stages+applies its
+		// operations, marks it completed, and moves on to the next step. Each
+		// iteration is one model round-trip on the operator's API budget, so the
+		// cap still bounds runaway loops.
+		agentLoopStrategy: maxIterations(AGENT_MAX_ITERATIONS),
 	});
-	return toServerSentEventsResponse(stream, {
+	const traced = traceChatStream(stream, {
+		runId: params.runId,
+		provider: config.provider,
+		model: config.model,
+	});
+	return toServerSentEventsResponse(traced, {
 		headers: {
 			"x-llm-provider": config.provider,
 			"x-llm-model": config.model,

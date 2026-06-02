@@ -1364,7 +1364,9 @@ function QuickAddDependencyRow({
 		const optimistic = Math.max(0.25, mostLikely / 2);
 		const pessimistic = mostLikely * 2;
 		changeDoc((d) => {
-			const { id: newId } = addTaskMutation(d, {
+			// Generated id + the selected task's own parent — can't collide or
+			// dangle, so the error arm is unreachable here.
+			const created = addTaskMutation(d, {
 				title: trimmed,
 				parentId: task.parentId,
 				estimate: {
@@ -1374,8 +1376,9 @@ function QuickAddDependencyRow({
 					unit: "day",
 				},
 			});
-			const fromId = direction === "successor" ? task.id : newId;
-			const toId = direction === "successor" ? newId : task.id;
+			if (!("id" in created)) return;
+			const fromId = direction === "successor" ? task.id : created.id;
+			const toId = direction === "successor" ? created.id : task.id;
 			addDependencyMutation(d, { fromTaskId: fromId, toTaskId: toId });
 		});
 		setTitle("");
