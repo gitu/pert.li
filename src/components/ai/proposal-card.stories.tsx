@@ -246,6 +246,40 @@ export const OperationsListCollapsedWhenHealthy: Story = {
 	},
 };
 
+// A client-provided id that collides with an existing task gets remapped to a
+// fresh id at staging time. The operations list shows the id the entity was
+// ACTUALLY created under (→ task_xxx) so the raw operation can be correlated
+// with the diff and the live document.
+export const RemappedIdShownInOperations: Story = {
+	args: {
+		projectId: "story-proposal-remapped-id",
+		operations: [
+			// "A" already exists in seedDoc → applyOperations remaps this add to a
+			// fresh id instead of overwriting the existing task.
+			{
+				op: "add_task",
+				id: "A",
+				title: "Imported task with colliding id",
+				estimate: { optimistic: 1, mostLikely: 2, pessimistic: 4, unit: "day" },
+			},
+		],
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByTestId(/^proposal-card-/);
+		// Expand the operations list (it's collapsed — nothing failed).
+		const opsSection = canvas.getByTestId(/^proposal-operations-/);
+		await userEvent.click(within(opsSection).getByRole("button"));
+		// The created-id indicator shows the remapped id, which differs from "A".
+		const createdId = await canvas.findByTestId(
+			"proposal-operation-created-id",
+		);
+		const text = createdId.textContent ?? "";
+		expect(text).toContain("→");
+		expect(text).not.toContain("→ A");
+	},
+};
+
 // A proposal staged for a different project than the one currently active:
 // the card renders but apply is blocked, so one chat's import can never land
 // inside another project.

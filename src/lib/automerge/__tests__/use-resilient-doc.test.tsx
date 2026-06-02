@@ -92,6 +92,31 @@ describe("useResilientDoc", () => {
 		expect(screen.getByTestId("has-handle").textContent).toBe("no");
 	});
 
+	it("clears stale doc state when documentId becomes undefined", async () => {
+		// Route/query transitions can briefly pass undefined — the hook must not
+		// keep rendering the previous document's content.
+		const repo = new Repo({ network: [] });
+		const handle = repo.create<TestDoc>({ title: "stale?" });
+		const view = render(
+			<RepoContext.Provider value={repo}>
+				<Harness documentId={handle.url} />
+			</RepoContext.Provider>,
+		);
+		await waitFor(() => {
+			expect(screen.getByTestId("title").textContent).toBe("stale?");
+		});
+		view.rerender(
+			<RepoContext.Provider value={repo}>
+				<Harness documentId={undefined} />
+			</RepoContext.Provider>,
+		);
+		await waitFor(() => {
+			expect(screen.getByTestId("state").textContent).toBe("loading");
+			expect(screen.getByTestId("title").textContent).toBe("");
+			expect(screen.getByTestId("has-handle").textContent).toBe("no");
+		});
+	});
+
 	it("recovers when the same hook instance switches between documents", async () => {
 		// The library hook poisons its module-level cache when a find gets
 		// aborted by an id switch; this exercises the equivalent flow here.

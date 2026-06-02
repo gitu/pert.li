@@ -184,8 +184,12 @@ function OperationsList({
 }: {
 	proposalId: string;
 	operations: EditOp[];
+	// Matches OpResult from apply-operations: successful add_* ops carry the
+	// id the entity was ACTUALLY created under — which differs from the op's
+	// requested id when a collision forced a remap.
 	results: Array<
-		{ index: number; ok: true } | { index: number; ok: false; error: string }
+		| { index: number; ok: true; id?: string }
+		| { index: number; ok: false; error: string }
 	>;
 	defaultOpen: boolean;
 }) {
@@ -246,6 +250,22 @@ function OperationsList({
 									<span className="break-all text-muted-foreground">
 										{describeOp(op)}
 									</span>
+									{/* The id the entity was actually created under. Shown
+									    whenever it differs from the requested one (collision
+									    remap) or when the op had no client id at all — this is
+									    what the diff rows and the live doc reference. */}
+									{!failed &&
+										result?.ok &&
+										result.id &&
+										result.id !== idOf(op) && (
+											<span
+												className="text-primary"
+												data-testid="proposal-operation-created-id"
+											>
+												{" "}
+												→ {result.id}
+											</span>
+										)}
 									{failed && (
 										<div className="text-destructive">{result.error}</div>
 									)}
@@ -257,6 +277,12 @@ function OperationsList({
 			)}
 		</div>
 	);
+}
+
+// The client-provided id of an add_* operation, if any. Used to decide
+// whether the result id is worth showing (it always is when they differ).
+function idOf(op: EditOp): string | undefined {
+	return "id" in op ? op.id : undefined;
 }
 
 // Compact one-line rendering of an operation's payload (everything except the

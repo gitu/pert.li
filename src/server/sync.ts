@@ -145,12 +145,15 @@ export default defineWebSocketHandler({
 		// becomes ready. Wait for the listener before emitting.
 		await wss.listening;
 		wss.clients.add(sock);
-		// Ordering matters here: the adapter only attaches per-socket listeners
-		// while handling the "connection" event, and the message hook below only
-		// delivers directly once the peer is in `peerSockets`. Emitting first and
-		// registering second means every message that raced in during the awaits
-		// above is still sitting in `pendingMessages` — nothing is ever emitted at
-		// a listener-less socket.
+		// This two-step order is deliberate and load-bearing:
+		//   1. emit("connection") — the adapter attaches its per-socket message
+		//      listeners synchronously inside this call.
+		//   2. peerSockets.set(...) — only now does the message hook below switch
+		//      from buffering into pendingMessages to delivering directly.
+		// Because the socket gains listeners (step 1) BEFORE direct delivery is
+		// enabled (step 2), no message can ever be emitted at a listener-less
+		// socket; everything that arrived during the awaits above is still in
+		// pendingMessages and is replayed right after.
 		wss.emit("connection", sock);
 		peerSockets.set(id, sock);
 		const queued = pendingMessages.get(id);

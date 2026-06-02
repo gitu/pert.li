@@ -49,7 +49,15 @@ export function useResilientDoc<T>(
 	// resolved value instead of a rejection, so there is nothing to poison.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: `attempt` is a retry trigger — bumping it forces a fresh find even though the body doesn't read it.
 	useEffect(() => {
-		if (!documentId) return;
+		if (!documentId) {
+			// Clear rather than return early: a caller that briefly passes
+			// undefined (route/query transitions) must not keep rendering the
+			// previous document's content.
+			setHandle(undefined);
+			setDoc(undefined);
+			setState("loading");
+			return;
+		}
 		let cancelled = false;
 		setHandle(undefined);
 		setDoc(undefined);
