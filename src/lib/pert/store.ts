@@ -87,3 +87,41 @@ export function clearActiveProjectDoc(projectId: string) {
 			: s,
 	);
 }
+
+// Task IDs this client created — via direct UI edits OR applied AI proposals,
+// both of which run through `changeDoc`. Used by the canvas to decide whether
+// to pan the camera onto a freshly-appeared task: we only follow our own (and
+// the AI's) additions, never a remote collaborator's, whose changes arrive
+// through Automerge sync and never touch `changeDoc`. Without this, every peer's
+// viewport jumps to wherever someone else just added a node.
+const locallyCreatedTaskIds = new Set<TaskId>();
+
+export function noteLocallyCreated(ids: Iterable<TaskId>) {
+	for (const id of ids) locallyCreatedTaskIds.add(id);
+}
+
+// Returns true if `id` was a local creation, removing it so the set doesn't
+// grow unboundedly. Each newly-appeared task is checked exactly once.
+export function consumeLocallyCreated(id: TaskId): boolean {
+	return locallyCreatedTaskIds.delete(id);
+}
+
+export function clearLocallyCreated() {
+	locallyCreatedTaskIds.clear();
+}
+
+// Wraps a `changeDoc` so that any task added to `tasksById` during the mutation
+// is recorded as locally originated. The diff happens inside the single
+// Automerge `change` callback, so it's synchronous and exact — keys present
+// after the mutator ran but not before are new this call.
+export function withLocalOriginTracking(changeDoc: ChangeFn): ChangeFn {
+	return (mutate) => {
+		changeDoc((d) => {
+			const before = new Set(Object.keys(d.tasksById));
+			mutate(d);
+			for (const id of Object.keys(d.tasksById)) {
+				if (!before.has(id)) noteLocallyCreated([id as TaskId]);
+			}
+		});
+	};
+}

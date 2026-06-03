@@ -48,7 +48,11 @@ import {
 	shiftDescendantsMutation,
 } from "#/lib/pert/reparent";
 import { computeSchedule, type Schedule } from "#/lib/pert/schedule";
-import { selectionStore, selectTask } from "#/lib/pert/store";
+import {
+	consumeLocallyCreated,
+	selectionStore,
+	selectTask,
+} from "#/lib/pert/store";
 import type { PertDoc, Task, TaskId } from "#/lib/pert/types";
 import { useMonteCarlo } from "#/lib/pert/use-monte-carlo";
 import { useResolvedTheme } from "#/lib/theme";
@@ -1434,24 +1438,32 @@ function useRecentlyCreatedHighlight(
 			for (const id of additions) next.add(id);
 			return next;
 		});
-		// Pan to the first new task. For multi-task batches (e.g. AI tool
-		// loops), pan to the first; the rest pulse in place. The position may
-		// still be undefined on the doc — fall back to the next animation
-		// frame so ELK/auto-layout has a chance to assign positions first.
-		const targetId = additions[0];
-		const tryPan = (attempt: number) => {
-			const t = doc.tasksById[targetId];
-			const pos = t?.layout?.position;
-			if (pos) {
-				const cx = pos.x + TASK_WIDTH / 2;
-				const cy = pos.y + TASK_HEIGHT / 2;
-				setCenter(cx, cy, { zoom: getZoom(), duration: 350 });
-				return;
-			}
-			if (attempt > 30) return;
-			window.requestAnimationFrame(() => tryPan(attempt + 1));
-		};
-		window.requestAnimationFrame(() => tryPan(0));
+		// Pan only to tasks THIS client created — UI edits and applied AI
+		// proposals both flow through `changeDoc`, which marks them local. A
+		// collaborator's addition arrives via Automerge sync and must NOT yank
+		// our viewport; it still pulses (above) for awareness, but the camera
+		// stays put. Consume the flag for every addition so the local-origin set
+		// can't grow. For multi-task batches (e.g. AI tool loops), pan to the
+		// first local one; the rest pulse in place.
+		const targetId = additions.filter(consumeLocallyCreated)[0];
+		if (targetId) {
+			// The position may still be undefined on the doc — fall back to the
+			// next animation frame so ELK/auto-layout has a chance to assign
+			// positions first.
+			const tryPan = (attempt: number) => {
+				const t = doc.tasksById[targetId];
+				const pos = t?.layout?.position;
+				if (pos) {
+					const cx = pos.x + TASK_WIDTH / 2;
+					const cy = pos.y + TASK_HEIGHT / 2;
+					setCenter(cx, cy, { zoom: getZoom(), duration: 350 });
+					return;
+				}
+				if (attempt > 30) return;
+				window.requestAnimationFrame(() => tryPan(attempt + 1));
+			};
+			window.requestAnimationFrame(() => tryPan(0));
+		}
 		// Clear the highlight after the pulse animation has played a couple
 		// of times. Keep this in sync with the CSS animation duration.
 		const timers = additions.map((id) =>

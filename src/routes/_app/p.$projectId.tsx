@@ -58,10 +58,12 @@ import { snapshotAt } from "#/lib/pert/history";
 import { ensureContainerInterfaces } from "#/lib/pert/interfaces";
 import {
 	clearActiveProjectDoc,
+	clearLocallyCreated,
 	projectDocStore,
 	selectionStore,
 	selectTask,
 	setActiveProjectDoc,
+	withLocalOriginTracking,
 } from "#/lib/pert/store";
 import { shareIdentityStore } from "#/lib/share-identity";
 import { useFullscreen } from "#/lib/use-fullscreen";
@@ -438,11 +440,20 @@ export function PertProjectPanel({
 		retry: retryDoc,
 	} = useResilientDoc<PertProjectDoc>(documentId);
 	const { mode } = useViewMode();
+	// Record task IDs this client creates (UI edits + applied AI proposals both
+	// run through this) so the canvas pans only to our own additions, not to a
+	// collaborator's. Wrap once at the source; every downstream `changeDoc`
+	// derives from this.
+	const trackedChangeDoc = useMemo(
+		() => (changeDoc ? withLocalOriginTracking(changeDoc) : changeDoc),
+		[changeDoc],
+	);
 	// Mobile-readonly suppresses every inline edit affordance by withholding
 	// `changeDoc` from the shared store. Existing consumers (TaskInspector,
 	// TaskListView, MatrixView, CalendarSheet, …) already gate on
 	// `!changeDoc`, so this single null gate flips the entire surface.
-	const effectiveChangeDoc = mode === "mobile-readonly" ? null : changeDoc;
+	const effectiveChangeDoc =
+		mode === "mobile-readonly" ? null : trackedChangeDoc;
 
 	// Phase 1/2 docs were minted with `{ title, count }` only; back-fill the
 	// Phase 3 maps on first load so the CPM engine sees a well-typed PertDoc.
@@ -506,7 +517,13 @@ export function PertProjectPanel({
 		if (!doc || needsMigration) return;
 		setActiveProjectDoc(projectId, doc, effectiveChangeDoc, handle ?? null);
 	}, [doc, effectiveChangeDoc, handle, projectId, needsMigration]);
-	useEffect(() => () => clearActiveProjectDoc(projectId), [projectId]);
+	useEffect(
+		() => () => {
+			clearActiveProjectDoc(projectId);
+			clearLocallyCreated();
+		},
+		[projectId],
+	);
 
 	if (!doc || needsMigration) {
 		// Distinguish "still loading" from "the sync server hasn't delivered
@@ -530,7 +547,8 @@ export function PertProjectPanel({
 	// no-op so mutations silently drop — the toolbar add/delete actions are
 	// already disabled via `projectDocStore.changeDoc === null` (every
 	// caller reads through `getActiveDoc()` and bails).
-	const canvasChangeDoc = mode === "mobile-readonly" ? () => {} : changeDoc;
+	const canvasChangeDoc =
+		mode === "mobile-readonly" ? () => {} : trackedChangeDoc;
 
 	return (
 		<div className="flex h-full flex-col">
