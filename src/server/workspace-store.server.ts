@@ -248,6 +248,83 @@ export async function createProjectRow(opts: {
 	});
 }
 
+// Register a client-created Automerge doc as a project row. The doc already
+// lives in the browser repo (created offline / optimistically); here we only
+// record the metadata pointing at it — we never call repo.create(). Recording
+// the row first is what lets the sync server's sharePolicy authorize the owner
+// to push the doc body (see automerge-server.server.ts).
+//
+// Idempotent on `automergeDocUrl`: a retry after a partial success (row
+// written but the response was lost) returns the existing row instead of
+// duplicating, and a second device that synced the same doc can't double-add.
+export async function registerProjectRow(opts: {
+	workspaceId: string;
+	title: string;
+	createdBy: string;
+	automergeDocUrl: string;
+	description?: string | null;
+}): Promise<{ project: ProjectSummary; alreadyRegistered: boolean }> {
+	// A row already pointing at this doc URL belongs to this user (URLs are
+	// 128-bit randoms); converge to it, or reject a cross-account collision.
+	// Returns null when no row exists yet.
+	const resolveExisting = async () => {
+		const rows = await db
+			.select(projectColumns)
+			.from(project)
+			.where(eq(project.automergeDocUrl, opts.automergeDocUrl))
+			.limit(1);
+		if (rows.length === 0) return null;
+		const row = rows[0];
+		if (row.createdBy !== opts.createdBy) {
+			throw new Error("This document is already registered to another account");
+		}
+		return {
+			project: projectRowToSummary(row),
+			alreadyRegistered: true as const,
+		};
+	};
+
+	const pre = await resolveExisting();
+	if (pre) return pre;
+
+	const id = randomUUID();
+	try {
+		await db.insert(project).values({
+			id,
+			workspaceId: opts.workspaceId,
+			title: opts.title,
+			description: opts.description?.trim() || null,
+			automergeDocUrl: opts.automergeDocUrl,
+			createdBy: opts.createdBy,
+		});
+	} catch (err) {
+		// Race: a concurrent register (another tab/device) inserted the same
+		// automerge_doc_url between the read above and this insert, tripping the
+		// UNIQUE constraint. Converge to the now-existing row instead of
+		// surfacing a unique-violation — registration stays idempotent.
+		const raced = await resolveExisting();
+		if (raced) return raced;
+		throw err;
+	}
+	const createdAt = new Date();
+	return {
+		project: projectRowToSummary({
+			id,
+			workspaceId: opts.workspaceId,
+			title: opts.title,
+			description: opts.description?.trim() || null,
+			automergeDocUrl: opts.automergeDocUrl,
+			createdAt,
+			createdBy: opts.createdBy,
+			parentProjectId: null,
+			branchedFromHeads: null,
+			branchedAt: null,
+			archivedAt: null,
+		}),
+		alreadyRegistered: false,
+	};
+}
+
 // Fork an existing project into a sibling "branch" project. Clones the
 // parent's Automerge doc (preserving history + new actor id), captures heads
 // at fork time as the merge base, and stamps system markers on both docs so

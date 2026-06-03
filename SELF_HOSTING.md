@@ -264,6 +264,29 @@ If you're looking for "smallest possible deployment," the
 ~150 MB of memory at idle. That's already close to PGLite's footprint and
 gives you a real DB you can `pg_dump`.
 
+## Progressive Web App (offline support)
+
+pert.li works offline out of the box for the lifetime of a loaded tab: the
+project canvas is backed by IndexedDB-persisted Automerge documents, the
+session falls back to a cached identity, the project list is served from a
+persisted query cache, and projects created offline are queued locally and
+registered with the server automatically on reconnect (with retry/backoff).
+
+To make the app survive a **cold start / hard reload while offline**, build the
+optional service worker, which precaches the client assets:
+
+```bash
+pnpm build:pwa   # = VITE_PWA_ENABLED=1 vite build && node scripts/generate-sw.mjs
+```
+
+This emits `sw.js` into the client output (`.output/public/`) and sets
+`VITE_PWA_ENABLED=1` so the client registers it. The service worker is
+**opt-in**: a plain `pnpm build` ships no service worker (the default), so
+deployments that don't want offline cold-start are unaffected. The worker never
+caches `/api/**` (auth) or `/sync` (the Automerge WebSocket) — those are always
+network-only. Serve `sw.js` from the site root with a short/zero cache lifetime
+so updates roll out promptly.
+
 ## Telemetry
 
 pert.li does not phone home. The app makes no outbound network calls

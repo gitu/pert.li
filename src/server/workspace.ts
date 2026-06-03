@@ -19,6 +19,7 @@ import {
 	listProjectCommentsInput,
 	listProjectsInput,
 	listSharesInput,
+	registerProjectInput,
 	resolveShareInput,
 	revokeJoinLinkInput,
 	shareIdInput,
@@ -128,6 +129,35 @@ export const createProject = createServerFn({ method: "POST" })
 			workspaceId,
 			title: data.title,
 			createdBy: session.userId,
+		});
+	});
+
+// Registers a project whose Automerge doc the client already created locally
+// (offline create / optimistic create). Same auth + workspace gating as
+// `createProject`, but records the supplied doc URL instead of creating a new
+// doc server-side. Idempotent on the doc URL (see registerProjectRow), so the
+// reconnect drain can safely retry. Returns `alreadyRegistered` so the client
+// can converge a duplicate to the canonical row without surfacing an error.
+export const registerProject = createServerFn({ method: "POST" })
+	.inputValidator(registerProjectInput)
+	.handler(async ({ data }) => {
+		const {
+			requireSession,
+			ensurePersonalWorkspace,
+			getWritableWorkspaceRole,
+			registerProjectRow,
+		} = await helpers();
+		const session = await requireSession();
+		const workspaceId =
+			data.workspaceId ??
+			(await ensurePersonalWorkspace(session.userId, session.name));
+		const role = await getWritableWorkspaceRole(session.userId, workspaceId);
+		if (!role) throw new Error("Write access to this workspace is required");
+		return registerProjectRow({
+			workspaceId,
+			title: data.title,
+			createdBy: session.userId,
+			automergeDocUrl: data.automergeDocUrl,
 		});
 	});
 

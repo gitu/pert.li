@@ -18,6 +18,28 @@ export const createProjectInput = z.object({
 
 export type CreateProjectInput = z.infer<typeof createProjectInput>;
 
+// Registers an Automerge doc that the client already created locally (offline
+// or optimistically) into a workspace as a first-class project row. Unlike
+// `createProject`, the doc is NOT created server-side — the client owns it and
+// the row just points at the supplied URL. Idempotent on `automergeDocUrl`, so
+// a retry after a dropped response converges instead of duplicating.
+export const registerProjectInput = z.object({
+	title: z.string().trim().min(1, "Title is required").max(120),
+	workspaceId: z.string().uuid().optional(),
+	// Automerge document URLs are `automerge:<base58check>`; cap the length to
+	// reject obviously malformed input before it reaches the DB.
+	automergeDocUrl: z
+		.string()
+		.trim()
+		.regex(
+			/^automerge:[1-9A-HJ-NP-Za-km-z]+$/,
+			"Invalid Automerge document URL",
+		)
+		.max(200),
+});
+
+export type RegisterProjectInput = z.infer<typeof registerProjectInput>;
+
 // Same validation as the .pert.json file the client uploads, re-checked
 // server-side so a hand-crafted POST can't poison the Automerge doc.
 export const importProjectInput = z.object({

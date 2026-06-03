@@ -13,6 +13,7 @@ import { ImportProjectDialog } from "#/components/workspace/import-project-dialo
 import { InviteMemberDialog } from "#/components/workspace/invite-member-dialog";
 import { TutorialCard } from "#/components/workspace/tutorial-card";
 import { useActiveWorkspaceId } from "#/lib/active-workspace";
+import { useMergedProjects } from "#/lib/sync/merge-projects";
 import { listMyWorkspaces, listProjects } from "#/server/workspace.ts";
 
 // Beginner-friendly tutorial CTA is prominent while the workspace is sparse
@@ -40,7 +41,12 @@ function WorkspaceHome() {
 				data: activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {},
 			}),
 	});
-	const projects = projectsQuery.data ?? [];
+	// Union server projects with offline-created ones so a project shows up the
+	// instant it's created and persists in the list while offline.
+	const projects = useMergedProjects(
+		projectsQuery.data ?? [],
+		activeWorkspaceId,
+	);
 	// Resolve the workspace independently of the projects list so a fresh
 	// (empty) workspace still wires the Invite button.
 	const workspaces = workspacesQuery.data ?? [];
@@ -49,7 +55,9 @@ function WorkspaceHome() {
 			workspaces.find((w) => w.workspaceId === activeWorkspaceId)
 				?.workspaceId) ||
 		workspaces[0]?.workspaceId ||
-		projects[0]?.workspaceId;
+		// Fall back to a *server* project's workspace — never the merged list,
+		// whose offline-created entries carry a placeholder workspaceId ("").
+		(projectsQuery.data ?? [])[0]?.workspaceId;
 	const showTutorialProminent =
 		!projectsQuery.isPending && projects.length < TUTORIAL_PROMINENT_THRESHOLD;
 
@@ -96,11 +104,11 @@ function WorkspaceHome() {
 				<h2 className="text-sm font-medium text-muted-foreground">
 					Your projects
 				</h2>
-				{projectsQuery.isPending ? (
+				{projectsQuery.isPending && projects.length === 0 ? (
 					<div className="rounded-lg border bg-card p-6 text-sm text-muted-foreground">
 						Loading projects…
 					</div>
-				) : projectsQuery.isError ? (
+				) : projectsQuery.isError && projects.length === 0 ? (
 					<div className="rounded-lg border bg-card p-6 text-sm text-destructive">
 						Couldn't load projects.{" "}
 						{projectsQuery.error instanceof Error
