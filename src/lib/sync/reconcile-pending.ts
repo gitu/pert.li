@@ -131,21 +131,33 @@ export async function processRecord(
 	}
 }
 
+// Re-entrancy guard: the periodic tick, the `online` event, the post-create
+// nudge, and the login effect can all fire close together. Overlapping drains
+// are merely wasteful (registerProject is idempotent), but skipping a
+// concurrent run avoids double in-flight requests for the same record.
+let draining = false;
+
 // Drain every eligible record once. No-op (returns 0) without a live session so
 // we don't hammer the server while signed out / offline. Records are processed
 // sequentially to avoid a thundering herd against the workspace.
 export async function reconcileOnce(deps: ReconcileDeps): Promise<number> {
 	if (!deps.hasLiveSession()) return 0;
-	await hydratePending();
-	const now = deps.now ?? Date.now;
-	let registered = 0;
-	for (const record of getPendingSnapshot()) {
-		if (record.status === "registered" || record.status === "error") continue;
-		if (record.nextRetryAt && record.nextRetryAt > now()) continue;
-		const result = await processRecord(record, deps);
-		if (result.status === "registered") registered++;
+	if (draining) return 0;
+	draining = true;
+	try {
+		await hydratePending();
+		const now = deps.now ?? Date.now;
+		let registered = 0;
+		for (const record of getPendingSnapshot()) {
+			if (record.status === "registered" || record.status === "error") continue;
+			if (record.nextRetryAt && record.nextRetryAt > now()) continue;
+			const result = await processRecord(record, deps);
+			if (result.status === "registered") registered++;
+		}
+		return registered;
+	} finally {
+		draining = false;
 	}
-	return registered;
 }
 
 // Force a single record to retry now (manual "Retry now" button): clear the

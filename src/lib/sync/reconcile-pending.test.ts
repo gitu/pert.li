@@ -173,6 +173,24 @@ describe("reconcileOnce", () => {
 		expect(register).not.toHaveBeenCalled();
 	});
 
+	it("skips a concurrent drain (re-entrancy guard) — no double register", async () => {
+		await seed("a");
+		let release!: () => void;
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		const register = vi.fn(async () => {
+			await gate;
+			return { project: summary("s"), alreadyRegistered: false };
+		});
+		const first = reconcileOnce(baseDeps({ register }));
+		// Second call while the first is still in-flight must no-op.
+		expect(await reconcileOnce(baseDeps({ register }))).toBe(0);
+		release();
+		await first;
+		expect(register).toHaveBeenCalledTimes(1);
+	});
+
 	it("registers all eligible records and skips errored ones", async () => {
 		await seed("a");
 		await seed("b");

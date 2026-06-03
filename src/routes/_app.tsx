@@ -85,7 +85,8 @@ import { ViewModeProvider } from "#/lib/view-mode";
 import { hasSeenWelcome } from "#/lib/welcome";
 import { listProjects } from "#/server/workspace.ts";
 
-// Auth-gated shell: session is resolved client-side via authClient.useSession,
+// Auth-gated shell: session is resolved client-side via useOfflineSession
+// (which layers a cached identity over Better Auth's useSession for offline),
 // so an SSR render only ever produces the "Loading…" placeholder before
 // hydration anyway. The leaves under this route (project canvas with
 // xyflow/ELK/automerge, admin) are also pure client surfaces with no SEO
