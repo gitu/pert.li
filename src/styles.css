@@ -428,9 +428,15 @@ a {
   }
 }
 
-/* A hovered canvas node paints above its siblings so hover-expanded titles
-   (task / container names un-truncate on hover) stay readable instead of
-   sliding under the neighbouring node. */
-.react-flow__node:hover {
+/* A hovered leaf / collapsed-container node paints above its siblings so
+   hover-expanded titles (task / container names un-truncate on hover) stay
+   readable instead of sliding under the neighbouring node.
+
+   Expanded containers are intentionally excluded: they wrap live child leaf
+   nodes (z-index 100). Elevating a hovered expanded container to 1000 would
+   cover its own children and trap the :hover (the frame stays topmost under
+   the pointer, so hover never releases), making the children unselectable. */
+.react-flow__node-task:hover,
+.react-flow__node-containerCollapsed:hover {
   z-index: 1000 !important;
 }

@@ -35,24 +35,36 @@ describe("getScopeKey", () => {
 });
 
 describe("readThreadIndex", () => {
-	it("seeds a single default thread when nothing is stored", () => {
+	it("returns an empty index when nothing is stored — no auto-seed", () => {
 		const idx = readThreadIndex("project:a");
-		expect(idx.threads).toHaveLength(1);
-		expect(idx.activeThreadId).toBe(idx.threads[0].id);
-		expect(idx.threads[0].title).toBe(DEFAULT_THREAD_TITLE);
+		expect(idx.threads).toEqual([]);
+		expect(idx.activeThreadId).toBeNull();
 	});
 
-	it("persists the seeded index so a second read returns the same thread id", () => {
-		const first = readThreadIndex("project:a");
-		const second = readThreadIndex("project:a");
-		expect(second.activeThreadId).toBe(first.activeThreadId);
-		expect(second.threads).toEqual(first.threads);
+	it("does not write to storage on read (reads are side-effect free)", () => {
+		readThreadIndex("project:a");
+		expect(
+			window.localStorage.getItem("pertli.chatThreads.v1.project:a"),
+		).toBeNull();
 	});
 
-	it("scopes are isolated", () => {
-		const a = readThreadIndex("project:a");
-		const b = readThreadIndex("project:b");
-		expect(a.activeThreadId).not.toBe(b.activeThreadId);
+	it("round-trips a zero-thread index", () => {
+		const empty: ThreadIndex = { activeThreadId: null, threads: [] };
+		writeThreadIndex("project:a", empty);
+		expect(readThreadIndex("project:a")).toEqual(empty);
+	});
+
+	it("scopes are isolated — writing one leaves the other empty", () => {
+		const a: ThreadIndex = {
+			activeThreadId: "ta",
+			threads: [{ id: "ta", title: "A", createdAt: 1, updatedAt: 1 }],
+		};
+		writeThreadIndex("project:a", a);
+		expect(readThreadIndex("project:a")).toEqual(a);
+		expect(readThreadIndex("project:b")).toEqual({
+			activeThreadId: null,
+			threads: [],
+		});
 	});
 
 	it("repairs an index whose activeThreadId points at a non-existent thread", () => {
@@ -68,13 +80,24 @@ describe("readThreadIndex", () => {
 		expect(idx.activeThreadId).toBe("real");
 	});
 
-	it("reseeds when the stored index is malformed", () => {
+	it("falls back to null activeThreadId when a stored index has no threads", () => {
+		writeThreadIndex("project:a", {
+			activeThreadId: "ghost",
+			threads: [],
+		});
+		const idx = readThreadIndex("project:a");
+		expect(idx.activeThreadId).toBeNull();
+		expect(idx.threads).toEqual([]);
+	});
+
+	it("returns an empty index when the stored index is malformed", () => {
 		window.localStorage.setItem(
 			"pertli.chatThreads.v1.project:a",
 			"{not json}",
 		);
 		const idx = readThreadIndex("project:a");
-		expect(idx.threads).toHaveLength(1);
+		expect(idx.threads).toEqual([]);
+		expect(idx.activeThreadId).toBeNull();
 	});
 });
 
@@ -131,7 +154,7 @@ describe("moveThreadToScope", () => {
 		expect(readThreadMessages("moving")).toEqual([{ id: "u1", role: "user" }]);
 	});
 
-	it("reseeds the source scope when the moved thread was the only one", () => {
+	it("leaves the source scope empty when the moved thread was the only one", () => {
 		const source: ThreadIndex = {
 			activeThreadId: "only",
 			threads: [{ id: "only", title: "Solo", createdAt: 1, updatedAt: 1 }],
@@ -141,20 +164,29 @@ describe("moveThreadToScope", () => {
 		moveThreadToScope("only", "project:parent", "project:branch");
 
 		const fromIndex = readThreadIndex("project:parent");
-		expect(fromIndex.threads).toHaveLength(1);
-		expect(fromIndex.threads[0].id).not.toBe("only");
-		expect(fromIndex.threads[0].title).toBe(DEFAULT_THREAD_TITLE);
+		expect(fromIndex.threads).toEqual([]);
+		expect(fromIndex.activeThreadId).toBeNull();
 	});
 
-	it("replaces the target scope's empty placeholder thread instead of keeping it", () => {
-		// Reading a fresh scope auto-seeds an empty placeholder.
-		const seeded = readThreadIndex("project:branch");
-		expect(seeded.threads).toHaveLength(1);
+	it("keeps an existing empty 'New chat' thread in the target scope (no longer treated as a dead placeholder)", () => {
+		// Auto-seeding is gone, so an empty "New chat" in the target is a
+		// user-created thread and must not be silently dropped on move.
+		writeThreadIndex("project:branch", {
+			activeThreadId: "user-empty",
+			threads: [
+				{
+					id: "user-empty",
+					title: DEFAULT_THREAD_TITLE,
+					createdAt: 1,
+					updatedAt: 1,
+				},
+			],
+		});
 
 		const source: ThreadIndex = {
 			activeThreadId: "moving",
 			threads: [
-				{ id: "moving", title: "Planning", createdAt: 1, updatedAt: 1 },
+				{ id: "moving", title: "Planning", createdAt: 2, updatedAt: 2 },
 			],
 		};
 		writeThreadIndex("project:parent", source);
@@ -162,8 +194,11 @@ describe("moveThreadToScope", () => {
 		moveThreadToScope("moving", "project:parent", "project:branch");
 
 		const toIndex = readThreadIndex("project:branch");
-		// Only the moved thread remains — the dead "New chat" placeholder is gone.
-		expect(toIndex.threads.map((t) => t.id)).toEqual(["moving"]);
+		// Both threads survive; the moved one becomes active.
+		expect(toIndex.threads.map((t) => t.id).sort()).toEqual([
+			"moving",
+			"user-empty",
+		]);
 		expect(toIndex.activeThreadId).toBe("moving");
 	});
 

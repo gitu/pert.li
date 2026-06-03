@@ -1,5 +1,5 @@
 import type { MergeChange, MergeSide } from "#/lib/pert/merge";
-import type { Dependency, Task } from "#/lib/pert/types";
+import type { Dependency, PertDoc, Task } from "#/lib/pert/types";
 import type { EditOp } from "./operations";
 
 // Translates the user's per-row resolutions in the merge drawer into a flat
@@ -27,6 +27,109 @@ export function mergeSelectionToOps(
 		appendOpsForRow(row, ops);
 	}
 	return ops;
+}
+
+// Filters a merge op batch against the doc it will be applied to, dropping ops
+// that a dropped task makes redundant or impossible. Without this, dropping a
+// task on one side produces ops that fail harmlessly at apply time — but the
+// merge drawer's all-or-nothing dry-run treats any failure as fatal and aborts
+// the whole merge. Two failure shapes show up:
+//
+//   * remove_task cascades (removeTaskMutation deletes every dep touching the
+//     task), so a sibling remove_dependency for that same dep then reports
+//     "dependency not found".
+//   * a clean-add-from-branch dependency whose endpoint task no longer exists
+//     on the target reports "task not found". Its follow-up set_dependency /
+//     pin_dependency ops (emitted when the branch dep carried lagDays or
+//     interface pins) then report "dependency not found".
+//
+// We simulate task/dep existence as the batch runs — mirroring
+// applyOperations + removeTaskMutation's cascade — and drop the ops that would
+// reference something gone. applyOperations and the AI proposal path keep their
+// strict semantics; only the merge path is sanitised. Returns the appliable
+// ops plus the ops that were dropped (for logging / counts).
+export function planMergeOps(
+	ops: EditOp[],
+	target: PertDoc,
+): { ops: EditOp[]; dropped: EditOp[] } {
+	const tasks = new Set(Object.keys(target.tasksById));
+	// Track dep endpoints so we can replay removeTaskMutation's cascade: when a
+	// task is removed, every dep touching it disappears with it.
+	const depEndpoints = new Map<string, { from?: string; to?: string }>();
+	for (const [id, dep] of Object.entries(target.dependenciesById)) {
+		depEndpoints.set(id, { from: dep.from.taskId, to: dep.to.taskId });
+	}
+	const deps = new Set(depEndpoints.keys());
+
+	const kept: EditOp[] = [];
+	const dropped: EditOp[] = [];
+	for (const op of ops) {
+		switch (op.op) {
+			case "add_task": {
+				if (op.id) tasks.add(op.id);
+				kept.push(op);
+				break;
+			}
+			case "remove_task": {
+				if (!tasks.has(op.taskId)) {
+					dropped.push(op); // Already gone — nothing to remove.
+					break;
+				}
+				tasks.delete(op.taskId);
+				// Cascade: drop every dep touching this task from the live set so a
+				// later remove_dependency for it is recognised as redundant.
+				for (const [depId, ep] of depEndpoints) {
+					if (ep.from === op.taskId || ep.to === op.taskId) {
+						deps.delete(depId);
+					}
+				}
+				kept.push(op);
+				break;
+			}
+			case "add_dependency": {
+				if (!tasks.has(op.fromTaskId) || !tasks.has(op.toTaskId)) {
+					dropped.push(op); // Endpoint was dropped — the dep can't exist.
+					break;
+				}
+				if (op.id) {
+					deps.add(op.id);
+					depEndpoints.set(op.id, {
+						from: op.fromTaskId,
+						to: op.toTaskId,
+					});
+				}
+				kept.push(op);
+				break;
+			}
+			case "remove_dependency": {
+				if (!deps.has(op.dependencyId)) {
+					dropped.push(op); // Cascaded away or already absent.
+					break;
+				}
+				deps.delete(op.dependencyId);
+				kept.push(op);
+				break;
+			}
+			case "set_dependency":
+			case "pin_dependency": {
+				// Follow-ups to an add_dependency. If the dep never made it into
+				// the live set (its add was dropped, or it was cascaded away),
+				// drop these too — otherwise they'd fail "dependency not found".
+				if (!deps.has(op.dependencyId)) {
+					dropped.push(op);
+					break;
+				}
+				kept.push(op);
+				break;
+			}
+			default:
+				// set_* (task), move_task, etc. In a merge these always target an
+				// entity that exists or is added in-batch, so they pass through
+				// untouched.
+				kept.push(op);
+		}
+	}
+	return { ops: kept, dropped };
 }
 
 function appendOpsForRow(row: ResolvedMergeChange, out: EditOp[]): void {
