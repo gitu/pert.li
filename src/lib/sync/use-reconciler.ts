@@ -26,13 +26,20 @@ export function useReconciler(): void {
 	const router = useRouter();
 	const repo = useOptionalRepo();
 
-	const live = session.source === "live";
+	// Gate reconcile on "online + we have an identity", NOT on the session
+	// being freshly "live". Better Auth's useSession doesn't refetch on the
+	// browser `online` event, so after a real offline→reconnect the source can
+	// still read "offline" (cached identity) even though the cookie is valid —
+	// keying off `source === "live"` would leave the queue stranded. The server
+	// cookie is the real authority: if it's expired, registerProject 401s and
+	// the reconcile loop parks the record on the auth-pause path.
+	const hasIdentity = session.data != null;
 
 	const deps = useMemo<ReconcileDeps>(
 		() => ({
 			register: (input) => registerProject({ data: input }),
 			hasLiveSession: () =>
-				live && (typeof navigator === "undefined" || navigator.onLine),
+				hasIdentity && (typeof navigator === "undefined" || navigator.onLine),
 			onRegistered: (record, project) => {
 				void queryClient.invalidateQueries({ queryKey: ["projects"] });
 				// If the user is still sitting on the optimistic local route, swap
@@ -57,7 +64,7 @@ export function useReconciler(): void {
 				}
 			},
 		}),
-		[live, queryClient, navigate, router, repo],
+		[hasIdentity, queryClient, navigate, router, repo],
 	);
 
 	useEffect(() => {
@@ -73,8 +80,8 @@ export function useReconciler(): void {
 		};
 	}, [deps]);
 
-	// Drain immediately when a live session appears (e.g. just after login).
+	// Drain immediately when an identity appears (e.g. just after login).
 	useEffect(() => {
-		if (live) void requestReconcile();
-	}, [live]);
+		if (hasIdentity) void requestReconcile();
+	}, [hasIdentity]);
 }
