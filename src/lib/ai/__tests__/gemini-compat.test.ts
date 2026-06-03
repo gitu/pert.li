@@ -284,8 +284,13 @@ describe("toGeminiCompatibleSchema — properties", () => {
 				type: "object",
 				properties: {
 					op: { type: "string", const: disc },
+					// Extra non-discriminator props. Exclude "op" so a generated
+					// extras key can't clobber the const discriminator with a
+					// plain { type: "string" } (which has no const to convert).
 					...Object.fromEntries(
-						Object.keys(extras).map((k) => [k, { type: "string" }]),
+						Object.keys(extras)
+							.filter((k) => k !== "op")
+							.map((k) => [k, { type: "string" }]),
 					),
 				},
 				required: ["op"],
