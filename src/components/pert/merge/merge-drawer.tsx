@@ -105,6 +105,12 @@ export function MergeDrawer({
 	const applyMutation = useMutation({
 		mutationFn: async () => {
 			if (!parentHandle || !merge) throw new Error("Parent not loaded");
+			// Archive-only path: a branch with no drift from main has no rows to
+			// merge. Skip the write entirely and fall through to onSuccess, which
+			// archives the branch when requested. Keyed strictly on "no rows" —
+			// NOT on "nothing accepted" — so a branch that still has drift the
+			// user chose to keep on main can never be archived without a merge.
+			if (merge.changes.length === 0) return 0;
 			const selection = merge.changes.map((c) => {
 				const key = rowKey(c);
 				return {
@@ -120,10 +126,12 @@ export function MergeDrawer({
 			// (endpoint gone). planMergeOps filters those out so the dry-run
 			// guard below only ever fires on genuine corruption.
 			const { ops } = planMergeOps(mergeSelectionToOps(selection), liveDoc);
-			// Archive-only path: a branch with no drift from main produces no
-			// ops. Skip the dry-run + write entirely and fall through to
-			// onSuccess, which archives the branch when requested.
-			if (ops.length === 0) return 0;
+			// There are rows but nothing landed an op — either the user accepted
+			// nothing, or every accepted change was filtered as redundant/
+			// impossible. Don't silently archive a branch that still has drift.
+			if (ops.length === 0) {
+				throw new Error("Nothing to apply — select at least one change.");
+			}
 			// Dry-run the ops on a deep clone of main first. If any fails we
 			// abort before touching the real doc, so we never land a partial
 			// merge or a misleading "merge-applied" marker.
@@ -290,11 +298,14 @@ export function MergeDrawer({
 								</Button>
 								{(() => {
 									const accepted = countAccepted(merge.changes, resolutions);
-									// A clean branch (no accepted changes) can still be
-									// archived: enable the button when archive is requested so
-									// the merge flow doubles as the archive action.
+									// A branch with NO drift from main (no rows at all) can
+									// still be archived: enable the button so the merge flow
+									// doubles as the archive action. Gated on "no rows" — not
+									// "nothing accepted" — so a conflict-only branch (which
+									// defaults every row to main → accepted === 0) stays
+									// disabled rather than offering to archive unmerged drift.
 									const archiveOnly =
-										accepted === 0 &&
+										merge.changes.length === 0 &&
 										archiveBranch &&
 										direction === "branch-to-main";
 									return (

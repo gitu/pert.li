@@ -222,6 +222,52 @@ describe("planMergeOps", () => {
 		expect(r.dropped).toEqual([]);
 	});
 
+	it("drops set_dependency/pin_dependency follow-ups orphaned by a dropped add", () => {
+		const doc = build(leaf("A", "Alpha")); // no B → the add can't land
+		const ops: EditOp[] = [
+			{ op: "add_dependency", id: "ab", fromTaskId: "A", toTaskId: "B" },
+			{ op: "set_dependency", dependencyId: "ab", lagDays: 5 },
+			{
+				op: "pin_dependency",
+				dependencyId: "ab",
+				side: "from",
+				interfaceId: "i1",
+			},
+		];
+		const r = planMergeOps(ops, doc);
+		expect(r.ops).toEqual([]);
+		expect(r.dropped.map((o) => o.op)).toEqual([
+			"add_dependency",
+			"set_dependency",
+			"pin_dependency",
+		]);
+	});
+
+	it("keeps set_dependency/pin_dependency follow-ups when the add lands", () => {
+		const doc = build(leaf("A", "Alpha"), leaf("B", "Beta"));
+		const ops: EditOp[] = [
+			{ op: "add_dependency", id: "ab", fromTaskId: "A", toTaskId: "B" },
+			{ op: "set_dependency", dependencyId: "ab", lagDays: 5 },
+		];
+		const r = planMergeOps([...ops], doc);
+		expect(r.ops).toEqual(ops);
+		expect(r.dropped).toEqual([]);
+	});
+
+	it("drops set_dependency/pin_dependency when remove_task cascades the dep", () => {
+		const doc = withDeps(
+			build(leaf("A", "Alpha"), leaf("B", "Beta")),
+			dep("ab", "A", "B"),
+		);
+		const ops: EditOp[] = [
+			{ op: "remove_task", taskId: "B" }, // cascades ab
+			{ op: "set_dependency", dependencyId: "ab", lagDays: 2 },
+		];
+		const r = planMergeOps(ops, doc);
+		expect(r.ops).toEqual([{ op: "remove_task", taskId: "B" }]);
+		expect(r.dropped.map((o) => o.op)).toEqual(["set_dependency"]);
+	});
+
 	it("returns empty for an empty batch", () => {
 		expect(planMergeOps([], build(leaf("A", "Alpha")))).toEqual({
 			ops: [],
@@ -263,6 +309,27 @@ describe("dropped-task merges", () => {
 		expect(dropped.map((o) => o.op)).toEqual(["add_dependency"]);
 		expect(results.every((r) => r.ok)).toBe(true);
 		expect(applied.tasksById.A.title).toBe("Alpha v2");
+		expect(applied.dependenciesById.ab).toBeUndefined();
+		expectNoDanglingDeps(applied);
+	});
+
+	// 2b. Same, but the branch's new dependency carried a lagDays — so the add
+	// is followed by a set_dependency. Both must drop together, or the orphaned
+	// set_dependency aborts the dry-run with "dependency not found".
+	it("drops a lagDays dependency and its set_dependency follow-up together", () => {
+		const base = build(leaf("A", "Alpha"), leaf("B", "Beta"));
+		const main = build(leaf("A", "Alpha")); // main dropped B
+		const branch = withDeps(
+			build(leaf("A", "Alpha v2"), leaf("B", "Beta")),
+			dep("ab", "A", "B", { lagDays: 5 }),
+		);
+		const { ops, dropped, applied, results } = runMerge(base, main, branch);
+		expect(ops).toEqual([{ op: "set_title", taskId: "A", title: "Alpha v2" }]);
+		expect(dropped.map((o) => o.op).sort()).toEqual([
+			"add_dependency",
+			"set_dependency",
+		]);
+		expect(results.every((r) => r.ok)).toBe(true);
 		expect(applied.dependenciesById.ab).toBeUndefined();
 		expectNoDanglingDeps(applied);
 	});

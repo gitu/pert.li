@@ -39,7 +39,9 @@ export function mergeSelectionToOps(
 //     task), so a sibling remove_dependency for that same dep then reports
 //     "dependency not found".
 //   * a clean-add-from-branch dependency whose endpoint task no longer exists
-//     on the target reports "task not found".
+//     on the target reports "task not found". Its follow-up set_dependency /
+//     pin_dependency ops (emitted when the branch dep carried lagDays or
+//     interface pins) then report "dependency not found".
 //
 // We simulate task/dep existence as the batch runs — mirroring
 // applyOperations + removeTaskMutation's cascade — and drop the ops that would
@@ -108,10 +110,22 @@ export function planMergeOps(
 				kept.push(op);
 				break;
 			}
+			case "set_dependency":
+			case "pin_dependency": {
+				// Follow-ups to an add_dependency. If the dep never made it into
+				// the live set (its add was dropped, or it was cascaded away),
+				// drop these too — otherwise they'd fail "dependency not found".
+				if (!deps.has(op.dependencyId)) {
+					dropped.push(op);
+					break;
+				}
+				kept.push(op);
+				break;
+			}
 			default:
-				// set_*, move_task, pin_dependency, etc. In a merge these always
-				// target an entity that exists or is added in-batch, so they pass
-				// through untouched.
+				// set_* (task), move_task, etc. In a merge these always target an
+				// entity that exists or is added in-batch, so they pass through
+				// untouched.
 				kept.push(op);
 		}
 	}
