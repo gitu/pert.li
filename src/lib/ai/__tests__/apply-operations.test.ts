@@ -125,6 +125,19 @@ describe("applyOperations", () => {
 			expect(doc.tasksById.child.parentId).toBeNull();
 		});
 
+		it("re-roots children whose parent gets demoted to a leaf in the same batch", () => {
+			const doc = seed();
+			applyOperations(doc, [
+				{ op: "add_task", id: "box", title: "Box", kind: "container" },
+				{ op: "add_task", id: "child", title: "Child", parentId: "box" },
+				// Later in the batch the parent stops being a container — only
+				// containers may have children, so the child must be re-rooted.
+				{ op: "set_kind", taskId: "box", kind: "task" },
+			]);
+			expect(doc.tasksById.box.kind).toBe("task");
+			expect(doc.tasksById.child.parentId).toBeNull();
+		});
+
 		it("re-roots tasks whose forward references form a parent cycle", () => {
 			const doc = seed();
 			applyOperations(doc, [

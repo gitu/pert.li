@@ -40,14 +40,33 @@ export function createWorkPlanMutation(
 	// model and may contain explicit nulls despite the schema saying string.
 	const safeTrim = (value: unknown): string =>
 		typeof value === "string" ? value.trim() : "";
+	// Validate AFTER trimming — a whitespace-only title would otherwise become
+	// "" and write a plan that violates the WorkPlan schema (and renders as a
+	// blank card).
+	const title = safeTrim(args.title);
+	if (title.length === 0) {
+		return { ok: false, error: "the work plan title must not be empty" };
+	}
+	const steps = args.steps.map((s, i) => ({
+		index: i,
+		title: safeTrim(s.title),
+		description: safeTrim(s.description),
+	}));
+	const blankStep = steps.find((s) => s.title.length === 0);
+	if (blankStep) {
+		return {
+			ok: false,
+			error: `step ${blankStep.index + 1} has an empty title — every step needs a short imperative name`,
+		};
+	}
 	const plan: WorkPlan = {
 		id: newId("plan"),
-		title: safeTrim(args.title),
+		title,
 		rationale: safeTrim(args.rationale),
-		steps: args.steps.map((s) => ({
+		steps: steps.map((s) => ({
 			id: newId("step"),
-			title: safeTrim(s.title),
-			description: safeTrim(s.description),
+			title: s.title,
+			description: s.description,
 			status: "pending" as const,
 		})),
 		status: "draft",

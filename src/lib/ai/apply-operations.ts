@@ -83,7 +83,9 @@ export function applyOperations(doc: PertDoc, ops: EditOp[]): OpResult[] {
 	return results;
 }
 
-// Walks parentId up from `id`; broken = a missing ancestor or a cycle.
+// Walks parentId up from `id`; broken = a missing ancestor, a cycle, or an
+// ancestor that isn't a container (possible when a later op in the same batch
+// demotes a parent via set_kind — only containers may have children).
 function hasBrokenParentChain(doc: PertDoc, id: string): boolean {
 	const seen = new Set<string>([id]);
 	let cursor = doc.tasksById[id]?.parentId ?? null;
@@ -91,6 +93,7 @@ function hasBrokenParentChain(doc: PertDoc, id: string): boolean {
 		if (seen.has(cursor)) return true;
 		const parent = doc.tasksById[cursor];
 		if (!parent) return true;
+		if (parent.kind !== "container") return true;
 		seen.add(cursor);
 		cursor = parent.parentId ?? null;
 	}

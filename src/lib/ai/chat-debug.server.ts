@@ -71,8 +71,21 @@ export function traceChatRequest(info: ChatRequestInfo): void {
 
 // Truncate big payloads (tool args can carry whole documents) so the log
 // stays scannable; the leading slice is what matters for diagnosis.
-function clip(value: unknown, max = 2000): string {
-	const s = typeof value === "string" ? value : JSON.stringify(value);
+// Exported for tests.
+export function clip(value: unknown, max = 2000): string {
+	let s: string | undefined;
+	if (typeof value === "string") {
+		s = value;
+	} else {
+		// Raw gateway events can contain circular references or BigInts —
+		// JSON.stringify throws on both, and a throw here would take down the
+		// chat response (this runs inside the stream wrapper), not just the log.
+		try {
+			s = JSON.stringify(value);
+		} catch {
+			s = String(value);
+		}
+	}
 	if (s === undefined) return "";
 	return s.length > max ? `${s.slice(0, max)}…[+${s.length - max} chars]` : s;
 }
@@ -137,6 +150,10 @@ export async function* traceChatStream(
 						tool: buf?.name ?? "unknown",
 						result: clip(event.content),
 					});
+					// The result is the last event for this call — free its buffer so
+					// long work-plan runs (dozens of tool calls per turn) don't
+					// accumulate every argument payload for the stream's lifetime.
+					argBuffers.delete(id);
 					break;
 				}
 				case "RUN_ERROR": {

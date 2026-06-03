@@ -39,6 +39,37 @@ describe("createWorkPlanMutation", () => {
 		expect(d.workPlan?.steps[0].id).toMatch(/^step_/);
 	});
 
+	it("rejects whitespace-only plan titles", () => {
+		const d = createEmptyPertDoc("p");
+		const res = createWorkPlanMutation(d, {
+			title: "   ",
+			rationale: "r",
+			steps: [{ title: "Step 1", description: "x" }],
+		});
+		expect(res).toEqual({
+			ok: false,
+			error: "the work plan title must not be empty",
+		});
+		expect(d.workPlan).toBeUndefined();
+	});
+
+	it("rejects steps with whitespace-only titles", () => {
+		const d = createEmptyPertDoc("p");
+		const res = createWorkPlanMutation(d, {
+			title: "Import",
+			rationale: "r",
+			steps: [
+				{ title: "Real step", description: "x" },
+				{ title: "  ", description: "y" },
+			],
+		});
+		expect(res).toMatchObject({ ok: false });
+		if ("error" in res) {
+			expect(res.error).toContain("step 2 has an empty title");
+		}
+		expect(d.workPlan).toBeUndefined();
+	});
+
 	it("rejects an empty step list", () => {
 		const d = createEmptyPertDoc("p");
 		const res = createWorkPlanMutation(d, {
