@@ -8,7 +8,7 @@ import { Button } from "#/components/ui/button";
 import { ScrollArea } from "#/components/ui/scroll-area";
 import { Sheet, SheetContent } from "#/components/ui/sheet";
 import { applyOperations } from "#/lib/ai/apply-operations";
-import { mergeSelectionToOps } from "#/lib/ai/merge-to-ops";
+import { mergeSelectionToOps, planMergeOps } from "#/lib/ai/merge-to-ops";
 import { changeWith } from "#/lib/pert/change-meta";
 import { snapshotAt } from "#/lib/pert/history";
 import {
@@ -112,12 +112,21 @@ export function MergeDrawer({
 					resolution: resolutions[key] ?? c.suggestedSide,
 				};
 			});
-			const ops = mergeSelectionToOps(selection);
+			const liveDoc = parentHandle.doc();
+			if (!liveDoc) throw new Error("Parent doc not available");
+			// Sanitise the batch against the live doc: dropping a task on one
+			// side leaves behind redundant remove_dependency ops (the task
+			// removal already cascades them) and impossible add_dependency ops
+			// (endpoint gone). planMergeOps filters those out so the dry-run
+			// guard below only ever fires on genuine corruption.
+			const { ops } = planMergeOps(mergeSelectionToOps(selection), liveDoc);
+			// Archive-only path: a branch with no drift from main produces no
+			// ops. Skip the dry-run + write entirely and fall through to
+			// onSuccess, which archives the branch when requested.
+			if (ops.length === 0) return 0;
 			// Dry-run the ops on a deep clone of main first. If any fails we
 			// abort before touching the real doc, so we never land a partial
 			// merge or a misleading "merge-applied" marker.
-			const liveDoc = parentHandle.doc();
-			if (!liveDoc) throw new Error("Parent doc not available");
 			const probe = structuredClone(liveDoc) as PertDoc;
 			const dryRun = applyOperations(probe, ops);
 			const fails = dryRun.flatMap((r) =>
@@ -279,22 +288,36 @@ export function MergeDrawer({
 								>
 									Cancel
 								</Button>
-								<Button
-									type="button"
-									size="sm"
-									onClick={() => applyMutation.mutate()}
-									disabled={
-										applyMutation.isPending ||
-										countAccepted(merge.changes, resolutions) === 0
-									}
-									data-testid="merge-apply"
-								>
-									{applyMutation.isPending
-										? "Applying…"
-										: direction === "branch-to-main"
-											? "Apply to main"
-											: "Apply to branch"}
-								</Button>
+								{(() => {
+									const accepted = countAccepted(merge.changes, resolutions);
+									// A clean branch (no accepted changes) can still be
+									// archived: enable the button when archive is requested so
+									// the merge flow doubles as the archive action.
+									const archiveOnly =
+										accepted === 0 &&
+										archiveBranch &&
+										direction === "branch-to-main";
+									return (
+										<Button
+											type="button"
+											size="sm"
+											onClick={() => applyMutation.mutate()}
+											disabled={
+												applyMutation.isPending ||
+												(accepted === 0 && !archiveOnly)
+											}
+											data-testid="merge-apply"
+										>
+											{applyMutation.isPending
+												? "Applying…"
+												: archiveOnly
+													? "Archive branch"
+													: direction === "branch-to-main"
+														? "Apply to main"
+														: "Apply to branch"}
+										</Button>
+									);
+								})()}
 							</div>
 						</footer>
 					</>
