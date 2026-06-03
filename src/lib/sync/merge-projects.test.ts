@@ -66,4 +66,28 @@ describe("mergeProjectLists", () => {
 	it("falls back to the localId before registration", () => {
 		expect(pendingToSummary(pending("l1", "doc-l1")).id).toBe("l1");
 	});
+
+	it("scopes pending to the active workspace; unassigned ones stay visible", () => {
+		const merged = mergeProjectLists(
+			[],
+			[
+				pending("a", "doc-a", { workspaceId: "ws-A" }),
+				pending("b", "doc-b", { workspaceId: "ws-B" }),
+				pending("c", "doc-c"), // no explicit workspace
+			],
+			"ws-A",
+		);
+		const ids = merged.map((p) => p.id);
+		expect(ids).toContain("a"); // matches the active workspace
+		expect(ids).toContain("c"); // unassigned → shown everywhere
+		expect(ids).not.toContain("b"); // belongs to another workspace → hidden
+	});
+
+	it("shows every pending record when no active workspace is provided", () => {
+		const merged = mergeProjectLists(
+			[],
+			[pending("a", "doc-a", { workspaceId: "ws-A" })],
+		);
+		expect(merged.map((p) => p.id)).toContain("a");
+	});
 });

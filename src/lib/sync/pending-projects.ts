@@ -8,8 +8,8 @@
 // access is guarded on `typeof indexedDB`.
 
 import type { AutomergeUrl } from "@automerge/automerge-repo";
-import { get, set } from "idb-keyval";
-import { useSyncExternalStore } from "react";
+import { del, get, set } from "idb-keyval";
+import { useEffect, useSyncExternalStore } from "react";
 import type { SyncFailureKind } from "./retry";
 
 export type PendingStatus =
@@ -156,8 +156,30 @@ export async function removePending(localId: string): Promise<void> {
 	await persist();
 }
 
+// Wipe the queue (in-memory + IndexedDB). Used by sign-out teardown so a
+// shared device doesn't leave the next user with the previous user's queued
+// project metadata.
+export async function clearPending(): Promise<void> {
+	memory = {};
+	rebuildSnapshot();
+	emit();
+	if (typeof indexedDB === "undefined") return;
+	try {
+		await del(IDB_KEY);
+	} catch {
+		// Best-effort.
+	}
+}
+
 // React binding. Returns the full queue; callers filter by status as needed.
+// Kicks off (idempotent) hydration so the queue is loaded from IndexedDB even
+// when the first subscriber is the home/sidebar list or SyncStatus — not just
+// a project route. Without this, an offline reload onto the home page would
+// show an empty list until a project route happened to mount.
 export function usePendingProjects(): PendingProject[] {
+	useEffect(() => {
+		void hydratePending();
+	}, []);
 	return useSyncExternalStore(
 		subscribePending,
 		getPendingSnapshot,

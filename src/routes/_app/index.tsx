@@ -43,7 +43,10 @@ function WorkspaceHome() {
 	});
 	// Union server projects with offline-created ones so a project shows up the
 	// instant it's created and persists in the list while offline.
-	const projects = useMergedProjects(projectsQuery.data ?? []);
+	const projects = useMergedProjects(
+		projectsQuery.data ?? [],
+		activeWorkspaceId,
+	);
 	// Resolve the workspace independently of the projects list so a fresh
 	// (empty) workspace still wires the Invite button.
 	const workspaces = workspacesQuery.data ?? [];

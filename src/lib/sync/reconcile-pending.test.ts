@@ -279,6 +279,29 @@ describe("nextWakeAt", () => {
 });
 
 describe("retryNow", () => {
+	it("re-queues without attempting (or burning attempts) when offline", async () => {
+		const rec = await seed();
+		// Park it in the error state via a terminal failure (online).
+		await processRecord(
+			rec,
+			baseDeps({
+				register: vi.fn(async () => {
+					throw Object.assign(new Error("forbidden"), { status: 403 });
+				}),
+			}),
+		);
+		expect(getPending("local-1")?.status).toBe("error");
+		// Retry while offline → re-queued, no register call, attempts untouched.
+		const register = vi.fn();
+		const result = await retryNow(
+			"local-1",
+			baseDeps({ hasLiveSession: () => false, register }),
+		);
+		expect(register).not.toHaveBeenCalled();
+		expect(result?.status).toBe("pending");
+		expect(getPending("local-1")?.attempts).toBe(0);
+	});
+
 	it("clears the error state and re-attempts immediately", async () => {
 		const rec = await seed();
 		// First push it to error via terminal failure.

@@ -92,7 +92,13 @@ export function SyncStatusView({
 	return (
 		<Popover>
 			<PopoverTrigger asChild>
-				<button type="button" data-testid="sync-status-trigger">
+				<button
+					type="button"
+					data-testid="sync-status-trigger"
+					// The label is visually hidden below the `sm` breakpoint, so name
+					// the control explicitly for assistive tech.
+					aria-label={`Sync status: ${label}`}
+				>
 					<Badge
 						variant={variant}
 						className="cursor-pointer gap-1"

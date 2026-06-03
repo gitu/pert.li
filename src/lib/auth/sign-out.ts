@@ -9,6 +9,7 @@
 import { authClient } from "#/lib/auth-client";
 import { clearQueryPersistence } from "#/lib/query/persist-config";
 import {
+	clearPending,
 	getPendingSnapshot,
 	hydratePending,
 } from "#/lib/sync/pending-projects";
@@ -64,6 +65,7 @@ export async function signOutEverywhere(
 
 	clearCachedIdentity();
 	await clearQueryPersistence();
+	await clearPending();
 	deleteAutomergeStorage();
 
 	const redirect =

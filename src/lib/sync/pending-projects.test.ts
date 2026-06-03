@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
 	__resetPendingForTests,
 	addPending,
+	clearPending,
 	findPendingByProjectId,
 	getPending,
 	getPendingSnapshot,
@@ -76,6 +77,20 @@ describe("pending-projects store", () => {
 		expect(findPendingByProjectId("local-1")?.localId).toBe("local-1");
 		expect(findPendingByProjectId("server-9")?.localId).toBe("local-1");
 		expect(findPendingByProjectId("nope")).toBeUndefined();
+	});
+
+	it("clearPending empties the whole queue and notifies once", async () => {
+		await seed("a", "2026-01-01T00:00:00.000Z");
+		await seed("b", "2026-01-02T00:00:00.000Z");
+		let calls = 0;
+		const unsub = subscribePending(() => {
+			calls++;
+		});
+		await clearPending();
+		unsub();
+		expect(getPendingSnapshot()).toEqual([]);
+		expect(getPending("a")).toBeUndefined();
+		expect(calls).toBe(1);
 	});
 
 	it("update/remove on a missing id is a no-op", async () => {

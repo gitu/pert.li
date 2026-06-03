@@ -15,6 +15,7 @@ import { Label } from "#/components/ui/label";
 import { useActiveWorkspaceId } from "#/lib/active-workspace";
 import { useOptionalRepo } from "#/lib/automerge/provider";
 import { createEmptyPertDoc } from "#/lib/pert/types";
+import { randomId } from "#/lib/random-id";
 import { addPending } from "#/lib/sync/pending-projects";
 import { requestReconcile } from "#/lib/sync/reconcile-pending";
 
@@ -48,7 +49,7 @@ export function CreateProjectDialog({
 		mutationFn: async (data: { title: string }) => {
 			if (!repo) throw new Error("Local sync repo isn't ready yet");
 			const handle = repo.create(createEmptyPertDoc(data.title));
-			const localId = crypto.randomUUID();
+			const localId = randomId();
 			await addPending({
 				localId,
 				title: data.title,

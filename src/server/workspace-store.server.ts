@@ -264,31 +264,48 @@ export async function registerProjectRow(opts: {
 	automergeDocUrl: string;
 	description?: string | null;
 }): Promise<{ project: ProjectSummary; alreadyRegistered: boolean }> {
-	const existing = await db
-		.select(projectColumns)
-		.from(project)
-		.where(eq(project.automergeDocUrl, opts.automergeDocUrl))
-		.limit(1);
-	if (existing.length > 0) {
-		const row = existing[0];
-		// Doc URLs are 128-bit randoms, so a row matching this URL was created by
-		// this user (or synced from their other device). Guard anyway: never hand
-		// back a row the caller didn't create — treat it as an unrecoverable
-		// conflict rather than leak another tenant's project.
+	// A row already pointing at this doc URL belongs to this user (URLs are
+	// 128-bit randoms); converge to it, or reject a cross-account collision.
+	// Returns null when no row exists yet.
+	const resolveExisting = async () => {
+		const rows = await db
+			.select(projectColumns)
+			.from(project)
+			.where(eq(project.automergeDocUrl, opts.automergeDocUrl))
+			.limit(1);
+		if (rows.length === 0) return null;
+		const row = rows[0];
 		if (row.createdBy !== opts.createdBy) {
 			throw new Error("This document is already registered to another account");
 		}
-		return { project: projectRowToSummary(row), alreadyRegistered: true };
-	}
+		return {
+			project: projectRowToSummary(row),
+			alreadyRegistered: true as const,
+		};
+	};
+
+	const pre = await resolveExisting();
+	if (pre) return pre;
+
 	const id = randomUUID();
-	await db.insert(project).values({
-		id,
-		workspaceId: opts.workspaceId,
-		title: opts.title,
-		description: opts.description?.trim() || null,
-		automergeDocUrl: opts.automergeDocUrl,
-		createdBy: opts.createdBy,
-	});
+	try {
+		await db.insert(project).values({
+			id,
+			workspaceId: opts.workspaceId,
+			title: opts.title,
+			description: opts.description?.trim() || null,
+			automergeDocUrl: opts.automergeDocUrl,
+			createdBy: opts.createdBy,
+		});
+	} catch (err) {
+		// Race: a concurrent register (another tab/device) inserted the same
+		// automerge_doc_url between the read above and this insert, tripping the
+		// UNIQUE constraint. Converge to the now-existing row instead of
+		// surfacing a unique-violation — registration stays idempotent.
+		const raced = await resolveExisting();
+		if (raced) return raced;
+		throw err;
+	}
 	const createdAt = new Date();
 	return {
 		project: projectRowToSummary({

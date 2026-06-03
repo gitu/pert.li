@@ -29,18 +29,34 @@ export function pendingToSummary(p: PendingProject): ProjectSummary {
 export function mergeProjectLists(
 	server: ProjectSummary[],
 	pending: PendingProject[],
+	activeWorkspaceId?: string,
 ): ProjectSummary[] {
 	const serverUrls = new Set(server.map((p) => p.automergeDocUrl));
 	const extras = pending
 		.filter((p) => !serverUrls.has(p.automergeDocUrl))
+		// Scope to the active workspace so an offline project created for one
+		// workspace doesn't leak into another's list when the user switches.
+		// Records with no explicit workspace (they'll land in the personal
+		// workspace on register) stay visible everywhere so they're never
+		// orphaned out of view.
+		.filter(
+			(p) =>
+				p.workspaceId == null ||
+				activeWorkspaceId == null ||
+				p.workspaceId === activeWorkspaceId,
+		)
 		.map(pendingToSummary);
 	// Local (newer, unsynced) entries first so a just-created project surfaces
 	// at the top.
 	return [...extras, ...server];
 }
 
-// React binding: merge a server list with the live local queue.
-export function useMergedProjects(server: ProjectSummary[]): ProjectSummary[] {
+// React binding: merge a server list with the live local queue, scoped to the
+// active workspace.
+export function useMergedProjects(
+	server: ProjectSummary[],
+	activeWorkspaceId?: string,
+): ProjectSummary[] {
 	const pending = usePendingProjects();
-	return mergeProjectLists(server, pending);
+	return mergeProjectLists(server, pending, activeWorkspaceId);
 }

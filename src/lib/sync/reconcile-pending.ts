@@ -161,7 +161,11 @@ export async function reconcileOnce(deps: ReconcileDeps): Promise<number> {
 }
 
 // Force a single record to retry now (manual "Retry now" button): clear the
-// backoff window + error state and run one attempt.
+// error/backoff state so it's eligible again. Only actually attempts when a
+// session is reachable — clicking Retry while offline just re-queues it (so we
+// don't burn attempts and march a record into the terminal error state for a
+// failure that was never going to reach the server); the reconcile loop picks
+// it up once back online.
 export async function retryNow(
 	localId: string,
 	deps: ReconcileDeps,
@@ -173,6 +177,7 @@ export async function retryNow(
 			status: "pending",
 			nextRetryAt: undefined,
 		})) ?? record;
+	if (!deps.hasLiveSession()) return cleared;
 	return processRecord({ ...cleared, nextRetryAt: undefined }, deps);
 }
 

@@ -717,8 +717,12 @@ function LeftNav({ onNewProject }: { onNewProject: () => void }) {
 	// matches; otherwise `{}`. Used to highlight the active project.
 	const params = useParams({ strict: false }) as { projectId?: string };
 	// Union the server list with offline-created projects so they appear here
-	// even before they register (or while the workspace is offline).
-	const projects = useMergedProjects(projectsQuery.data ?? []);
+	// even before they register (or while the workspace is offline), scoped to
+	// the active workspace.
+	const projects = useMergedProjects(
+		projectsQuery.data ?? [],
+		activeWorkspaceId,
+	);
 
 	return (
 		<div className="flex h-full flex-col">
