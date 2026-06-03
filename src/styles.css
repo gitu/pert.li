@@ -427,3 +427,10 @@ a {
       0 0 0 0 transparent;
   }
 }
+
+/* A hovered canvas node paints above its siblings so hover-expanded titles
+   (task / container names un-truncate on hover) stay readable instead of
+   sliding under the neighbouring node. */
+.react-flow__node:hover {
+  z-index: 1000 !important;
+}

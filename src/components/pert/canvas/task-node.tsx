@@ -148,9 +148,13 @@ function TaskNodeImpl(props: NodeProps) {
 						<>
 							<div
 								className={cn(
-									"truncate text-sm",
+									// Truncated normally; on hover the full title expands (the
+									// card grows past its min-height and overlays whatever sits
+									// below — a hovered node is z-elevated in styles.css).
+									"truncate text-sm group-hover:overflow-visible group-hover:whitespace-normal group-hover:break-words",
 									data.critical ? "font-semibold" : "font-medium",
 								)}
+								data-testid={`task-title-${props.id}`}
 							>
 								{data.title || "Untitled"}
 							</div>

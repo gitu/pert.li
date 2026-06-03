@@ -1,5 +1,6 @@
 import { fetchServerSentEvents } from "@tanstack/ai-client";
 import { useChat } from "@tanstack/ai-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useStore } from "@tanstack/react-store";
 import {
@@ -36,7 +37,8 @@ import { ScrollArea } from "#/components/ui/scroll-area";
 import { Textarea } from "#/components/ui/textarea";
 import type { ExtractedFile } from "#/lib/ai/file-extract";
 import type { EditOp } from "#/lib/ai/operations";
-import { createProposal } from "#/lib/ai/proposals-store";
+import { applyProposal, stageProposal } from "#/lib/ai/proposals-store";
+import { withToolLogging } from "#/lib/ai/tool-log";
 import {
 	addDependencyMutation,
 	addInterfaceMutation,
@@ -63,6 +65,10 @@ import {
 	addInterfaceTool,
 	addTaskTool,
 	askChoiceTool,
+	createBranchTool,
+	createWorkPlanTool,
+	getWorkPlanTool,
+	moveChatTool,
 	moveTaskTool,
 	pinDependencyTool,
 	proposeChangesTool,
@@ -80,7 +86,14 @@ import {
 	setProgressTool,
 	setStatusTool,
 	setTitleTool,
+	updateWorkPlanTool,
 } from "#/lib/ai/tools";
+import {
+	createWorkPlanMutation,
+	nextPendingStep,
+	summarizeWorkPlan,
+	updateWorkPlanMutation,
+} from "#/lib/ai/work-plan-mutators";
 import {
 	chatDock,
 	useChatDockMode,
@@ -94,6 +107,7 @@ import {
 	DEFAULT_THREAD_TITLE,
 	deriveThreadTitle,
 	getScopeKey,
+	moveThreadToScope,
 	readThreadIndex,
 	readThreadMessages,
 	type ThreadIndex,
@@ -101,13 +115,21 @@ import {
 	writeThreadIndex,
 	writeThreadMessages,
 } from "#/lib/chat-history";
+import { changeWith } from "#/lib/pert/change-meta";
 import type { ChangeFn } from "#/lib/pert/store";
 import { projectDocStore } from "#/lib/pert/store";
 import type { PertDoc } from "#/lib/pert/types";
 import { useIsMobile } from "#/lib/use-media-query";
 import { cn } from "#/lib/utils";
 import type { ProjectView } from "#/routes/_app/p.$projectId";
+import { forkProject, getProjectById } from "#/server/workspace";
 import { ChatTabs } from "./chat-tabs";
+import { UserMessage } from "./user-message";
+import {
+	CONTINUE_PLAN_MESSAGE,
+	WorkPlanCard,
+	WorkPlanStatusBar,
+} from "./work-plan-card";
 
 // Lazy-loaded so the chat-panel chunk stays free of the proposal/diff
 // machinery. Keeps the storybook static build's chunk graph simple — the
@@ -148,12 +170,23 @@ export type ChatPanelProps = {
 };
 
 // Snapshot helper — tools execute outside React render, so we read the
-// Store directly rather than via `useStore`. Returning null when no project
-// is open lets each tool surface a useful error instead of mutating a
-// stale doc.
-function getActiveDoc(): { doc: PertDoc; changeDoc: ChangeFn } | null {
-	const { doc, changeDoc } = projectDocStore.state;
-	if (!doc || !changeDoc) return null;
+// Store directly rather than via `useStore`. The chat is BOUND to the project
+// it was opened with; tools only ever act on that project's doc. If the user
+// navigated to a different project mid-conversation, the mutation is refused
+// instead of silently landing on whichever doc happens to be active (which is
+// how proposals from one chat used to end up inside another project).
+function getBoundDoc(
+	boundProjectId: string,
+): { doc: PertDoc; changeDoc: ChangeFn } | { ok: false; error: string } {
+	const { projectId, doc, changeDoc } = projectDocStore.state;
+	if (!doc || !changeDoc) return noActiveProject;
+	if (projectId !== boundProjectId) {
+		return {
+			ok: false as const,
+			error:
+				"This chat belongs to a different project than the one currently open. Ask the user to switch back to that project (or start a new chat here).",
+		};
+	}
 	return { doc, changeDoc };
 }
 
@@ -161,6 +194,68 @@ const noActiveProject = {
 	ok: false as const,
 	error: "No active project. Open one from the sidebar first.",
 };
+
+// Edit tools are blocked while a work plan awaits the user's approval. The
+// plan approval IS the review gate for plan-and-execute mode — letting a
+// model edit the doc before approval would defeat it.
+const draftPlanGate = {
+	ok: false as const,
+	error:
+		"A work plan is awaiting the user's approval. Do not make any edits until the user approves or rejects it on the plan card — you cannot approve it yourself. You may still revise the plan with update_work_plan.",
+};
+
+// Same as getBoundDoc, plus the draft-plan gate. Use for every tool that
+// MUTATES the doc; read-only tools and the work-plan tools themselves use
+// getBoundDoc directly.
+function getEditableDoc(
+	boundProjectId: string,
+): { doc: PertDoc; changeDoc: ChangeFn } | { ok: false; error: string } {
+	const active = getBoundDoc(boundProjectId);
+	if ("error" in active) return active;
+	if (active.doc.workPlan?.status === "draft") return draftPlanGate;
+	return active;
+}
+
+// Writes doc changes attributed to the AI in the History drawer. Falls back
+// to the untagged changeDoc when no handle is available (read-only paths).
+function aiWrite(fallback: ChangeFn): ChangeFn {
+	const handle = projectDocStore.state.handle;
+	if (!handle) return fallback;
+	return (fn) => changeWith(handle, "ai", fn);
+}
+
+// Auto-continue (Ralph loop) tuning. The cap bounds the number of LLM turns
+// one approval can trigger unattended; the delay gives the user a beat to hit
+// Stop/Cancel between turns.
+const AUTO_CONTINUE_CAP = 15;
+const AUTO_CONTINUE_DELAY_MS = 2000;
+
+const autoContinueStorageKey = (projectId: string) =>
+	`pertli.workPlanAutoContinue.${projectId}`;
+
+function readAutoContinuePref(projectId: string): boolean {
+	if (typeof window === "undefined") return false;
+	try {
+		return (
+			window.localStorage.getItem(autoContinueStorageKey(projectId)) === "1"
+		);
+	} catch {
+		return false;
+	}
+}
+
+function writeAutoContinuePref(projectId: string, value: boolean): void {
+	if (typeof window === "undefined") return;
+	try {
+		if (value) {
+			window.localStorage.setItem(autoContinueStorageKey(projectId), "1");
+		} else {
+			window.localStorage.removeItem(autoContinueStorageKey(projectId));
+		}
+	} catch {
+		// Storage unavailable — the toggle just won't persist across reloads.
+	}
+}
 
 // Imperative API exposed by ChatThread so the outer panel can route dock
 // pending prompts into the active thread without lifting useChat state up.
@@ -187,7 +282,7 @@ export function ChatPanel({
 	const projectId = routeParams.projectId ?? docStoreProjectId;
 	const scopeKey = getScopeKey(projectId);
 
-	if (scopeKey === null) {
+	if (scopeKey === null || !projectId) {
 		return (
 			<NoProjectChat
 				className={className}
@@ -203,6 +298,7 @@ export function ChatPanel({
 			autoSendInitial={autoSendInitial}
 			showDockControls={showDockControls}
 			scopeKey={scopeKey}
+			projectId={projectId}
 		/>
 	);
 }
@@ -245,7 +341,11 @@ function NoProjectChat({
 	);
 }
 
-type BoundChatPanelProps = ChatPanelProps & { scopeKey: string };
+type BoundChatPanelProps = ChatPanelProps & {
+	scopeKey: string;
+	// The project this chat panel (and every tool it executes) is bound to.
+	projectId: string;
+};
 
 function BoundChatPanel({
 	className,
@@ -254,6 +354,7 @@ function BoundChatPanel({
 	autoSendInitial = false,
 	showDockControls = false,
 	scopeKey,
+	projectId,
 }: BoundChatPanelProps) {
 	// Thread index for the current scope. Seeded from localStorage on first
 	// access; re-read whenever the scope changes (e.g. user opens a different
@@ -415,6 +516,55 @@ function BoundChatPanel({
 		messageCountsRef.current.set(id, count);
 	}, []);
 
+	// --- Branch / move-chat support -----------------------------------------
+	const navigate = useNavigate();
+	const queryClient = useQueryClient();
+
+	// The active thread id, readable from inside tool handlers without making
+	// the tools array depend on it (tab switches must not re-create the tools
+	// — useChat would drop the conversation).
+	const activeThreadIdRef = useRef(activeThreadId);
+	activeThreadIdRef.current = activeThreadId;
+
+	// A chat move requested by the move_chat_to_project tool. Executed only
+	// after the current stream settles so the assistant's closing message
+	// isn't cut off when the panel remounts under the target project.
+	const pendingChatMoveRef = useRef<{
+		targetProjectId: string;
+		threadId: string;
+	} | null>(null);
+
+	const flushPendingChatMove = useCallback(() => {
+		const pending = pendingChatMoveRef.current;
+		if (!pending) return;
+		pendingChatMoveRef.current = null;
+		const targetScopeKey = getScopeKey(pending.targetProjectId);
+		if (targetScopeKey) {
+			moveThreadToScope(pending.threadId, scopeKey, targetScopeKey);
+		}
+		void navigate({
+			to: "/p/$projectId",
+			params: { projectId: pending.targetProjectId },
+		});
+	}, [navigate, scopeKey]);
+
+	// --- Work-plan auto-continue (Ralph loop) preference ---------------------
+	// The toggle is a per-project UI preference; the loop itself runs inside
+	// ChatThread (which owns sendMessage / isLoading).
+	const [autoContinue, setAutoContinue] = useState(() =>
+		readAutoContinuePref(projectId),
+	);
+	useEffect(() => {
+		setAutoContinue(readAutoContinuePref(projectId));
+	}, [projectId]);
+	const onToggleAutoContinue = useCallback(
+		(next: boolean) => {
+			setAutoContinue(next);
+			writeAutoContinuePref(projectId, next);
+		},
+		[projectId],
+	);
+
 	const isThreadEmpty = useCallback((id: string) => {
 		const count = messageCountsRef.current.get(id);
 		if (count === undefined) {
@@ -426,28 +576,35 @@ function BoundChatPanel({
 		return count === 0;
 	}, []);
 
-	// Tools are stable for the lifetime of the panel — useChat re-creates the
-	// underlying client on identity changes, which would drop the chat.
+	// Tools are stable for as long as the panel stays bound to one project —
+	// useChat re-creates the underlying client on identity changes, which
+	// would drop the chat. When projectId changes the thread remounts anyway
+	// (its key is the new scope's activeThreadId), so the identity change is
+	// invisible to useChat.
 	const tools = useMemo(
 		() =>
 			[
 				readProjectTool.client(() => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					// Read-only: allowed even while a draft plan awaits approval.
+					const active = getBoundDoc(projectId);
+					if ("error" in active) return active;
 					return summarizeProject(active.doc);
 				}),
 				addTaskTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
-					let id = "";
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
+					// Surfaces validation failures (unknown parent container, id
+					// collision) back to the model instead of silently corrupting
+					// the doc.
+					let result: ReturnType<typeof addTaskMutation> = { id: "" };
 					active.changeDoc((d) => {
-						id = addTaskMutation(d, args).id;
+						result = addTaskMutation(d, args);
 					});
-					return { id };
+					return result;
 				}),
 				setEstimateTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof setEstimateMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = setEstimateMutation(d, args);
@@ -455,8 +612,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				setTitleTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof setTitleMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = setTitleMutation(d, args);
@@ -464,8 +621,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				addDependencyTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof addDependencyMutation> = { id: "" };
 					active.changeDoc((d) => {
 						result = addDependencyMutation(d, args);
@@ -473,8 +630,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				removeDependencyTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof removeDependencyMutation> = {
 						ok: true,
 					};
@@ -484,8 +641,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				removeTaskTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof removeTaskMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = removeTaskMutation(d, args);
@@ -493,8 +650,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				setKindTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof setKindMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = setKindMutation(d, args);
@@ -502,8 +659,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				setKeyTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof setKeyMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = setKeyMutation(d, args);
@@ -511,8 +668,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				setNotesTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof setNotesMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = setNotesMutation(d, args);
@@ -520,8 +677,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				moveTaskTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof moveTaskMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = moveTaskMutation(d, args);
@@ -529,8 +686,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				setStatusTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof setStatusMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = setStatusMutation(d, args);
@@ -538,8 +695,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				setProgressTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof setProgressMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = setProgressMutation(d, args);
@@ -547,8 +704,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				setActualDatesTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof setActualDatesMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = setActualDatesMutation(d, args);
@@ -556,8 +713,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				setDependencyTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof setDependencyMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = setDependencyMutation(d, args);
@@ -565,8 +722,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				addInterfaceTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof addInterfaceMutation> = { id: "" };
 					active.changeDoc((d) => {
 						result = addInterfaceMutation(d, args);
@@ -574,8 +731,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				removeInterfaceTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof removeInterfaceMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = removeInterfaceMutation(d, args);
@@ -583,8 +740,8 @@ function BoundChatPanel({
 					return result;
 				}),
 				setInterfaceTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof setInterfaceMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = setInterfaceMutation(d, args);
@@ -592,13 +749,60 @@ function BoundChatPanel({
 					return result;
 				}),
 				pinDependencyTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
 					let result: ReturnType<typeof pinDependencyMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = pinDependencyMutation(d, args);
 					});
 					return result;
+				}),
+				// Branching: forks the bound project via the same server fn as the
+				// "Branch this plan" dialog. Auth/membership checks happen there.
+				createBranchTool.client(async (args) => {
+					try {
+						const result = await forkProject({
+							data: {
+								parentProjectId: projectId,
+								title: args.title,
+								description: args.description ?? null,
+							},
+						});
+						// The sidebar's project list is cached under ["projects"].
+						void queryClient.invalidateQueries({ queryKey: ["projects"] });
+						return {
+							ok: true as const,
+							projectId: result.id,
+							title: args.title,
+						};
+					} catch (e) {
+						return {
+							ok: false as const,
+							error:
+								e instanceof Error ? e.message : "Could not create the branch",
+						};
+					}
+				}),
+				// Moving the conversation: validate the target, then queue the move.
+				// The actual localStorage re-scope + navigation runs when the stream
+				// settles (see flushPendingChatMove / onStreamSettled).
+				moveChatTool.client(async (args) => {
+					try {
+						await getProjectById({ data: { projectId: args.projectId } });
+					} catch (e) {
+						return {
+							ok: false as const,
+							error:
+								e instanceof Error
+									? e.message
+									: "Target project not found or not accessible",
+						};
+					}
+					pendingChatMoveRef.current = {
+						targetProjectId: args.projectId,
+						threadId: activeThreadIdRef.current,
+					};
+					return { ok: true as const, willNavigate: true };
 				}),
 				// ask_choice is pure UI — acknowledge immediately so the model loop
 				// continues. The chips themselves are rendered below from the message
@@ -609,21 +813,101 @@ function BoundChatPanel({
 				// a ProposalCard with the diff, and the user clicks Apply (or per-
 				// row Apply, or Reject) to commit.
 				proposeChangesTool.client((args) => {
-					const active = getActiveDoc();
-					if (!active) return noActiveProject;
-					const { proposal, summary } = createProposal(
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
+					// stageProposal refuses (ok:false) when no operation could be
+					// staged — empty proposals never render a card, and the model
+					// gets an explicit failure instead of a hollow success.
+					const staged = stageProposal(
 						active.doc,
 						args.rationale,
 						args.operations as EditOp[],
+						projectId,
 					);
+					if (!staged.ok) return staged;
+					// Plan-and-execute mode: once the user has APPROVED a work plan,
+					// step changes apply directly — the plan approval was the review.
+					// The proposal still goes through the full staging machinery
+					// (validation, id remapping, failure feedback), it just doesn't
+					// wait for a click.
+					const planStatus = active.doc.workPlan?.status;
+					if (planStatus === "approved" || planStatus === "executing") {
+						const applyResults = applyProposal(
+							staged.proposal.id,
+							aiWrite(active.changeDoc),
+						);
+						const applyFailures = applyResults.flatMap((r) =>
+							r.ok ? [] : [{ op: r.op, error: r.error }],
+						);
+						return {
+							ok: true as const,
+							proposalId: staged.proposal.id,
+							autoApplied: true,
+							summary: staged.summary,
+							applyFailures,
+						};
+					}
 					return {
 						ok: true as const,
-						proposalId: proposal.id,
-						summary,
+						proposalId: staged.proposal.id,
+						summary: staged.summary,
 					};
 				}),
-			] as const,
-		[],
+				// ── Work plan tools (plan-and-execute mode) ──────────────────────
+				createWorkPlanTool.client((args) => {
+					// Not gated by getEditableDoc: creating/revising the PLAN is how
+					// the draft state comes to exist in the first place.
+					const active = getBoundDoc(projectId);
+					if ("error" in active) return active;
+					let result:
+						| { ok: true; planId: string }
+						| { ok: false; error: string } = {
+						ok: false,
+						error: "plan was not created",
+					};
+					aiWrite(active.changeDoc)((d) => {
+						const created = createWorkPlanMutation(d, args);
+						result =
+							"planId" in created
+								? { ok: true as const, planId: created.planId }
+								: created;
+					});
+					return result;
+				}),
+				updateWorkPlanTool.client((args) => {
+					const active = getBoundDoc(projectId);
+					if ("error" in active) return active;
+					let result: ReturnType<typeof updateWorkPlanMutation> = {
+						ok: false,
+						error: "plan was not updated",
+					};
+					aiWrite(active.changeDoc)((d) => {
+						result = updateWorkPlanMutation(d, args);
+					});
+					return result;
+				}),
+				getWorkPlanTool.client(() => {
+					const active = getBoundDoc(projectId);
+					if ("error" in active) return active;
+					const plan = active.doc.workPlan;
+					if (!plan) {
+						return {
+							ok: false as const,
+							error:
+								"No work plan exists for this project. Create one with create_work_plan.",
+						};
+					}
+					return { ok: true as const, plan: summarizeWorkPlan(plan) };
+				}),
+			]
+				// Every executor gets logging + throw containment (see tool-log.ts):
+				// calls/results/errors land in the devtools console and in
+				// window.__pertliToolLog, and a handler exception becomes an
+				// ok:false result instead of killing the whole chat run.
+				.map(withToolLogging),
+		// queryClient is referentially stable; projectId is the only value that
+		// actually changes tool identity (and the thread remounts with it).
+		[projectId, queryClient],
 	);
 
 	// Imperative handle into the active ChatThread; used by the dock pending-
@@ -671,7 +955,10 @@ function BoundChatPanel({
 				isThreadEmpty={isThreadEmpty}
 			/>
 			<ChatThread
-				key={activeThreadId}
+				// Keyed by scope AND thread: moving a thread to another project (same
+				// threadId, new scope) must remount it so useChat re-initialises from
+				// the persisted transcript with tools bound to the new project.
+				key={`${scopeKey}:${activeThreadId}`}
 				threadId={activeThreadId}
 				scopeKey={scopeKey}
 				endpoint={endpoint}
@@ -682,6 +969,8 @@ function BoundChatPanel({
 				registerAPI={registerThreadAPI}
 				onAutoTitle={(derived) => onAutoTitle(activeThreadId, derived)}
 				onMessagesChanged={(count) => onMessagesChanged(activeThreadId, count)}
+				onStreamSettled={flushPendingChatMove}
+				planLoop={{ autoContinue, onToggleAutoContinue }}
 			/>
 		</div>
 	);
@@ -699,6 +988,17 @@ type ChatThreadProps = {
 	registerAPI(api: ChatThreadAPI | null): void;
 	onAutoTitle(derived: string): void;
 	onMessagesChanged(count: number): void;
+	// Called when a stream that actually ran has finished. The parent uses
+	// this to run deferred actions like moving the chat to a freshly created
+	// branch — anything that would disrupt an in-flight response.
+	onStreamSettled?(): void;
+	// Work-plan execution loop controls (plan-and-execute mode). When set, the
+	// thread renders the WorkPlanStatusBar above the input and drives the
+	// auto-continue loop.
+	planLoop?: {
+		autoContinue: boolean;
+		onToggleAutoContinue: (next: boolean) => void;
+	};
 };
 
 function ChatThread({
@@ -712,6 +1012,8 @@ function ChatThread({
 	registerAPI,
 	onAutoTitle,
 	onMessagesChanged,
+	onStreamSettled,
+	planLoop,
 }: ChatThreadProps) {
 	const connectionRef = useRef(fetchServerSentEvents(endpoint));
 
@@ -778,6 +1080,48 @@ function ChatThread({
 		}
 		persist();
 	}, [broadcaster, messages, scopeKey, threadId, isLoading]);
+
+	// Deferred-action hook + work-plan auto-continue. Declared after the
+	// persistence effect above so the transcript is written to localStorage
+	// before anything disruptive runs (navigation, the next loop turn).
+	//
+	// `hasStreamedRef` makes both behaviours fire only after a stream actually
+	// ran in this mount — never on mount itself. (Without it, reloading a page
+	// mid-plan with auto-continue enabled would immediately fire an LLM call,
+	// which is too surprising; the user clicks Continue once to resume.)
+	const hasStreamedRef = useRef(false);
+	const autoContinueCountRef = useRef(0);
+	useEffect(() => {
+		if (isLoading) {
+			hasStreamedRef.current = true;
+			return;
+		}
+		if (!hasStreamedRef.current) return;
+		onStreamSettled?.();
+
+		// --- Auto-continue (Ralph loop) ---------------------------------------
+		if (!planLoop?.autoContinue) return;
+		// Never loop on an errored turn — that's how runaway loops happen.
+		if (error) return;
+		const plan = projectDocStore.state.doc?.workPlan;
+		if (!plan) return;
+		if (plan.status !== "approved" && plan.status !== "executing") return;
+		// A failed step pauses the loop; the user reviews and continues manually.
+		if (plan.steps.some((s) => s.status === "failed")) return;
+		if (!nextPendingStep(plan)) return;
+		if (autoContinueCountRef.current >= AUTO_CONTINUE_CAP) return;
+		autoContinueCountRef.current += 1;
+		const timer = window.setTimeout(() => {
+			// Re-check at fire time — the user may have cancelled the plan or
+			// switched auto-continue off during the delay.
+			const current = projectDocStore.state.doc?.workPlan;
+			if (!current) return;
+			if (current.status !== "approved" && current.status !== "executing")
+				return;
+			void sendMessage(CONTINUE_PLAN_MESSAGE);
+		}, AUTO_CONTINUE_DELAY_MS);
+		return () => window.clearTimeout(timer);
+	}, [isLoading, onStreamSettled, planLoop?.autoContinue, error, sendMessage]);
 
 	// Auto-derive a thread title from the first user message and report message
 	// count up to the parent so the close-confirm can stay silent on empties.
@@ -961,7 +1305,13 @@ function ChatThread({
 						size="sm"
 						variant="ghost"
 						className="h-6 gap-1 px-2 text-[10px]"
-						onClick={() => stop()}
+						onClick={() => {
+							stop();
+							// Stopping a stream also pauses the work-plan auto-continue
+							// loop — otherwise the loop would immediately fire the next
+							// turn the user just tried to halt.
+							planLoop?.onToggleAutoContinue(false);
+						}}
 						data-testid="chat-stop"
 					>
 						<SquareIcon className="size-3" /> Stop
@@ -996,6 +1346,23 @@ function ChatThread({
 					prompt={pendingChoice}
 					disabled={isLoading}
 					onChoose={chooseOption}
+				/>
+			)}
+			{planLoop && (
+				// Persistent work-plan strip: progress + Continue + Auto + Cancel.
+				// Lives above the input so it never scrolls away with the messages.
+				<WorkPlanStatusBar
+					onContinue={(msg) => {
+						// A manual Continue resets the runaway-loop cap.
+						autoContinueCountRef.current = 0;
+						void sendMessage(msg);
+					}}
+					autoContinue={planLoop.autoContinue}
+					onToggleAutoContinue={(next) => {
+						if (next) autoContinueCountRef.current = 0;
+						planLoop.onToggleAutoContinue(next);
+					}}
+					busy={isLoading}
 				/>
 			)}
 			<fieldset
@@ -1427,9 +1794,11 @@ function MessageRow({ message }: { message: ChatMessage }) {
 	const text = extractMessageText(message);
 	const toolCalls = extractToolCalls(message);
 	const proposalIds = extractProposalIds(message);
+	const workPlanIds = extractWorkPlanIds(message);
 	const hasText = text.length > 0;
 	const hasTools = toolCalls.length > 0;
 	const hasProposals = proposalIds.length > 0;
+	const hasWorkPlans = workPlanIds.length > 0;
 	return (
 		<div
 			data-testid={`chat-message-${message.role}`}
@@ -1458,15 +1827,24 @@ function MessageRow({ message }: { message: ChatMessage }) {
 			>
 				{hasText ? (
 					isUser ? (
-						text
+						// Splits attached-file blocks into compact expandable chips so a
+						// dropped PDF doesn't dump its full text into the bubble.
+						<UserMessage text={text} />
 					) : (
 						<div className="prose prose-xs prose-zinc dark:prose-invert max-w-none [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0 [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-xs [&_pre]:text-[10px] [&_code]:text-[10px]">
 							<Streamdown parseIncompleteMarkdown>{text}</Streamdown>
 						</div>
 					)
-				) : !hasTools && !hasProposals ? (
+				) : !hasTools && !hasProposals && !hasWorkPlans ? (
 					<span className="italic text-muted-foreground">…thinking…</span>
 				) : null}
+				{hasWorkPlans && (
+					<div className="flex flex-col gap-1.5">
+						{workPlanIds.map((id) => (
+							<WorkPlanCard key={id} planId={id} />
+						))}
+					</div>
+				)}
 				{hasProposals && (
 					<div className="flex flex-col gap-1.5">
 						{proposalIds.map((id) => (
@@ -1671,10 +2049,15 @@ function extractToolCalls(message: ChatMessage): Array<ToolCallView> {
 				state: String(p.state ?? ""),
 			}))
 			// `ask_choice` is pure UI — the question + chips render below the
-			// chat scroller. `propose_changes` is rendered as a ProposalCard
-			// in-bubble instead of as a wrench chip. Both would be redundant
-			// alongside their custom surfaces.
-			.filter((c) => c.name !== "ask_choice" && c.name !== "propose_changes")
+			// chat scroller. `propose_changes` is rendered as a ProposalCard and
+			// `create_work_plan` as a WorkPlanCard in-bubble instead of as wrench
+			// chips. All would be redundant alongside their custom surfaces.
+			.filter(
+				(c) =>
+					c.name !== "ask_choice" &&
+					c.name !== "propose_changes" &&
+					c.name !== "create_work_plan",
+			)
 	);
 }
 
@@ -1692,6 +2075,26 @@ function extractProposalIds(message: ChatMessage): string[] {
 			const parsed = JSON.parse(content) as { proposalId?: unknown };
 			if (typeof parsed.proposalId === "string" && parsed.proposalId) {
 				ids.push(parsed.proposalId);
+			}
+		} catch {
+			// not JSON; ignore.
+		}
+	}
+	return ids;
+}
+
+// Same idea for `create_work_plan` results: a `planId` field in a tool result
+// renders an inline WorkPlanCard (the plan-and-execute mode's review surface).
+function extractWorkPlanIds(message: ChatMessage): string[] {
+	const ids: string[] = [];
+	for (const part of message.parts) {
+		if (part.type !== "tool-result") continue;
+		const content = typeof part.content === "string" ? part.content : "";
+		if (!content) continue;
+		try {
+			const parsed = JSON.parse(content) as { planId?: unknown };
+			if (typeof parsed.planId === "string" && parsed.planId) {
+				ids.push(parsed.planId);
 			}
 		} catch {
 			// not JSON; ignore.

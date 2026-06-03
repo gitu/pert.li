@@ -171,6 +171,56 @@ export type ProjectCalendar = {
 	allocationMode?: AllocationMode;
 };
 
+// ── Work plan ────────────────────────────────────────────────────────────────
+// A structured, AI-driven todo list for large multi-step changes (bulk
+// imports, restructurings). The assistant drafts it, the USER approves it
+// (the approval is the review gate — once approved, steps apply directly to
+// the doc), and then the assistant executes step by step. Living in the doc
+// makes it collaborative: everyone in the project sees the same plan and its
+// progress, and it survives reloads/devices.
+//
+// Lifecycle: draft → (user clicks Approve) → approved → executing → completed.
+// "cancelled" is reachable from any non-terminal state. Old docs predate this
+// field — always read with `doc.workPlan ?? undefined` semantics.
+
+export type WorkPlanStepStatus =
+	| "pending"
+	| "in_progress"
+	| "completed"
+	| "failed"
+	| "skipped";
+
+export type WorkPlanStep = {
+	id: string;
+	title: string;
+	// What this step should accomplish, written so it can be executed without
+	// re-reading the source documents (the chat transcript may be gone).
+	description: string;
+	status: WorkPlanStepStatus;
+	// Filled in as the step completes: what was created, or why it failed.
+	result?: string;
+};
+
+export type WorkPlanStatus =
+	| "draft"
+	| "approved"
+	| "executing"
+	| "completed"
+	| "cancelled";
+
+export type WorkPlan = {
+	id: string;
+	title: string;
+	// Why this plan exists (e.g. "Import the attached roadmap document").
+	rationale: string;
+	// Ordered list — order IS semantic here (execution sequence), which is the
+	// one case the doc shape rules allow arrays for.
+	steps: WorkPlanStep[];
+	status: WorkPlanStatus;
+	createdAt: number;
+	updatedAt: number;
+};
+
 // Doc-scoped metadata that doesn't fit anywhere else. Today it only holds the
 // actor → user registry used by the History drawer to render friendly names;
 // callers must always read with `?? {}` since old docs predate this field.
@@ -196,6 +246,9 @@ export type PertDoc = {
 	viewsById: Record<ViewId, ViewState>;
 	calendar?: ProjectCalendar;
 	meta?: DocMeta;
+	// The active AI work plan, if any. One per project — creating a new plan
+	// replaces the old one (prior plans remain in Automerge history).
+	workPlan?: WorkPlan;
 };
 
 export function createEmptyPertDoc(title: string): PertDoc {

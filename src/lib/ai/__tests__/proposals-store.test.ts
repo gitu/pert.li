@@ -8,6 +8,7 @@ import {
 	getProposal,
 	proposalsStore,
 	rejectProposal,
+	stageProposal,
 } from "../proposals-store";
 
 function seed(): PertDoc {
@@ -103,6 +104,87 @@ describe("proposals store", () => {
 			changeDoc,
 		);
 		expect(getProposal(proposal.id)).toBeNull();
+	});
+
+	it("createProposal surfaces per-operation failures so the model can self-correct", () => {
+		const live = seed();
+		const { summary } = createProposal(live, "test", [
+			// The placeholder-id pattern weaker models produce: ops referencing
+			// task ids that don't exist anywhere.
+			{ op: "set_title", taskId: "__PROJECT__", title: "Renamed" },
+			{ op: "remove_task", taskId: "bogus" },
+			// And one valid op so we verify failures only lists the broken ones.
+			{ op: "set_title", taskId: "A", title: "Alpha v2" },
+		]);
+		expect(summary.operationsApplied).toBe(1);
+		expect(summary.operationsFailed).toBe(2);
+		expect(summary.failures).toEqual([
+			{
+				operationIndex: 0,
+				op: "set_title",
+				error: "task __PROJECT__ not found",
+			},
+			{ operationIndex: 1, op: "remove_task", error: "task bogus not found" },
+		]);
+	});
+
+	it("createProposal reports no failures for a fully-valid batch", () => {
+		const live = seed();
+		const { summary } = createProposal(live, "test", [
+			{ op: "set_title", taskId: "A", title: "Alpha v2" },
+		]);
+		expect(summary.failures).toEqual([]);
+	});
+
+	it("stageProposal refuses when no operation could be staged and leaves no proposal behind", () => {
+		const live = seed();
+		const result = stageProposal(live, "probe", [
+			{ op: "set_title", taskId: "nonexistent", title: "probe" },
+		]);
+		expect(result.ok).toBe(false);
+		if (!result.ok) {
+			// The error names the failed op AND tells the model what to do instead.
+			expect(result.error).toContain("set_title: task nonexistent not found");
+			expect(result.error).toContain("Do NOT send probe or placeholder");
+			expect(result.error).toContain("add_task");
+		}
+		// No empty proposal card lingers in the store.
+		expect(Object.keys(proposalsStore.state.byId)).toHaveLength(0);
+	});
+
+	it("stageProposal succeeds when at least one operation staged, reporting the failures", () => {
+		const live = seed();
+		const result = stageProposal(live, "partial", [
+			{ op: "set_title", taskId: "A", title: "Alpha v2" },
+			{ op: "remove_task", taskId: "bogus" },
+		]);
+		expect(result.ok).toBe(true);
+		if (result.ok) {
+			expect(result.summary.operationsApplied).toBe(1);
+			expect(result.summary.operationsFailed).toBe(1);
+			expect(result.summary.failures).toHaveLength(1);
+			// The proposal exists and is reviewable.
+			expect(getProposal(result.proposal.id)).not.toBeNull();
+		}
+	});
+
+	it("createProposal records the project it was staged for", () => {
+		const live = seed();
+		const { proposal } = createProposal(
+			live,
+			"test",
+			[{ op: "set_title", taskId: "A", title: "Alpha v2" }],
+			"project-123",
+		);
+		expect(proposal.projectId).toBe("project-123");
+	});
+
+	it("createProposal defaults projectId to null for callers that don't know it", () => {
+		const live = seed();
+		const { proposal } = createProposal(live, "test", [
+			{ op: "set_title", taskId: "A", title: "Alpha v2" },
+		]);
+		expect(proposal.projectId).toBeNull();
 	});
 
 	it("rejectProposal removes the proposal without touching the live doc", () => {
@@ -210,6 +292,57 @@ describe("proposals store", () => {
 			changeDoc,
 		);
 		expect(live.dependenciesById.ca?.from.taskId).toBe("C");
+	});
+
+	it("applyProposalRow pulls in missing ancestor containers when applying a nested added task", () => {
+		const live = seed();
+		const ops: EditOp[] = [
+			{ op: "add_task", id: "phase", title: "Phase 1", kind: "container" },
+			{ op: "add_task", id: "child", title: "Wireframes", parentId: "phase" },
+		];
+		const { proposal } = createProposal(live, "test", ops);
+		const changeDoc = (mutate: (d: PertDoc) => void) => mutate(live);
+		// Apply ONLY the child row — before the fix this landed the child with
+		// a dangling parentId, making it invisible on the nested canvas.
+		applyProposalRow(
+			proposal.id,
+			{ type: "task-added", taskId: "child" },
+			changeDoc,
+		);
+		expect(live.tasksById.child).toBeDefined();
+		expect(live.tasksById.child.parentId).toBe("phase");
+		// The ancestor container came along, including its interface bucket.
+		expect(live.tasksById.phase?.kind).toBe("container");
+		expect(
+			Object.keys(live.interfacesByContainerId.phase ?? {}),
+		).not.toHaveLength(0);
+		// The diff refresh consumed both rows → proposal evicted.
+		expect(getProposal(proposal.id)).toBeNull();
+	});
+
+	it("applyProposalRow pulls in a multi-level ancestor chain", () => {
+		const live = seed();
+		const ops: EditOp[] = [
+			{ op: "add_task", id: "outer", title: "Outer", kind: "container" },
+			{
+				op: "add_task",
+				id: "inner",
+				title: "Inner",
+				kind: "container",
+				parentId: "outer",
+			},
+			{ op: "add_task", id: "leaf", title: "Leaf", parentId: "inner" },
+		];
+		const { proposal } = createProposal(live, "test", ops);
+		const changeDoc = (mutate: (d: PertDoc) => void) => mutate(live);
+		applyProposalRow(
+			proposal.id,
+			{ type: "task-added", taskId: "leaf" },
+			changeDoc,
+		);
+		expect(live.tasksById.leaf?.parentId).toBe("inner");
+		expect(live.tasksById.inner?.parentId).toBe("outer");
+		expect(live.tasksById.outer?.parentId).toBeNull();
 	});
 
 	it("applyProposalRow refuses a dependency whose endpoint has become a container since the proposal was staged", () => {

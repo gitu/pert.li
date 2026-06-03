@@ -31,3 +31,15 @@ export const CreatingDocument: Story = {
 export const LoadingDocument: Story = {
 	args: { message: "Loading document…" },
 };
+
+// Shown when the sync server hasn't delivered the document yet (slow auth
+// round-trip, server cold start, or genuinely missing doc). The document
+// self-heals when the connection lands; Retry is for impatient humans.
+export const DocumentUnavailable: Story = {
+	args: {
+		message: "Waiting for the sync server to deliver this document…",
+		detail:
+			"This can happen right after connecting. The document loads automatically as soon as it's available.",
+		action: { label: "Retry now", onClick: () => {} },
+	},
+};

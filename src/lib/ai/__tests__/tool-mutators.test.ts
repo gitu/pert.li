@@ -41,7 +41,7 @@ describe("addTaskMutation", () => {
 	it("creates a task with the default 1/2/4 day estimate", () => {
 		const d = createEmptyPertDoc("p");
 		const res = addTaskMutation(d, { title: "Spike" }, "task_x");
-		expect(res.id).toBe("task_x");
+		expect(res).toEqual({ id: "task_x" });
 		expect(d.tasksById.task_x.title).toBe("Spike");
 		expect(d.tasksById.task_x.estimate).toEqual({
 			optimistic: 1,
@@ -86,6 +86,48 @@ describe("addTaskMutation", () => {
 		const d = createEmptyPertDoc("p");
 		addTaskMutation(d, { title: "Leaf" }, "t1");
 		expect(d.interfacesByContainerId.t1).toBeUndefined();
+	});
+
+	it("rejects an id that already exists instead of overwriting", () => {
+		const d = createEmptyPertDoc("p");
+		addTaskMutation(d, { title: "First" }, "dup");
+		const res = addTaskMutation(d, { title: "Second" }, "dup");
+		expect(res).toEqual({ ok: false, error: "task id dup already exists" });
+		// The original task is untouched.
+		expect(d.tasksById.dup.title).toBe("First");
+	});
+
+	it("rejects a parentId that doesn't exist", () => {
+		const d = createEmptyPertDoc("p");
+		const res = addTaskMutation(
+			d,
+			{ title: "Orphan", parentId: "ghost" },
+			"t1",
+		);
+		expect(res).toEqual({
+			ok: false,
+			error: "parent container ghost not found",
+		});
+		expect(d.tasksById.t1).toBeUndefined();
+	});
+
+	it("rejects a parentId that points at a non-container", () => {
+		const d = createEmptyPertDoc("p");
+		addTaskMutation(d, { title: "Leaf" }, "leaf");
+		const res = addTaskMutation(d, { title: "Child", parentId: "leaf" }, "t1");
+		expect(res).toEqual({ ok: false, error: "parent leaf is not a container" });
+	});
+
+	it("accepts a parentId listed in pendingContainerIds (forward reference)", () => {
+		const d = createEmptyPertDoc("p");
+		const res = addTaskMutation(
+			d,
+			{ title: "Child", parentId: "future_container" },
+			"t1",
+			{ pendingContainerIds: new Set(["future_container"]) },
+		);
+		expect(res).toEqual({ id: "t1" });
+		expect(d.tasksById.t1.parentId).toBe("future_container");
 	});
 });
 
@@ -223,8 +265,9 @@ describe("removeTaskMutation", () => {
 
 	it("promotes children to top-level rather than cascading", () => {
 		const d = seed();
-		addTaskMutation(d, { title: "Child", parentId: "task_a" }, "task_child");
-		removeTaskMutation(d, { taskId: "task_a" });
+		addTaskMutation(d, { title: "Box", kind: "container" }, "box");
+		addTaskMutation(d, { title: "Child", parentId: "box" }, "task_child");
+		removeTaskMutation(d, { taskId: "box" });
 		expect(d.tasksById.task_child.parentId).toBeNull();
 	});
 
@@ -411,15 +454,16 @@ describe("moveTaskMutation", () => {
 			{ title: "Inner", kind: "container", parentId: "task_outer" },
 			"task_inner",
 		);
-		expect(
-			moveTaskMutation(d, {
-				taskId: "task_outer",
-				parentId: "task_inner",
-			}),
-		).toEqual({
-			ok: false,
-			error: "move would create a cycle in the hierarchy",
+		const res = moveTaskMutation(d, {
+			taskId: "task_outer",
+			parentId: "task_inner",
 		});
+		expect(res).toMatchObject({ ok: false });
+		if ("error" in res) {
+			// The message teaches the model what went wrong and how to fix it.
+			expect(res.error).toContain("cycle in the hierarchy");
+			expect(res.error).toContain("cannot be moved into its own descendant");
+		}
 	});
 });
 

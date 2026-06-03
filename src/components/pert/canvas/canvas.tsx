@@ -26,8 +26,13 @@ import {
 	setLayoutSpacing,
 	useCanvasPrefs,
 } from "#/lib/pert/canvas-prefs";
-import { toggleCollapse, useCollapsedSet } from "#/lib/pert/collapse";
+import {
+	setCollapsed,
+	toggleCollapse,
+	useCollapsedSet,
+} from "#/lib/pert/collapse";
 import { cycleEdgeSet, cycleTaskSet } from "#/lib/pert/cycle";
+import { getAncestors } from "#/lib/pert/hierarchy";
 import {
 	ensureContainerInterfaces,
 	removeContainerInterfaces,
@@ -88,6 +93,15 @@ const CONTAINER_PADDING_BOTTOM = 36;
 const CONTAINER_MIN_WIDTH = 440;
 const CONTAINER_MIN_HEIGHT = 280;
 
+// Z-ordering. Containers stack by NESTING DEPTH — an outer group sits lowest,
+// each nested group one layer above it — so inner frames and headers stay
+// visible and clickable inside their parents. Edges paint above every
+// container body (an edge crossing a group is never hidden), and leaf /
+// milestone nodes paint above everything.
+const CONTAINER_BASE_Z = 1; // + nesting depth
+const EDGE_Z = 50; // safely above any realistic container nesting depth
+const LEAF_Z = 100;
+
 function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const scheduleResult = useMemo(() => computeSchedule(doc), [doc]);
 	const prefs = useCanvasPrefs(projectId);
@@ -124,6 +138,24 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const handleToggleContinuous = useCallback(() => {
 		setContinuousLayout(projectId, !prefs.continuousLayout);
 	}, [projectId, prefs.continuousLayout]);
+
+	// Collapse / expand every container at once (toolbar buttons). The buttons
+	// only render when the project actually has containers.
+	const hasContainers = useMemo(
+		() => Object.values(doc.tasksById).some((t) => t.kind === "container"),
+		[doc],
+	);
+	const handleCollapseAll = useCallback(() => {
+		for (const t of Object.values(doc.tasksById)) {
+			if (t.kind === "container") setCollapsed(projectId, t.id, true);
+		}
+	}, [doc, projectId]);
+	const handleExpandAll = useCallback(() => {
+		for (const t of Object.values(doc.tasksById)) {
+			if (t.kind === "container") setCollapsed(projectId, t.id, false);
+		}
+	}, [doc, projectId]);
+
 	useContinuousLayout(
 		projectId,
 		doc,
@@ -890,11 +922,11 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 					if (node.type === "task") setEditingNodeId(node.id);
 				}}
 				fitView
-				// React Flow's auto-fit slightly over-zooms on phone-sized
-				// viewports — small projects render at near 1×, hiding nearby
-				// nodes off-screen. A lower minimum lets two-finger pinch zoom
-				// out far enough to see the whole graph at once.
-				minZoom={isMobile ? 0.2 : 0.5}
+				// The minimum zoom bounds both pinch/scroll zoom-out AND how far
+				// fitView can shrink the graph. Keep it very low so any layout —
+				// however large — can always be brought fully into view; fitView
+				// only zooms out as far as it actually needs.
+				minZoom={isMobile ? 0.05 : 0.02}
 				deleteKeyCode={["Backspace", "Delete"]}
 				className="bg-background"
 				colorMode={resolvedTheme}
@@ -937,6 +969,8 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 							onSetSpacing={handleSetSpacing}
 							onRelayout={handleRelayout}
 							onToggleContinuous={handleToggleContinuous}
+							onCollapseAll={hasContainers ? handleCollapseAll : undefined}
+							onExpandAll={hasContainers ? handleExpandAll : undefined}
 						/>
 					</div>
 				</div>
@@ -1062,7 +1096,10 @@ function buildBaseNodes(
 				// outside the leaf area, so it's still clickable for collapse +
 				// drag. Selection on the container itself works via React Flow's
 				// hit-testing of the bordered frame around the children.
-				zIndex: 1,
+				//
+				// Depth-based: nested groups paint ABOVE their parent group so an
+				// inner frame/header is never hidden behind the outer one.
+				zIndex: CONTAINER_BASE_Z + getAncestors(doc, projected.task.id).length,
 				draggable: true,
 				selectable: true,
 				focusable: true,
@@ -1096,7 +1133,9 @@ function buildBaseNodes(
 				data: data as unknown as Record<string, unknown>,
 				width: Math.max(COLLAPSED_CARD_WIDTH, storedWidth),
 				height: Math.max(autoHeight, storedHeight),
-				zIndex: 1,
+				// Same depth-based stacking as expanded containers — a collapsed
+				// inner group still paints above its parent group's body.
+				zIndex: CONTAINER_BASE_Z + getAncestors(doc, containerId).length,
 			});
 		} else {
 			pushLeafNode(
@@ -1219,8 +1258,9 @@ function pushLeafNode(
 		data: data as unknown as Record<string, unknown>,
 		width: TASK_WIDTH,
 		height: TASK_HEIGHT,
-		// Leaves sit above container backgrounds so they remain interactive.
-		zIndex: 10,
+		// Leaves sit above every container body and every edge, no matter how
+		// deeply nested — they must always be visible and interactive.
+		zIndex: LEAF_Z,
 	});
 }
 
@@ -1260,11 +1300,11 @@ function buildEdges(
 			animated: edge.critical || onCycle,
 			style,
 			data: { onCycle },
-			// Sit above expanded containers (zIndex 1) but below leaf task
-			// nodes (zIndex 10) so an edge passing through a container's
-			// area is never visually hidden by the container body, while
-			// leaves still paint on top of the edge stroke.
-			zIndex: 5,
+			// Sit above every container body (containers stack by nesting depth
+			// starting at CONTAINER_BASE_Z) but below leaf task nodes, so an edge
+			// passing through a group is never visually hidden while leaves still
+			// paint on top of the edge stroke.
+			zIndex: EDGE_Z,
 		};
 	});
 }

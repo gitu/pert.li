@@ -1,10 +1,12 @@
 import {
 	CircleDotIcon,
 	FolderPlusIcon,
+	FoldVerticalIcon,
 	LayoutGridIcon,
 	PinIcon,
 	PlusIcon,
 	Settings2Icon,
+	UnfoldVerticalIcon,
 } from "lucide-react";
 import {
 	CANVAS_SHORTCUTS,
@@ -98,6 +100,10 @@ export type CanvasViewToolbarProps = {
 	onSetSpacing: (spacing: LayoutSpacing) => void;
 	onRelayout: () => void;
 	onToggleContinuous: () => void;
+	// Collapse / expand every container at once. Hidden when the project has
+	// no containers (callers pass undefined then).
+	onCollapseAll?: () => void;
+	onExpandAll?: () => void;
 };
 
 export function CanvasViewToolbar({
@@ -106,6 +112,8 @@ export function CanvasViewToolbar({
 	onSetSpacing,
 	onRelayout,
 	onToggleContinuous,
+	onCollapseAll,
+	onExpandAll,
 }: CanvasViewToolbarProps) {
 	return (
 		<div
@@ -143,6 +151,32 @@ export function CanvasViewToolbar({
 				/>
 				Auto-layout
 			</Button>
+			{onCollapseAll && (
+				<Button
+					size="sm"
+					variant="ghost"
+					className="h-8 gap-1.5 text-xs"
+					onClick={onCollapseAll}
+					data-testid="toolbar-collapse-all"
+					title="Collapse every container to its summary card"
+				>
+					<FoldVerticalIcon className="size-3.5" />
+					Collapse all
+				</Button>
+			)}
+			{onExpandAll && (
+				<Button
+					size="sm"
+					variant="ghost"
+					className="h-8 gap-1.5 text-xs"
+					onClick={onExpandAll}
+					data-testid="toolbar-expand-all"
+					title="Expand every container"
+				>
+					<UnfoldVerticalIcon className="size-3.5" />
+					Expand all
+				</Button>
+			)}
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<Button

@@ -6,6 +6,7 @@ import {
 	DEFAULT_THREAD_TITLE,
 	deriveThreadTitle,
 	getScopeKey,
+	moveThreadToScope,
 	readThreadIndex,
 	readThreadMessages,
 	type ThreadIndex,
@@ -99,6 +100,128 @@ describe("readThreadMessages / writeThreadMessages", () => {
 	it("returns null when the stored payload is not an array", () => {
 		window.localStorage.setItem("pertli.chatThread.v1.t1", '"oops"');
 		expect(readThreadMessages("t1")).toBeNull();
+	});
+});
+
+describe("moveThreadToScope", () => {
+	it("moves a thread between scopes and makes it active in the target", () => {
+		// Source scope with two threads; we'll move the active one.
+		const source: ThreadIndex = {
+			activeThreadId: "moving",
+			threads: [
+				{ id: "moving", title: "Branch planning", createdAt: 1, updatedAt: 1 },
+				{ id: "staying", title: "Other chat", createdAt: 2, updatedAt: 2 },
+			],
+		};
+		writeThreadIndex("project:parent", source);
+		writeThreadMessages("moving", [{ id: "u1", role: "user" }]);
+
+		moveThreadToScope("moving", "project:parent", "project:branch");
+
+		// Source: thread removed, the remaining one became active.
+		const fromIndex = readThreadIndex("project:parent");
+		expect(fromIndex.threads.map((t) => t.id)).toEqual(["staying"]);
+		expect(fromIndex.activeThreadId).toBe("staying");
+
+		// Target: thread present and active; transcript untouched (keyed by
+		// threadId, not scope).
+		const toIndex = readThreadIndex("project:branch");
+		expect(toIndex.activeThreadId).toBe("moving");
+		expect(toIndex.threads.map((t) => t.id)).toContain("moving");
+		expect(readThreadMessages("moving")).toEqual([{ id: "u1", role: "user" }]);
+	});
+
+	it("reseeds the source scope when the moved thread was the only one", () => {
+		const source: ThreadIndex = {
+			activeThreadId: "only",
+			threads: [{ id: "only", title: "Solo", createdAt: 1, updatedAt: 1 }],
+		};
+		writeThreadIndex("project:parent", source);
+
+		moveThreadToScope("only", "project:parent", "project:branch");
+
+		const fromIndex = readThreadIndex("project:parent");
+		expect(fromIndex.threads).toHaveLength(1);
+		expect(fromIndex.threads[0].id).not.toBe("only");
+		expect(fromIndex.threads[0].title).toBe(DEFAULT_THREAD_TITLE);
+	});
+
+	it("replaces the target scope's empty placeholder thread instead of keeping it", () => {
+		// Reading a fresh scope auto-seeds an empty placeholder.
+		const seeded = readThreadIndex("project:branch");
+		expect(seeded.threads).toHaveLength(1);
+
+		const source: ThreadIndex = {
+			activeThreadId: "moving",
+			threads: [
+				{ id: "moving", title: "Planning", createdAt: 1, updatedAt: 1 },
+			],
+		};
+		writeThreadIndex("project:parent", source);
+
+		moveThreadToScope("moving", "project:parent", "project:branch");
+
+		const toIndex = readThreadIndex("project:branch");
+		// Only the moved thread remains — the dead "New chat" placeholder is gone.
+		expect(toIndex.threads.map((t) => t.id)).toEqual(["moving"]);
+		expect(toIndex.activeThreadId).toBe("moving");
+	});
+
+	it("keeps non-empty threads already in the target scope", () => {
+		const target: ThreadIndex = {
+			activeThreadId: "existing",
+			threads: [
+				{ id: "existing", title: "Already here", createdAt: 1, updatedAt: 1 },
+			],
+		};
+		writeThreadIndex("project:branch", target);
+		writeThreadMessages("existing", [{ id: "u1", role: "user" }]);
+
+		const source: ThreadIndex = {
+			activeThreadId: "moving",
+			threads: [
+				{ id: "moving", title: "Planning", createdAt: 2, updatedAt: 2 },
+			],
+		};
+		writeThreadIndex("project:parent", source);
+
+		moveThreadToScope("moving", "project:parent", "project:branch");
+
+		const toIndex = readThreadIndex("project:branch");
+		expect(toIndex.threads.map((t) => t.id).sort()).toEqual([
+			"existing",
+			"moving",
+		]);
+		expect(toIndex.activeThreadId).toBe("moving");
+	});
+
+	it("is a no-op when the thread doesn't exist in the source scope", () => {
+		const source: ThreadIndex = {
+			activeThreadId: "a",
+			threads: [{ id: "a", title: "A", createdAt: 1, updatedAt: 1 }],
+		};
+		writeThreadIndex("project:parent", source);
+
+		moveThreadToScope("ghost", "project:parent", "project:branch");
+
+		expect(readThreadIndex("project:parent").threads.map((t) => t.id)).toEqual([
+			"a",
+		]);
+	});
+
+	it("is a no-op when source and target scopes are identical", () => {
+		const source: ThreadIndex = {
+			activeThreadId: "a",
+			threads: [
+				{ id: "a", title: "A", createdAt: 1, updatedAt: 1 },
+				{ id: "b", title: "B", createdAt: 2, updatedAt: 2 },
+			],
+		};
+		writeThreadIndex("project:parent", source);
+
+		moveThreadToScope("a", "project:parent", "project:parent");
+
+		expect(readThreadIndex("project:parent")).toEqual(source);
 	});
 });
 

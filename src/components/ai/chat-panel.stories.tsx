@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	createMemoryHistory,
 	createRootRoute,
@@ -30,8 +31,13 @@ function Stage({ children }: { children: React.ReactNode }) {
 // Chat is bound to the active project — ChatPanel reads its projectId from
 // the route (useParams), so the stories need a Router context. The initial
 // path drives which scope the panel mounts in: `/p/<id>` for the active
-// state, `/` for the NoActiveProject state.
+// state, `/` for the NoActiveProject state. The QueryClientProvider is
+// required since the panel's branch tools (create_branch) invalidate the
+// ["projects"] query cache.
 function withRouter(initialPath: string, children: React.ReactNode) {
+	const qc = new QueryClient({
+		defaultOptions: { queries: { retry: false } },
+	});
 	const rootRoute = createRootRoute({ component: () => <Outlet /> });
 	const indexRoute = createRoute({
 		getParentRoute: () => rootRoute,
@@ -47,7 +53,11 @@ function withRouter(initialPath: string, children: React.ReactNode) {
 		routeTree: rootRoute.addChildren([indexRoute, projectRoute]),
 		history: createMemoryHistory({ initialEntries: [initialPath] }),
 	});
-	return <RouterProvider router={router} />;
+	return (
+		<QueryClientProvider client={qc}>
+			<RouterProvider router={router} />
+		</QueryClientProvider>
+	);
 }
 
 const meta: Meta<typeof ChatPanel> = {

@@ -110,6 +110,15 @@ export default defineWebSocketHandler({
 		const id = getPeerId(peer);
 		const auth = await authenticatePeer(peer);
 		if (!auth) {
+			// Log instead of failing silently: a client whose session cookie is
+			// stale (or whose share token expired) reconnects in a loop and the
+			// document never loads — without this line there is zero server-side
+			// trace of why. If this fires for a user who IS signed in, check that
+			// the websocket module graph shares the same DB instance as the HTTP
+			// handlers (see the globalThis singleton in src/db/index.ts).
+			console.warn(
+				"[sync] websocket peer rejected: no valid session or share token",
+			);
 			pendingMessages.delete(id);
 			peer.close();
 			return;
@@ -126,10 +135,27 @@ export default defineWebSocketHandler({
 			sock.shareExpiresAt = auth.shareExpiresAt;
 			registerShareSocket(auth.shareId, sock);
 		}
-		peerSockets.set(id, sock);
 		const { wss } = getServerRepoBundle();
+		// The Automerge adapter attaches its "connection" listener asynchronously
+		// after the repo bundle is constructed (Repo wires adapters only once the
+		// storage subsystem's id has loaded). When this peer is the FIRST
+		// connection — the one that lazily created the bundle — emitting before
+		// that listener exists would lose the client's join message: the socket
+		// stays open but the server never answers, and the client's repo never
+		// becomes ready. Wait for the listener before emitting.
+		await wss.listening;
 		wss.clients.add(sock);
+		// This two-step order is deliberate and load-bearing:
+		//   1. emit("connection") — the adapter attaches its per-socket message
+		//      listeners synchronously inside this call.
+		//   2. peerSockets.set(...) — only now does the message hook below switch
+		//      from buffering into pendingMessages to delivering directly.
+		// Because the socket gains listeners (step 1) BEFORE direct delivery is
+		// enabled (step 2), no message can ever be emitted at a listener-less
+		// socket; everything that arrived during the awaits above is still in
+		// pendingMessages and is replayed right after.
 		wss.emit("connection", sock);
+		peerSockets.set(id, sock);
 		const queued = pendingMessages.get(id);
 		if (queued && queued.length > 0) {
 			pendingMessages.delete(id);

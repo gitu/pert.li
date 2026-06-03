@@ -30,6 +30,11 @@ export type Proposal = {
 	currentSnapshot: PertDoc;
 	diff: DocDiff;
 	results: OpResult[];
+	// The project this proposal was staged against. Proposals must only ever
+	// be applied to that project — applying one while a different project's
+	// doc is active would import another project's tasks into it. null only
+	// for legacy callers that don't know their project (Storybook mounts).
+	projectId: string | null;
 };
 
 export type ProposalSummary = {
@@ -37,6 +42,11 @@ export type ProposalSummary = {
 	depsAffected: number;
 	operationsApplied: number;
 	operationsFailed: number;
+	// One entry per operation that could not be staged, with the reason. Fed
+	// back to the model through the propose_changes tool result so it can fix
+	// the operations and re-propose instead of leaving the user with a
+	// half-empty (or fully empty) preview.
+	failures: Array<{ operationIndex: number; op: string; error: string }>;
 };
 
 type State = {
@@ -65,6 +75,7 @@ export function createProposal(
 	currentDoc: PertDoc,
 	rationale: string,
 	operations: EditOp[],
+	projectId: string | null = null,
 ): { proposal: Proposal; summary: ProposalSummary } {
 	const proposedDoc = cloneDoc(currentDoc);
 	const results = applyOperations(proposedDoc, operations);
@@ -79,6 +90,7 @@ export function createProposal(
 		currentSnapshot,
 		diff,
 		results,
+		projectId,
 	};
 	proposalsStore.setState((s) => ({
 		byId: { ...s.byId, [proposal.id]: proposal },
@@ -92,8 +104,53 @@ export function createProposal(
 			diff.counts.depsAdded + diff.counts.depsChanged + diff.counts.depsRemoved,
 		operationsApplied: results.filter((r) => r.ok).length,
 		operationsFailed: results.filter((r) => !r.ok).length,
+		failures: results.flatMap((r) =>
+			r.ok ? [] : [{ operationIndex: r.index, op: r.op, error: r.error }],
+		),
 	};
 	return { proposal, summary };
+}
+
+// The propose_changes tool's entry point: stages a proposal, but refuses
+// outright when NOT A SINGLE operation could be applied. Returning ok:true
+// with an empty diff taught weaker models that probe operations "work" — they
+// looped forever sending `set_title taskId:"nonexistent"` style placeholders,
+// and every attempt left a dead "+0 ~0 −0" card in the chat. An explicit
+// failure (with the reasons and the escape hatch spelled out) is both
+// semantically honest and the strongest corrective signal a tool result can
+// send.
+export function stageProposal(
+	currentDoc: PertDoc,
+	rationale: string,
+	operations: EditOp[],
+	projectId: string | null = null,
+):
+	| { ok: true; proposal: Proposal; summary: ProposalSummary }
+	| { ok: false; error: string } {
+	const { proposal, summary } = createProposal(
+		currentDoc,
+		rationale,
+		operations,
+		projectId,
+	);
+	if (summary.operationsApplied === 0) {
+		// Nothing staged — drop the empty proposal so it never renders a card.
+		rejectProposal(proposal.id);
+		const reasons = summary.failures
+			.map((f) => `${f.op}: ${f.error}`)
+			.join("; ");
+		return {
+			ok: false,
+			error:
+				`None of the ${operations.length} operation(s) could be staged: ${reasons}. ` +
+				"Do NOT send probe or placeholder operations — every operation must reference real task ids " +
+				"(from read_project or from ids you assign in this same batch) or create new tasks. " +
+				"Top-level tasks take parentId: null; there is no task id for the project itself. " +
+				"If you cannot produce the full import as one batch, call add_task directly for each item " +
+				"(containers first, then children using the returned ids as parentId), then add_dependency for the edges.",
+		};
+	}
+	return { ok: true, proposal, summary };
 }
 
 export function getProposal(id: string): Proposal | null {
@@ -178,20 +235,12 @@ function applyRowMutation(
 		const t = source.tasksById[row.taskId];
 		if (!t) return;
 		if (target.tasksById[row.taskId]) return;
-		target.tasksById[row.taskId] = JSON.parse(JSON.stringify(t)) as Task;
-		// Containers carry their default interfaces under a sibling map. If
-		// we only copy `tasksById`, a container shows up on the canvas with
-		// no Entry/Exit ports until something else backfills them — and any
-		// dependencies the proposal pinned to those interfaces would point
-		// at nothing.
-		if (t.kind === "container") {
-			const sourceBucket = source.interfacesByContainerId[row.taskId];
-			if (sourceBucket) {
-				target.interfacesByContainerId[row.taskId] = JSON.parse(
-					JSON.stringify(sourceBucket),
-				);
-			}
-		}
+		// Copy the task plus any ancestor containers the live doc doesn't have
+		// yet. Applying a child row before its parent-container row used to
+		// leave the child's parentId dangling, which makes it invisible on the
+		// nested canvas. Pulling the ancestors in keeps the hierarchy intact;
+		// the rebuilt diff drops their rows automatically.
+		copyTaskWithAncestors(target, source, row.taskId);
 		return;
 	}
 	if (row.type === "task-removed") {
@@ -243,6 +292,36 @@ function applyRowMutation(
 			JSON.stringify(src),
 		) as Dependency;
 		return;
+	}
+}
+
+// Copies a task from the proposed doc onto the live doc, walking parentId up
+// and copying any ancestor (plus its interface bucket — containers without
+// their Entry/Exit ports would render portless and break pinned deps) that the
+// live doc is missing. Cycle-protected via the `seen` set.
+function copyTaskWithAncestors(
+	target: PertDoc,
+	source: PertDoc,
+	taskId: string,
+): void {
+	const seen = new Set<string>();
+	let cursor: string | null = taskId;
+	while (cursor && !seen.has(cursor)) {
+		seen.add(cursor);
+		const src: Task | undefined = source.tasksById[cursor];
+		if (!src) break;
+		if (!target.tasksById[cursor]) {
+			target.tasksById[cursor] = JSON.parse(JSON.stringify(src)) as Task;
+			if (src.kind === "container") {
+				const sourceBucket = source.interfacesByContainerId[cursor];
+				if (sourceBucket) {
+					target.interfacesByContainerId[cursor] = JSON.parse(
+						JSON.stringify(sourceBucket),
+					);
+				}
+			}
+		}
+		cursor = src.parentId ?? null;
 	}
 }
 

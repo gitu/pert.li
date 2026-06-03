@@ -1,8 +1,4 @@
 import type { AnyDocumentId, DocHandle } from "@automerge/automerge-repo";
-import {
-	useDocHandle,
-	useDocument,
-} from "@automerge/automerge-repo-react-hooks";
 import { useQuery } from "@tanstack/react-query";
 import {
 	createFileRoute,
@@ -55,6 +51,7 @@ import {
 	type PertProjectDoc,
 	useProjectDoc,
 } from "#/lib/automerge/use-project-doc";
+import { useResilientDoc } from "#/lib/automerge/use-resilient-doc";
 import { useActorRegistration } from "#/lib/pert/actor-registry";
 import { diffPertDoc } from "#/lib/pert/diff";
 import { snapshotAt } from "#/lib/pert/history";
@@ -428,10 +425,18 @@ export function PertProjectPanel({
 	documentId: AnyDocumentId;
 	view: ProjectView;
 }) {
-	const [doc, changeDoc] = useDocument<PertProjectDoc>(documentId, {
-		suspense: false,
-	});
-	const handle = useDocHandle<PertProjectDoc>(documentId, { suspense: false });
+	// useResilientDoc instead of the library's useDocument/useDocHandle: those
+	// cache a failed/aborted find forever (module-level promise cache), which
+	// left the page stuck on "Loading document…" with an idle websocket when
+	// the sync connection was slower than the unavailable timeout. See the
+	// hook's header comment for the full story.
+	const {
+		doc,
+		changeDoc,
+		handle,
+		state: docState,
+		retry: retryDoc,
+	} = useResilientDoc<PertProjectDoc>(documentId);
 	const { mode } = useViewMode();
 	// Mobile-readonly suppresses every inline edit affordance by withholding
 	// `changeDoc` from the shared store. Existing consumers (TaskInspector,
@@ -504,6 +509,19 @@ export function PertProjectPanel({
 	useEffect(() => () => clearActiveProjectDoc(projectId), [projectId]);
 
 	if (!doc || needsMigration) {
+		// Distinguish "still loading" from "the sync server hasn't delivered
+		// this document yet". The latter self-heals (the repo re-requests
+		// registered docs whenever a peer connects); Retry forces a fresh find
+		// for users who don't want to wait.
+		if (docState === "unavailable") {
+			return (
+				<CanvasLoading
+					message="Waiting for the sync server to deliver this document…"
+					detail="This can happen right after connecting. The document loads automatically as soon as it's available."
+					action={{ label: "Retry now", onClick: retryDoc }}
+				/>
+			);
+		}
 		return <CanvasLoading message="Loading document…" />;
 	}
 

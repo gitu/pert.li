@@ -160,6 +160,60 @@ export function clearThreadMessages(threadId: string): void {
 	safeRemove(threadStorageKey(threadId));
 }
 
+// Moves a thread from one project scope to another — used when the assistant
+// creates a branch and the conversation follows it there. Message snapshots
+// are keyed by threadId alone, so only the two indexes need rewriting; the
+// transcript itself stays in place.
+//
+// In the target scope the moved thread becomes active. If the target only had
+// the auto-seeded empty placeholder thread, it's replaced rather than kept
+// around as a dead "New chat" tab.
+export function moveThreadToScope(
+	threadId: string,
+	fromScopeKey: string,
+	toScopeKey: string,
+): void {
+	if (typeof window === "undefined") return;
+	if (fromScopeKey === toScopeKey) return;
+
+	const fromIndex = readThreadIndex(fromScopeKey);
+	const meta = fromIndex.threads.find((t) => t.id === threadId);
+	if (!meta) return;
+
+	// Detach from the source scope. readThreadIndex guarantees ≥1 thread, so
+	// reseed when the moved thread was the only one.
+	const remaining = fromIndex.threads.filter((t) => t.id !== threadId);
+	if (remaining.length === 0) {
+		const seedThread = makeEmptyThread(Date.now());
+		writeThreadIndex(fromScopeKey, {
+			activeThreadId: seedThread.id,
+			threads: [seedThread],
+		});
+	} else {
+		writeThreadIndex(fromScopeKey, {
+			activeThreadId:
+				fromIndex.activeThreadId === threadId
+					? remaining[0].id
+					: fromIndex.activeThreadId,
+			threads: remaining,
+		});
+	}
+
+	// Attach to the target scope as the active thread. Drop empty placeholder
+	// threads the target scope may have auto-seeded.
+	const toIndex = readThreadIndex(toScopeKey);
+	const kept = toIndex.threads.filter((t) => {
+		if (t.id === threadId) return false;
+		if (t.title !== DEFAULT_THREAD_TITLE) return true;
+		const messages = readThreadMessages(t.id);
+		return messages !== null && messages.length > 0;
+	});
+	writeThreadIndex(toScopeKey, {
+		activeThreadId: threadId,
+		threads: [...kept, { ...meta, updatedAt: Date.now() }],
+	});
+}
+
 // Best-effort title derivation: take the first user message's text content,
 // strip newlines, truncate to ~40 chars. Returns null when the snapshot has
 // no user-authored text yet (so the caller can keep the placeholder).

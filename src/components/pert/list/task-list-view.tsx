@@ -334,12 +334,14 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 				};
 			}
 			changeDoc((d) => {
-				const { id } = addTaskMutation(d, {
+				// Generated id + no parent — the error arm is unreachable here.
+				const created = addTaskMutation(d, {
 					title,
 					estimate,
 					kind,
 				});
-				selectTask(projectId, id);
+				if (!("id" in created)) return;
+				selectTask(projectId, created.id);
 			});
 			setQuickAddTitle("");
 			setQuickAddEstimate("");
@@ -363,14 +365,17 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 			const parentId = seed.parentId ?? null;
 			let newTaskId: TaskId | null = null;
 			changeDoc((d) => {
-				const { id } = addTaskMutation(d, {
+				// Generated id + the seed row's existing parent — the error arm is
+				// unreachable here.
+				const created = addTaskMutation(d, {
 					title: "",
 					kind: "task",
 					parentId,
 				});
-				newTaskId = id;
-				const fromId = position === "below" ? seedId : id;
-				const toId = position === "below" ? id : seedId;
+				if (!("id" in created)) return;
+				newTaskId = created.id;
+				const fromId = position === "below" ? seedId : created.id;
+				const toId = position === "below" ? created.id : seedId;
 				addDependencyMutation(d, { fromTaskId: fromId, toTaskId: toId });
 			});
 			if (newTaskId) {
