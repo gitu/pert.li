@@ -27,7 +27,6 @@ export function ChatTabs({
 	isThreadEmpty,
 	className,
 }: ChatTabsProps) {
-	const closable = threads.length > 1;
 	const handleClose = (id: string) => {
 		const empty = isThreadEmpty?.(id) ?? false;
 		if (empty) {
@@ -57,7 +56,6 @@ export function ChatTabs({
 					key={t.id}
 					thread={t}
 					active={t.id === activeThreadId}
-					closable={closable}
 					onSelect={() => onSelect(t.id)}
 					onClose={() => handleClose(t.id)}
 					onRename={(next) => onRename(t.id, next)}
@@ -81,20 +79,12 @@ export function ChatTabs({
 type TabProps = {
 	thread: ThreadMeta;
 	active: boolean;
-	closable: boolean;
 	onSelect(): void;
 	onClose(): void;
 	onRename(next: string): void;
 };
 
-function Tab({
-	thread,
-	active,
-	closable,
-	onSelect,
-	onClose,
-	onRename,
-}: TabProps) {
+function Tab({ thread, active, onSelect, onClose, onRename }: TabProps) {
 	const [editing, setEditing] = useState(false);
 	const [draft, setDraft] = useState(thread.title);
 	const inputRef = useRef<HTMLInputElement | null>(null);
@@ -183,7 +173,7 @@ function Tab({
 					{thread.title}
 				</span>
 			)}
-			{closable && !editing && (
+			{!editing && (
 				<button
 					type="button"
 					onClick={(e) => {

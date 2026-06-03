@@ -26,6 +26,15 @@ async function openFreshProject(page: Page): Promise<void> {
 	await page.waitForURL(/\/p\/[^/]+$/, { timeout: 10_000 });
 }
 
+// A fresh project opens to the empty chat state (no auto-seeded thread). Click
+// the empty-state CTA to create the first thread and wait for the single tab.
+async function startFirstChat(page: Page): Promise<void> {
+	await page.getByTestId("chat-empty-new").click();
+	await expect(
+		page.getByTestId("chat-tabs").locator("[role='tab']"),
+	).toHaveCount(1);
+}
+
 test.describe("Chat threads", () => {
 	test.beforeEach(async ({ context, page }) => {
 		await context.addInitScript(() => {
@@ -38,21 +47,37 @@ test.describe("Chat threads", () => {
 		await openFreshProject(page);
 	});
 
-	test("default thread auto-exists and is named 'New chat'", async ({
+	test("a fresh project opens to the empty chat state until a chat is started", async ({
 		page,
 	}) => {
+		// No auto-seeded thread — the panel shows its empty state with a CTA and
+		// the tab strip carries zero tabs.
+		await expect(page.getByTestId("chat-empty")).toBeVisible();
 		const tabs = page.getByTestId("chat-tabs");
-		await expect(tabs).toBeVisible();
-		// One tab present, titled with the placeholder.
+		await expect(tabs.locator("[role='tab']")).toHaveCount(0);
+
+		// Starting a chat creates a single "New chat" thread and clears the
+		// empty state.
+		await page.getByTestId("chat-empty-new").click();
 		await expect(tabs.locator("[role='tab']")).toHaveCount(1);
 		await expect(tabs.locator("[role='tab']").first()).toHaveText(/New chat/);
+		await expect(page.getByTestId("chat-empty")).toHaveCount(0);
 		await expect(page.getByTestId("chat-tab-new")).toBeVisible();
+	});
+
+	test("the chat header shows the bound project's title", async ({ page }) => {
+		// openFreshProject created a project whose title starts with "E2E chat".
+		await expect(page.getByTestId("chat-project-title")).toContainText(
+			"E2E chat",
+		);
 	});
 
 	test("clicking + creates a new thread, switching tabs preserves transcripts", async ({
 		page,
 	}) => {
 		const tabs = page.getByTestId("chat-tabs");
+		// A fresh project has no tab strip until the first chat is started.
+		await startFirstChat(page);
 		await expect(tabs).toBeVisible();
 
 		// Seed the original thread directly via localStorage — sending a real
@@ -67,8 +92,8 @@ test.describe("Chat threads", () => {
 		];
 		const firstTabId = await page.evaluate(() => {
 			// Threads are scoped per project — find the project-keyed index that
-			// the panel just seeded. There's only one because we just opened a
-			// fresh project.
+			// startFirstChat just created. There's only one because we just
+			// opened a fresh project.
 			const key = Object.keys(window.localStorage).find((k) =>
 				k.startsWith("pertli.chatThreads.v1.project:"),
 			);
@@ -114,6 +139,8 @@ test.describe("Chat threads", () => {
 		page,
 	}) => {
 		const tabs = page.getByTestId("chat-tabs");
+		// A fresh project has no tab strip until the first chat is started.
+		await startFirstChat(page);
 		await expect(tabs).toBeVisible();
 		const firstTab = tabs.locator("[role='tab']").first();
 		const tabId = await firstTab.getAttribute("data-testid");
@@ -135,6 +162,8 @@ test.describe("Chat threads", () => {
 		page,
 	}) => {
 		const tabs = page.getByTestId("chat-tabs");
+		// A fresh project has no tab strip until the first chat is started.
+		await startFirstChat(page);
 		await expect(tabs).toBeVisible();
 
 		// Spawn an extra empty thread.
@@ -154,13 +183,30 @@ test.describe("Chat threads", () => {
 		await expect(tabs.locator("[role='tab']")).toHaveCount(1);
 	});
 
-	test("close on the only remaining thread is hidden", async ({ page }) => {
+	test("closing the only remaining thread drops to the empty state, then New chat restores", async ({
+		page,
+	}) => {
 		const tabs = page.getByTestId("chat-tabs");
+		// A fresh project has no tab strip until the first chat is started.
+		await startFirstChat(page);
 		await expect(tabs).toBeVisible();
 		const firstTab = tabs.locator("[role='tab']").first();
 		const id =
 			(await firstTab.getAttribute("data-testid"))?.replace("chat-tab-", "") ??
 			"";
-		await expect(page.getByTestId(`chat-tab-close-${id}`)).toHaveCount(0);
+
+		// The close button is now present even on the only thread (it used to be
+		// hidden). The thread is empty, so closing it fires no confirm dialog.
+		await firstTab.hover();
+		await page.getByTestId(`chat-tab-close-${id}`).click();
+
+		// Zero tabs, empty state visible.
+		await expect(tabs.locator("[role='tab']")).toHaveCount(0);
+		await expect(page.getByTestId("chat-empty")).toBeVisible();
+
+		// And we can start over from the empty state.
+		await page.getByTestId("chat-empty-new").click();
+		await expect(tabs.locator("[role='tab']")).toHaveCount(1);
+		await expect(page.getByTestId("chat-empty")).toHaveCount(0);
 	});
 });

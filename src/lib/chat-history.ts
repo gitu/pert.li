@@ -36,7 +36,9 @@ export type ThreadMeta = {
 };
 
 export type ThreadIndex = {
-	activeThreadId: string;
+	// `null` when the scope has no threads at all — the user dropped the last
+	// one. The panel renders an empty state and lets them start a fresh chat.
+	activeThreadId: string | null;
 	threads: ThreadMeta[];
 };
 
@@ -56,7 +58,7 @@ function threadStorageKey(threadId: string): string {
 	return `${THREAD_KEY_PREFIX}${threadId}`;
 }
 
-function newThreadId(): string {
+export function newThreadId(): string {
 	if (
 		typeof crypto !== "undefined" &&
 		typeof crypto.randomUUID === "function"
@@ -64,15 +66,6 @@ function newThreadId(): string {
 		return crypto.randomUUID();
 	}
 	return `t_${Math.random().toString(36).slice(2)}_${Date.now().toString(36)}`;
-}
-
-function makeEmptyThread(now: number): ThreadMeta {
-	return {
-		id: newThreadId(),
-		title: DEFAULT_THREAD_TITLE,
-		createdAt: now,
-		updatedAt: now,
-	};
 }
 
 function isThreadMeta(value: unknown): value is ThreadMeta {
@@ -89,42 +82,43 @@ function isThreadMeta(value: unknown): value is ThreadMeta {
 function isThreadIndex(value: unknown): value is ThreadIndex {
 	if (!value || typeof value !== "object") return false;
 	const v = value as Record<string, unknown>;
-	if (typeof v.activeThreadId !== "string") return false;
+	if (typeof v.activeThreadId !== "string" && v.activeThreadId !== null)
+		return false;
 	if (!Array.isArray(v.threads)) return false;
 	return v.threads.every(isThreadMeta);
 }
 
-// Returns the thread index for a scope, ensuring at least one thread exists.
+// Returns the thread index for a scope. A scope may legitimately have zero
+// threads — the user dropped the last one — in which case `activeThreadId` is
+// null and the panel shows an empty state. We never auto-seed a thread here:
+// reads stay side-effect-free, and an empty scope reads as empty.
 export function readThreadIndex(scopeKey: string): ThreadIndex {
 	if (typeof window === "undefined") {
 		// SSR fallback — caller will re-read on the client.
-		const now = Date.now();
-		const t = makeEmptyThread(now);
-		return { activeThreadId: t.id, threads: [t] };
+		return { activeThreadId: null, threads: [] };
 	}
 	const raw = safeGet(indexStorageKey(scopeKey));
 	if (raw) {
 		try {
 			const parsed = JSON.parse(raw);
-			if (isThreadIndex(parsed) && parsed.threads.length > 0) {
+			if (isThreadIndex(parsed)) {
 				const known = new Set(parsed.threads.map((t) => t.id));
-				if (!known.has(parsed.activeThreadId)) {
+				if (
+					parsed.activeThreadId === null ||
+					!known.has(parsed.activeThreadId)
+				) {
 					return {
-						activeThreadId: parsed.threads[0].id,
+						activeThreadId: parsed.threads[0]?.id ?? null,
 						threads: parsed.threads,
 					};
 				}
 				return parsed;
 			}
 		} catch {
-			// fall through and reseed
+			// fall through to the empty default
 		}
 	}
-	const now = Date.now();
-	const t = makeEmptyThread(now);
-	const seeded: ThreadIndex = { activeThreadId: t.id, threads: [t] };
-	writeThreadIndex(scopeKey, seeded);
-	return seeded;
+	return { activeThreadId: null, threads: [] };
 }
 
 export function writeThreadIndex(scopeKey: string, index: ThreadIndex): void {
@@ -165,9 +159,8 @@ export function clearThreadMessages(threadId: string): void {
 // are keyed by threadId alone, so only the two indexes need rewriting; the
 // transcript itself stays in place.
 //
-// In the target scope the moved thread becomes active. If the target only had
-// the auto-seeded empty placeholder thread, it's replaced rather than kept
-// around as a dead "New chat" tab.
+// In the target scope the moved thread becomes active and is appended to
+// whatever threads already live there.
 export function moveThreadToScope(
 	threadId: string,
 	fromScopeKey: string,
@@ -180,34 +173,22 @@ export function moveThreadToScope(
 	const meta = fromIndex.threads.find((t) => t.id === threadId);
 	if (!meta) return;
 
-	// Detach from the source scope. readThreadIndex guarantees ≥1 thread, so
-	// reseed when the moved thread was the only one.
+	// Detach from the source scope. The scope may now be left with zero threads
+	// (it'll render the empty state) — that's fine, we no longer reseed.
 	const remaining = fromIndex.threads.filter((t) => t.id !== threadId);
-	if (remaining.length === 0) {
-		const seedThread = makeEmptyThread(Date.now());
-		writeThreadIndex(fromScopeKey, {
-			activeThreadId: seedThread.id,
-			threads: [seedThread],
-		});
-	} else {
-		writeThreadIndex(fromScopeKey, {
-			activeThreadId:
-				fromIndex.activeThreadId === threadId
-					? remaining[0].id
-					: fromIndex.activeThreadId,
-			threads: remaining,
-		});
-	}
-
-	// Attach to the target scope as the active thread. Drop empty placeholder
-	// threads the target scope may have auto-seeded.
-	const toIndex = readThreadIndex(toScopeKey);
-	const kept = toIndex.threads.filter((t) => {
-		if (t.id === threadId) return false;
-		if (t.title !== DEFAULT_THREAD_TITLE) return true;
-		const messages = readThreadMessages(t.id);
-		return messages !== null && messages.length > 0;
+	writeThreadIndex(fromScopeKey, {
+		activeThreadId:
+			fromIndex.activeThreadId === threadId
+				? (remaining[0]?.id ?? null)
+				: fromIndex.activeThreadId,
+		threads: remaining,
 	});
+
+	// Attach to the target scope as the active thread. We no longer auto-seed
+	// "New chat" placeholders, so every existing target thread is user-owned —
+	// keep them all (minus a stale copy of the moved thread, if any).
+	const toIndex = readThreadIndex(toScopeKey);
+	const kept = toIndex.threads.filter((t) => t.id !== threadId);
 	writeThreadIndex(toScopeKey, {
 		activeThreadId: threadId,
 		threads: [...kept, { ...meta, updatedAt: Date.now() }],
