@@ -6,8 +6,10 @@ import {
 	Scripts,
 } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { useEffect } from "react";
 import { CookieHint } from "../components/legal/cookie-hint";
 import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
+import { registerServiceWorker } from "../lib/pwa/register-sw";
 import { THEME_PRELOAD_SCRIPT, ThemeProvider } from "../lib/theme";
 import appCss from "../styles.css?url";
 
@@ -58,6 +60,11 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 });
 
 function RootDocument({ children }: { children: React.ReactNode }) {
+	// Register the PWA service worker after hydration (client-only). No-ops when
+	// the plugin is disabled (dev / e2e).
+	useEffect(() => {
+		void registerServiceWorker();
+	}, []);
 	return (
 		<html lang="en" suppressHydrationWarning>
 			<head>

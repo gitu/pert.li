@@ -38,6 +38,7 @@ import { MobileProjectsSheet } from "#/components/app-shell/mobile-projects-shee
 import { MobileTopBar } from "#/components/app-shell/mobile-top-bar";
 import { HistoryDrawer } from "#/components/pert/history/history-drawer";
 import { TaskInspector } from "#/components/pert/inspector/task-inspector";
+import { SyncStatus } from "#/components/sync/sync-status";
 import { Button } from "#/components/ui/button";
 import {
 	DropdownMenu,
@@ -71,9 +72,13 @@ import { CreateProjectDialog } from "#/components/workspace/create-project-dialo
 import { ProjectList } from "#/components/workspace/project-list";
 import { WorkspaceSwitcher } from "#/components/workspace/workspace-switcher";
 import { useActiveWorkspaceId } from "#/lib/active-workspace";
-import { authClient } from "#/lib/auth-client";
+import { useOfflineSession } from "#/lib/auth/offline-session";
+import { signOutEverywhere } from "#/lib/auth/sign-out";
 import { RepoProvider } from "#/lib/automerge/provider";
 import { chatDock, useChatDockMode } from "#/lib/chat-dock";
+import { QueryPersistGate } from "#/lib/query/persist-gate";
+import { useMergedProjects } from "#/lib/sync/merge-projects";
+import { useReconciler } from "#/lib/sync/use-reconciler";
 import { setThemeMode, type ThemeMode, useThemeMode } from "#/lib/theme";
 import { useIsMobile } from "#/lib/use-media-query";
 import { ViewModeProvider } from "#/lib/view-mode";
@@ -93,9 +98,28 @@ export const Route = createFileRoute("/_app")({
 	component: AppShell,
 });
 
+// Thin wrapper so the entire authed shell (including its loading/redirect
+// states) sits under the Query persistence provider — that's what makes the
+// project list and project→docUrl lookups render from IndexedDB while offline.
 function AppShell() {
+	const { queryClient } = Route.useRouteContext();
+	return (
+		<QueryPersistGate client={queryClient}>
+			<AppShellInner />
+		</QueryPersistGate>
+	);
+}
+
+function AppShellInner() {
 	const navigate = useNavigate();
-	const { data: session, isPending } = authClient.useSession();
+	// Offline-tolerant session: a previously-authenticated user keeps a cached
+	// identity so the shell still unlocks (read/edit local docs) when the live
+	// /api/auth check can't reach the server. Server fns remain cookie-gated.
+	const {
+		data: session,
+		isPending,
+		source: sessionSource,
+	} = useOfflineSession();
 	const [createOpen, setCreateOpen] = useState(false);
 	const [profileOpen, setProfileOpen] = useState(false);
 	const [mobileProjectsOpen, setMobileProjectsOpen] = useState(false);
@@ -137,13 +161,16 @@ function AppShell() {
 	const inProject = Boolean(leafParams.projectId);
 
 	useEffect(() => {
-		if (!isPending && !session) {
+		// Only bounce to signin/welcome when we're online and genuinely have no
+		// session ("none"). Offline with a cached identity ("offline") keeps the
+		// shell; an in-flight check ("pending") just shows the loader.
+		if (sessionSource === "none") {
 			// First-time visitors get the marketing page; returning ones (who
 			// already saw it and either signed in or bounced) go straight to the
 			// sign-in form so we don't make them re-scroll the pitch.
 			navigate({ to: hasSeenWelcome() ? "/signin" : "/welcome" });
 		}
-	}, [isPending, session, navigate]);
+	}, [sessionSource, navigate]);
 
 	if (isPending || !session) {
 		return (
@@ -168,6 +195,9 @@ function AppShell() {
 	return (
 		<ViewModeProvider>
 			<RepoProvider>
+				{/* Mounted inside RepoProvider so the reconcile loop can nudge the
+				    browser repo to re-announce freshly-registered docs. */}
+				<ReconcilerMount />
 				<TooltipProvider delayDuration={150}>
 					{isMobile ? (
 						<MobileShell
@@ -248,6 +278,13 @@ function AppShell() {
 			</RepoProvider>
 		</ViewModeProvider>
 	);
+}
+
+// Renders nothing — just keeps the offline-create reconcile loop running for
+// the lifetime of the authed shell (and inside RepoProvider for the sync nudge).
+function ReconcilerMount() {
+	useReconciler();
+	return null;
 }
 
 function DesktopShell({
@@ -522,6 +559,7 @@ function TopBar({
 				<PlusIcon className="size-4" />
 				New project
 			</Button>
+			<SyncStatus />
 			{showChatTrigger && <ChatTrigger />}
 			{showBottomToggle && (
 				<Button
@@ -582,7 +620,7 @@ function TopBar({
 					)}
 					<ThemeMenu />
 					<DropdownMenuSeparator />
-					<DropdownMenuItem onClick={() => void authClient.signOut()}>
+					<DropdownMenuItem onClick={() => void signOutEverywhere()}>
 						<LogOutIcon className="size-4" />
 						Sign out
 					</DropdownMenuItem>
@@ -677,6 +715,9 @@ function LeftNav({ onNewProject }: { onNewProject: () => void }) {
 	// `useParams` with `strict: false` returns the active leaf's params if it
 	// matches; otherwise `{}`. Used to highlight the active project.
 	const params = useParams({ strict: false }) as { projectId?: string };
+	// Union the server list with offline-created projects so they appear here
+	// even before they register (or while the workspace is offline).
+	const projects = useMergedProjects(projectsQuery.data ?? []);
 
 	return (
 		<div className="flex h-full flex-col">
@@ -706,17 +747,17 @@ function LeftNav({ onNewProject }: { onNewProject: () => void }) {
 				</Button>
 			</div>
 			<ScrollArea className="flex-1">
-				{projectsQuery.isPending ? (
+				{projectsQuery.isPending && projects.length === 0 ? (
 					<div className="px-3 py-2 text-xs text-muted-foreground">
 						Loading…
 					</div>
-				) : projectsQuery.isError ? (
+				) : projectsQuery.isError && projects.length === 0 ? (
 					<div className="px-3 py-2 text-xs text-destructive">
 						Couldn't load projects
 					</div>
 				) : (
 					<ProjectList
-						projects={projectsQuery.data ?? []}
+						projects={projects}
 						activeProjectId={params.projectId}
 						empty="No projects yet."
 					/>

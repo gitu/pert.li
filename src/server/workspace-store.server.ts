@@ -248,6 +248,66 @@ export async function createProjectRow(opts: {
 	});
 }
 
+// Register a client-created Automerge doc as a project row. The doc already
+// lives in the browser repo (created offline / optimistically); here we only
+// record the metadata pointing at it — we never call repo.create(). Recording
+// the row first is what lets the sync server's sharePolicy authorize the owner
+// to push the doc body (see automerge-server.server.ts).
+//
+// Idempotent on `automergeDocUrl`: a retry after a partial success (row
+// written but the response was lost) returns the existing row instead of
+// duplicating, and a second device that synced the same doc can't double-add.
+export async function registerProjectRow(opts: {
+	workspaceId: string;
+	title: string;
+	createdBy: string;
+	automergeDocUrl: string;
+	description?: string | null;
+}): Promise<{ project: ProjectSummary; alreadyRegistered: boolean }> {
+	const existing = await db
+		.select(projectColumns)
+		.from(project)
+		.where(eq(project.automergeDocUrl, opts.automergeDocUrl))
+		.limit(1);
+	if (existing.length > 0) {
+		const row = existing[0];
+		// Doc URLs are 128-bit randoms, so a row matching this URL was created by
+		// this user (or synced from their other device). Guard anyway: never hand
+		// back a row the caller didn't create — treat it as an unrecoverable
+		// conflict rather than leak another tenant's project.
+		if (row.createdBy !== opts.createdBy) {
+			throw new Error("This document is already registered to another account");
+		}
+		return { project: projectRowToSummary(row), alreadyRegistered: true };
+	}
+	const id = randomUUID();
+	await db.insert(project).values({
+		id,
+		workspaceId: opts.workspaceId,
+		title: opts.title,
+		description: opts.description?.trim() || null,
+		automergeDocUrl: opts.automergeDocUrl,
+		createdBy: opts.createdBy,
+	});
+	const createdAt = new Date();
+	return {
+		project: projectRowToSummary({
+			id,
+			workspaceId: opts.workspaceId,
+			title: opts.title,
+			description: opts.description?.trim() || null,
+			automergeDocUrl: opts.automergeDocUrl,
+			createdAt,
+			createdBy: opts.createdBy,
+			parentProjectId: null,
+			branchedFromHeads: null,
+			branchedAt: null,
+			archivedAt: null,
+		}),
+		alreadyRegistered: false,
+	};
+}
+
 // Fork an existing project into a sibling "branch" project. Clones the
 // parent's Automerge doc (preserving history + new actor id), captures heads
 // at fork time as the merge base, and stamps system markers on both docs so

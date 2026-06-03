@@ -33,6 +33,7 @@ const {
 	getWritableWorkspaceRole,
 	addMemberByEmail,
 	listProjectsForWorkspace,
+	registerProjectRow,
 	userCanWriteDoc,
 	createWorkspaceInvitation,
 	listWorkspaceInvitations,
@@ -294,6 +295,71 @@ describe("workspace store (against PGLite)", () => {
 				automergeDocUrl: docUrl,
 			});
 			expect(await userCanWriteDoc(bobId, docUrl)).toBe(false);
+		});
+	});
+
+	describe("registerProjectRow (offline-created docs)", () => {
+		const docUrl = (s: string) => `automerge:${s}`;
+
+		it("inserts a row pointing at the client doc URL and lists it", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			const url = docUrl("3Kkmw7nGq9offlineA");
+			const { project: created, alreadyRegistered } = await registerProjectRow({
+				workspaceId,
+				title: "Offline plan",
+				createdBy: ownerId,
+				automergeDocUrl: url,
+			});
+			expect(alreadyRegistered).toBe(false);
+			expect(created.automergeDocUrl).toBe(url);
+			expect(created.title).toBe("Offline plan");
+			const list = await listProjectsForWorkspace(workspaceId);
+			expect(list.map((p) => p.id)).toContain(created.id);
+		});
+
+		it("is idempotent on the doc URL — a retry converges, no duplicate row", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			const url = docUrl("3Kkmw7nGq9offlineB");
+			const first = await registerProjectRow({
+				workspaceId,
+				title: "Plan",
+				createdBy: ownerId,
+				automergeDocUrl: url,
+			});
+			const second = await registerProjectRow({
+				workspaceId,
+				title: "Plan (retry)",
+				createdBy: ownerId,
+				automergeDocUrl: url,
+			});
+			expect(second.alreadyRegistered).toBe(true);
+			expect(second.project.id).toBe(first.project.id);
+			const list = await listProjectsForWorkspace(workspaceId);
+			expect(list.filter((p) => p.automergeDocUrl === url).length).toBe(1);
+		});
+
+		it("refuses to hand back a doc registered to another account", async () => {
+			const aliceId = await seedUser("alice@example.com", "Alice");
+			const bobId = await seedUser("bob@example.com", "Bob");
+			const aliceWs = await ensurePersonalWorkspace(aliceId, "Alice");
+			const bobWs = await ensurePersonalWorkspace(bobId, "Bob");
+			const url = docUrl("3Kkmw7nGq9offlineC");
+			await registerProjectRow({
+				workspaceId: aliceWs,
+				title: "Alice's",
+				createdBy: aliceId,
+				automergeDocUrl: url,
+			});
+			await expect(
+				registerProjectRow({
+					workspaceId: bobWs,
+					title: "Bob steals it",
+					createdBy: bobId,
+					automergeDocUrl: url,
+				}),
+			).rejects.toThrow(/already registered to another account/i);
 		});
 	});
 

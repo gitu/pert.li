@@ -13,6 +13,7 @@ import {
 import { useRef } from "react";
 import { toast } from "sonner";
 import { UserAvatar } from "#/components/account/user-avatar";
+import { SyncStatus } from "#/components/sync/sync-status";
 import { Button } from "#/components/ui/button";
 import {
 	DropdownMenu,
@@ -22,7 +23,7 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
-import { authClient } from "#/lib/auth-client";
+import { signOutEverywhere } from "#/lib/auth/sign-out";
 import { chatDock, useChatDockMode } from "#/lib/chat-dock";
 import { useViewMode } from "#/lib/view-mode";
 
@@ -87,6 +88,7 @@ export function MobileTopBar({
 				</Button>
 			)}
 			{inProject && <ChatTrigger />}
+			<SyncStatus />
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<Button
@@ -122,7 +124,7 @@ export function MobileTopBar({
 						</DropdownMenuItem>
 					)}
 					<DropdownMenuSeparator />
-					<DropdownMenuItem onClick={() => void authClient.signOut()}>
+					<DropdownMenuItem onClick={() => void signOutEverywhere()}>
 						<LogOutIcon className="size-4" />
 						Sign out
 					</DropdownMenuItem>
