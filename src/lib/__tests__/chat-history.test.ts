@@ -168,13 +168,14 @@ describe("moveThreadToScope", () => {
 		expect(fromIndex.activeThreadId).toBeNull();
 	});
 
-	it("drops a stale 'New chat' placeholder already in the target scope", () => {
-		// A target scope that still holds an empty auto-titled placeholder.
+	it("keeps an existing empty 'New chat' thread in the target scope (no longer treated as a dead placeholder)", () => {
+		// Auto-seeding is gone, so an empty "New chat" in the target is a
+		// user-created thread and must not be silently dropped on move.
 		writeThreadIndex("project:branch", {
-			activeThreadId: "placeholder",
+			activeThreadId: "user-empty",
 			threads: [
 				{
-					id: "placeholder",
+					id: "user-empty",
 					title: DEFAULT_THREAD_TITLE,
 					createdAt: 1,
 					updatedAt: 1,
@@ -193,8 +194,11 @@ describe("moveThreadToScope", () => {
 		moveThreadToScope("moving", "project:parent", "project:branch");
 
 		const toIndex = readThreadIndex("project:branch");
-		// Only the moved thread remains — the dead "New chat" placeholder is gone.
-		expect(toIndex.threads.map((t) => t.id)).toEqual(["moving"]);
+		// Both threads survive; the moved one becomes active.
+		expect(toIndex.threads.map((t) => t.id).sort()).toEqual([
+			"moving",
+			"user-empty",
+		]);
 		expect(toIndex.activeThreadId).toBe("moving");
 	});
 

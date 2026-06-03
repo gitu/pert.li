@@ -64,11 +64,17 @@ const meta: Meta<typeof ChatPanel> = {
 	title: "AI/ChatPanel",
 	component: ChatPanel,
 	parameters: { layout: "centered" },
-	// Chat threads persist to localStorage, scoped per project. Clear it before
-	// each story so one story creating a thread can't leak into the next (they
-	// share the project:storybook-project scope).
+	// Chat threads persist to localStorage, scoped per project. Clear only the
+	// chat-owned keys before each story so one story creating a thread can't
+	// leak into the next (they share the project:storybook-project scope),
+	// without wiping unrelated persisted state (theme, etc.).
 	beforeEach: () => {
-		if (typeof window !== "undefined") window.localStorage.clear();
+		if (typeof window === "undefined") return;
+		for (const key of Object.keys(window.localStorage)) {
+			if (key.startsWith("pertli.chatThread")) {
+				window.localStorage.removeItem(key);
+			}
+		}
 	},
 	decorators: [
 		// Stories that want the no-project state set

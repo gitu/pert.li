@@ -76,8 +76,9 @@ test.describe("Chat threads", () => {
 		page,
 	}) => {
 		const tabs = page.getByTestId("chat-tabs");
-		await expect(tabs).toBeVisible();
+		// A fresh project has no tab strip until the first chat is started.
 		await startFirstChat(page);
+		await expect(tabs).toBeVisible();
 
 		// Seed the original thread directly via localStorage — sending a real
 		// user message round-trips through SSE which this spec deliberately
@@ -138,8 +139,9 @@ test.describe("Chat threads", () => {
 		page,
 	}) => {
 		const tabs = page.getByTestId("chat-tabs");
-		await expect(tabs).toBeVisible();
+		// A fresh project has no tab strip until the first chat is started.
 		await startFirstChat(page);
+		await expect(tabs).toBeVisible();
 		const firstTab = tabs.locator("[role='tab']").first();
 		const tabId = await firstTab.getAttribute("data-testid");
 		expect(tabId).toBeTruthy();
@@ -160,8 +162,9 @@ test.describe("Chat threads", () => {
 		page,
 	}) => {
 		const tabs = page.getByTestId("chat-tabs");
-		await expect(tabs).toBeVisible();
+		// A fresh project has no tab strip until the first chat is started.
 		await startFirstChat(page);
+		await expect(tabs).toBeVisible();
 
 		// Spawn an extra empty thread.
 		await page.getByTestId("chat-tab-new").click();
@@ -184,8 +187,9 @@ test.describe("Chat threads", () => {
 		page,
 	}) => {
 		const tabs = page.getByTestId("chat-tabs");
-		await expect(tabs).toBeVisible();
+		// A fresh project has no tab strip until the first chat is started.
 		await startFirstChat(page);
+		await expect(tabs).toBeVisible();
 		const firstTab = tabs.locator("[role='tab']").first();
 		const id =
 			(await firstTab.getAttribute("data-testid"))?.replace("chat-tab-", "") ??

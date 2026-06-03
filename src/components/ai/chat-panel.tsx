@@ -477,6 +477,10 @@ function BoundChatPanel({
 
 	const onCloseThread = useCallback(
 		(id: string) => {
+			// Bail if the thread is already gone from the latest index — it can be
+			// removed underneath us via cross-tab sync between hover and click, and
+			// we must not wipe a transcript for a thread this close didn't remove.
+			if (!index.threads.some((t) => t.id === id)) return;
 			updateIndex((prev) => {
 				const idx = prev.threads.findIndex((t) => t.id === id);
 				if (idx < 0) return prev;
@@ -496,7 +500,7 @@ function BoundChatPanel({
 			clearThreadMessages(id);
 			messageCountsRef.current.delete(id);
 		},
-		[updateIndex],
+		[index, updateIndex],
 	);
 
 	const onRenameThread = useCallback(
@@ -974,15 +978,19 @@ function BoundChatPanel({
 					{showDockControls && <ChatDockControls />}
 				</div>
 			</header>
-			<ChatTabs
-				threads={index.threads}
-				activeThreadId={activeThreadId ?? ""}
-				onSelect={onSelectThread}
-				onCreate={onCreateThread}
-				onClose={onCloseThread}
-				onRename={onRenameThread}
-				isThreadEmpty={isThreadEmpty}
-			/>
+			{/* No tab strip in the empty state — a tablist with zero tabs is an
+			    a11y mismatch, and the empty-state CTA below is the sole way in. */}
+			{index.threads.length > 0 && (
+				<ChatTabs
+					threads={index.threads}
+					activeThreadId={activeThreadId ?? ""}
+					onSelect={onSelectThread}
+					onCreate={onCreateThread}
+					onClose={onCloseThread}
+					onRename={onRenameThread}
+					isThreadEmpty={isThreadEmpty}
+				/>
+			)}
 			{activeThreadId ? (
 				<ChatThread
 					// Keyed by scope AND thread: moving a thread to another project (same

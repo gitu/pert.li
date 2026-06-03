@@ -159,9 +159,8 @@ export function clearThreadMessages(threadId: string): void {
 // are keyed by threadId alone, so only the two indexes need rewriting; the
 // transcript itself stays in place.
 //
-// In the target scope the moved thread becomes active. If the target only had
-// the auto-seeded empty placeholder thread, it's replaced rather than kept
-// around as a dead "New chat" tab.
+// In the target scope the moved thread becomes active and is appended to
+// whatever threads already live there.
 export function moveThreadToScope(
 	threadId: string,
 	fromScopeKey: string,
@@ -185,15 +184,11 @@ export function moveThreadToScope(
 		threads: remaining,
 	});
 
-	// Attach to the target scope as the active thread. Drop empty placeholder
-	// threads the target scope may have auto-seeded.
+	// Attach to the target scope as the active thread. We no longer auto-seed
+	// "New chat" placeholders, so every existing target thread is user-owned —
+	// keep them all (minus a stale copy of the moved thread, if any).
 	const toIndex = readThreadIndex(toScopeKey);
-	const kept = toIndex.threads.filter((t) => {
-		if (t.id === threadId) return false;
-		if (t.title !== DEFAULT_THREAD_TITLE) return true;
-		const messages = readThreadMessages(t.id);
-		return messages !== null && messages.length > 0;
-	});
+	const kept = toIndex.threads.filter((t) => t.id !== threadId);
 	writeThreadIndex(toScopeKey, {
 		activeThreadId: threadId,
 		threads: [...kept, { ...meta, updatedAt: Date.now() }],
