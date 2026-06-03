@@ -59,8 +59,9 @@ export const SingleThread: Story = {
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await canvas.findByTestId("chat-tabs");
-		// Close button is hidden with a single thread.
-		expect(canvas.queryByTestId("chat-tab-close-t1")).toBeNull();
+		// The close button is present even on the only thread — dropping the last
+		// thread is allowed (the panel falls back to its empty state).
+		expect(await canvas.findByTestId("chat-tab-close-t1")).toBeInTheDocument();
 		expect(await canvas.findByTestId("chat-tab-new")).toBeInTheDocument();
 	},
 };
