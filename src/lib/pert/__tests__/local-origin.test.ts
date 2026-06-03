@@ -66,6 +66,21 @@ describe("local-origin tracking", () => {
 		expect(consumeLocallyCreated("existing" as TaskId)).toBe(false);
 	});
 
+	it("records an added task even when another is removed in the same call (count unchanged)", () => {
+		const doc = createEmptyPertDoc("t");
+		doc.tasksById["old" as TaskId] = leaf("old" as TaskId);
+		const changeDoc = withLocalOriginTracking(makeChangeDoc(doc));
+
+		// A replace-style mutation: count stays at 1, so a count-based shortcut
+		// would miss the new task. The set diff must still catch it.
+		changeDoc((d) => {
+			delete d.tasksById["old" as TaskId];
+			d.tasksById["new" as TaskId] = leaf("new" as TaskId);
+		});
+
+		expect(consumeLocallyCreated("new" as TaskId)).toBe(true);
+	});
+
 	it("clearLocallyCreated drops pending entries (project unmount)", () => {
 		const doc = createEmptyPertDoc("t");
 		const changeDoc = withLocalOriginTracking(makeChangeDoc(doc));

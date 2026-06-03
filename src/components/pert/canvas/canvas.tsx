@@ -1425,6 +1425,12 @@ function useRecentlyCreatedHighlight(
 		const current = new Set(Object.keys(doc.tasksById));
 		if (lastSeen.current === null) {
 			lastSeen.current = current;
+			// Establishing the baseline: tasks that already exist on first mount
+			// are never in `additions`, so we never pan to them. Drain their
+			// local-origin flags now — otherwise an id created from another view
+			// (e.g. table quick-add) before navigating here would linger in the
+			// registry for the project's lifetime.
+			for (const id of current) consumeLocallyCreated(id as TaskId);
 			return;
 		}
 		const additions: TaskId[] = [];

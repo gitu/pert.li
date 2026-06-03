@@ -119,9 +119,15 @@ export function withLocalOriginTracking(changeDoc: ChangeFn): ChangeFn {
 		changeDoc((d) => {
 			const before = new Set(Object.keys(d.tasksById));
 			mutate(d);
+			// Diff the full key set rather than comparing counts: a single
+			// mutation can add one task and remove another (e.g. an AI proposal
+			// that replaces a node), leaving the count unchanged while still
+			// introducing a genuinely new id we must record.
+			const added: TaskId[] = [];
 			for (const id of Object.keys(d.tasksById)) {
-				if (!before.has(id)) noteLocallyCreated([id as TaskId]);
+				if (!before.has(id)) added.push(id as TaskId);
 			}
+			if (added.length > 0) noteLocallyCreated(added);
 		});
 	};
 }
