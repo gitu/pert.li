@@ -78,9 +78,12 @@ export const RETRY_BASE_MS = 1_000;
 export const RETRY_MAX_MS = 60_000;
 export const MAX_ATTEMPTS = 8;
 
-// Capped exponential backoff with full jitter. `attempts` is the number of
-// attempts already made (0 → first retry). rng is injectable so tests can pin
-// the jitter; production passes Math.random.
+// Capped exponential backoff with full jitter, computed as
+// `RETRY_BASE_MS * 2**attempts` (clamped to RETRY_MAX_MS) with jitter applied.
+// `attempts` is the running failure count the caller has already recorded —
+// the reconcile loop passes `record.attempts` AFTER incrementing it, so the
+// first transient failure schedules with attempts=1 → a ~2s window (not 1s).
+// rng is injectable so tests can pin the jitter; production passes Math.random.
 export function backoffDelayMs(
 	attempts: number,
 	rng: () => number = Math.random,
