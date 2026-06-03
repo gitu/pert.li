@@ -1,5 +1,5 @@
 import { GraduationCapIcon, SparklesIcon } from "lucide-react";
-import { TUTORIAL_SEEDS } from "#/components/ai/chat-panel";
+import { TUTORIAL_SEEDS } from "#/components/ai/tutorial-seeds";
 import { Button } from "#/components/ui/button";
 import { chatDock } from "#/lib/chat-dock";
 import { cn } from "#/lib/utils";
