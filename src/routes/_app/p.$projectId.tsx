@@ -22,7 +22,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CanvasLoading } from "#/components/canvas/canvas-loading";
 import { PertCanvas } from "#/components/pert/canvas/canvas";
 import { ExportProjectButton } from "#/components/pert/exchange/export-button";
-import { FullscreenInspectorPopup } from "#/components/pert/inspector/fullscreen-inspector-popup";
+import { FullscreenInspectorDock } from "#/components/pert/inspector/fullscreen-inspector-dock";
 import { MobileInspectorSheet } from "#/components/pert/inspector/mobile-inspector-sheet";
 import { TaskCardList } from "#/components/pert/list/task-card-list";
 import { TaskListView } from "#/components/pert/list/task-list-view";
@@ -40,6 +40,11 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
+import {
+	ResizableHandle,
+	ResizablePanel,
+	ResizablePanelGroup,
+} from "#/components/ui/resizable";
 import { Sheet, SheetContent } from "#/components/ui/sheet";
 import { BranchProjectDialog } from "#/components/workspace/branch-project-dialog";
 import { ProjectCommentsPanel } from "#/components/workspace/project-comments-panel";
@@ -65,7 +70,7 @@ import {
 } from "#/lib/pert/store";
 import { shareIdentityStore } from "#/lib/share-identity";
 import { useFullscreen } from "#/lib/use-fullscreen";
-import { useIsMobile } from "#/lib/use-media-query";
+import { useIsMobile, useMediaQuery } from "#/lib/use-media-query";
 import { cn } from "#/lib/utils";
 import { useViewMode } from "#/lib/view-mode";
 import { getProjectById, listProjects } from "#/server/workspace";
@@ -102,14 +107,22 @@ function ProjectCanvas() {
 	const isMobile = useIsMobile();
 
 	// Fullscreen at project level — wraps header tabs + active view + the
-	// floating inspector popup. The user can switch between Network /
-	// Timeline / Table / Matrix while staying in fullscreen.
+	// docked inspector. The user can switch between Network / Timeline /
+	// Table / Matrix while staying in fullscreen.
 	const fullscreenRef = useRef<HTMLDivElement>(null);
 	const { active: fullscreenActive, toggle: toggleFullscreen } =
 		useFullscreen(fullscreenRef);
 	const selectedTaskId = useStore(selectionStore, (s) =>
 		s.projectId === projectId ? s.taskId : null,
 	);
+
+	// Match the dock orientation to the window shape: a right side bar on
+	// landscape viewports (preserves vertical room for the long edit form),
+	// a bottom bar on portrait/tall viewports.
+	const portrait = useMediaQuery("(orientation: portrait)");
+	// Only desktop fullscreen docks the inspector beside the canvas; mobile
+	// keeps the bottom sheet, and non-fullscreen uses the shell bottom panel.
+	const showDock = !isMobile && fullscreenActive && selectedTaskId != null;
 
 	return (
 		<div
@@ -126,22 +139,42 @@ function ProjectCanvas() {
 				/>
 			)}
 			<div className="relative flex-1 overflow-hidden">
-				{repo ? (
-					<RepoReadyCanvas projectId={projectId} view={view} />
-				) : (
-					<CanvasLoading message="Initializing local sync repo…" />
-				)}
+				{/* The group is always rendered (single panel when nothing is
+				    docked) so the canvas's parent stays stable — it must NOT
+				    remount when fullscreen toggles or a selection appears, or
+				    React Flow loses its pan/zoom. react-resizable-panels can't
+				    switch axis live, so we remount the group when orientation
+				    flips (rare). */}
+				<ResizablePanelGroup
+					key={portrait ? "dock-vertical" : "dock-horizontal"}
+					orientation={portrait ? "vertical" : "horizontal"}
+					className="h-full w-full"
+				>
+					<ResizablePanel minSize="30%" className="relative">
+						{repo ? (
+							<RepoReadyCanvas projectId={projectId} view={view} />
+						) : (
+							<CanvasLoading message="Initializing local sync repo…" />
+						)}
+					</ResizablePanel>
+					{showDock && (
+						<>
+							<ResizableHandle withHandle />
+							<ResizablePanel
+								defaultSize={portrait ? "42%" : "32%"}
+								minSize="20%"
+								maxSize="60%"
+								className="bg-card"
+							>
+								<FullscreenInspectorDock
+									onClose={() => selectTask(projectId, null)}
+								/>
+							</ResizablePanel>
+						</>
+					)}
+				</ResizablePanelGroup>
 			</div>
-			{isMobile ? (
-				<MobileInspectorSheet projectId={projectId} />
-			) : (
-				fullscreenActive &&
-				selectedTaskId && (
-					<FullscreenInspectorPopup
-						onClose={() => selectTask(projectId, null)}
-					/>
-				)
-			)}
+			{isMobile && <MobileInspectorSheet projectId={projectId} />}
 		</div>
 	);
 }
