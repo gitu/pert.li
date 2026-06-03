@@ -1,6 +1,6 @@
 import { fetchServerSentEvents } from "@tanstack/ai-client";
 import { useChat } from "@tanstack/ai-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { useStore } from "@tanstack/react-store";
 import {
@@ -16,6 +16,7 @@ import {
 	PaperclipIcon,
 	PinIcon,
 	PinOffIcon,
+	PlusIcon,
 	SquareIcon,
 	TimerIcon,
 	UserIcon,
@@ -103,11 +104,13 @@ import {
 	type ChatBroadcast,
 	type ChatBroadcaster,
 	type ChatMessagesSnapshot,
+	clearThreadMessages,
 	createChatBroadcaster,
 	DEFAULT_THREAD_TITLE,
 	deriveThreadTitle,
 	getScopeKey,
 	moveThreadToScope,
+	newThreadId,
 	readThreadIndex,
 	readThreadMessages,
 	type ThreadIndex,
@@ -367,6 +370,18 @@ function BoundChatPanel({
 	}, [scopeKey]);
 
 	const activeThreadId = index.activeThreadId;
+	// Title of the project this chat is bound to, surfaced in the header so the
+	// chat ↔ project connection is visible. Sourced from the same cached
+	// `["project", id]` record the sidebar uses (loads reliably and is the
+	// canonical display name) rather than the Automerge doc, whose title only
+	// arrives once sync delivers the document. Header falls back to the bare
+	// "Chat" label until the record resolves.
+	const { data: project } = useQuery({
+		queryKey: ["project", projectId],
+		queryFn: () => getProjectById({ data: { projectId } }),
+		staleTime: 30_000,
+	});
+	const projectTitle = project?.title ?? null;
 	// Per-thread snapshot of message counts — populated by ChatThread via
 	// `onMessagesChanged`. Used to suppress the close-confirm prompt when a
 	// thread is still empty.
@@ -446,10 +461,7 @@ function BoundChatPanel({
 	const onCreateThread = useCallback(() => {
 		updateIndex((prev) => {
 			const now = Date.now();
-			const newId =
-				typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
-					? crypto.randomUUID()
-					: `t_${Math.random().toString(36).slice(2)}_${now.toString(36)}`;
+			const newId = newThreadId();
 			const meta: ThreadMeta = {
 				id: newId,
 				title: DEFAULT_THREAD_TITLE,
@@ -466,18 +478,22 @@ function BoundChatPanel({
 	const onCloseThread = useCallback(
 		(id: string) => {
 			updateIndex((prev) => {
-				if (prev.threads.length <= 1) return prev;
 				const idx = prev.threads.findIndex((t) => t.id === id);
 				if (idx < 0) return prev;
 				const nextThreads = prev.threads.filter((t) => t.id !== id);
+				// Dropping the last thread leaves the scope empty — activeThreadId
+				// goes null and the panel renders its empty state.
 				let nextActive = prev.activeThreadId;
 				if (prev.activeThreadId === id) {
 					const neighbor =
 						nextThreads[idx] ?? nextThreads[idx - 1] ?? nextThreads[0];
-					nextActive = neighbor.id;
+					nextActive = neighbor?.id ?? null;
 				}
 				return { activeThreadId: nextActive, threads: nextThreads };
 			});
+			// The thread is gone for good — drop its transcript too so it doesn't
+			// linger in localStorage.
+			clearThreadMessages(id);
 			messageCountsRef.current.delete(id);
 		},
 		[updateIndex],
@@ -798,9 +814,13 @@ function BoundChatPanel({
 									: "Target project not found or not accessible",
 						};
 					}
+					const threadId = activeThreadIdRef.current;
+					if (!threadId) {
+						return { ok: false as const, error: "No active chat to move" };
+					}
 					pendingChatMoveRef.current = {
 						targetProjectId: args.projectId,
-						threadId: activeThreadIdRef.current,
+						threadId,
 					};
 					return { ok: true as const, willNavigate: true };
 				}),
@@ -941,37 +961,69 @@ function BoundChatPanel({
 				<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
 					Chat
 				</div>
+				{projectTitle && (
+					<div
+						className="min-w-0 truncate text-xs text-muted-foreground"
+						title={projectTitle}
+						data-testid="chat-project-title"
+					>
+						· {projectTitle}
+					</div>
+				)}
 				<div className="ml-auto flex items-center gap-1">
 					{showDockControls && <ChatDockControls />}
 				</div>
 			</header>
 			<ChatTabs
 				threads={index.threads}
-				activeThreadId={activeThreadId}
+				activeThreadId={activeThreadId ?? ""}
 				onSelect={onSelectThread}
 				onCreate={onCreateThread}
 				onClose={onCloseThread}
 				onRename={onRenameThread}
 				isThreadEmpty={isThreadEmpty}
 			/>
-			<ChatThread
-				// Keyed by scope AND thread: moving a thread to another project (same
-				// threadId, new scope) must remount it so useChat re-initialises from
-				// the persisted transcript with tools bound to the new project.
-				key={`${scopeKey}:${activeThreadId}`}
-				threadId={activeThreadId}
-				scopeKey={scopeKey}
-				endpoint={endpoint}
-				initialPrompt={initialPrompt}
-				autoSendInitial={autoSendInitial}
-				tools={tools}
-				broadcaster={broadcasterRef.current}
-				registerAPI={registerThreadAPI}
-				onAutoTitle={(derived) => onAutoTitle(activeThreadId, derived)}
-				onMessagesChanged={(count) => onMessagesChanged(activeThreadId, count)}
-				onStreamSettled={flushPendingChatMove}
-				planLoop={{ autoContinue, onToggleAutoContinue }}
-			/>
+			{activeThreadId ? (
+				<ChatThread
+					// Keyed by scope AND thread: moving a thread to another project (same
+					// threadId, new scope) must remount it so useChat re-initialises from
+					// the persisted transcript with tools bound to the new project.
+					key={`${scopeKey}:${activeThreadId}`}
+					threadId={activeThreadId}
+					scopeKey={scopeKey}
+					endpoint={endpoint}
+					initialPrompt={initialPrompt}
+					autoSendInitial={autoSendInitial}
+					tools={tools}
+					broadcaster={broadcasterRef.current}
+					registerAPI={registerThreadAPI}
+					onAutoTitle={(derived) => onAutoTitle(activeThreadId, derived)}
+					onMessagesChanged={(count) =>
+						onMessagesChanged(activeThreadId, count)
+					}
+					onStreamSettled={flushPendingChatMove}
+					planLoop={{ autoContinue, onToggleAutoContinue }}
+				/>
+			) : (
+				<div
+					data-testid="chat-empty"
+					className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center"
+				>
+					<p className="text-sm font-medium">No chat yet</p>
+					<p className="max-w-xs text-xs text-muted-foreground">
+						Start a new chat to talk to the assistant about this project.
+					</p>
+					<Button
+						type="button"
+						size="sm"
+						onClick={onCreateThread}
+						data-testid="chat-empty-new"
+					>
+						<PlusIcon className="size-3.5" />
+						New chat
+					</Button>
+				</div>
+			)}
 		</div>
 	);
 }

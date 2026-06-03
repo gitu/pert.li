@@ -64,6 +64,12 @@ const meta: Meta<typeof ChatPanel> = {
 	title: "AI/ChatPanel",
 	component: ChatPanel,
 	parameters: { layout: "centered" },
+	// Chat threads persist to localStorage, scoped per project. Clear it before
+	// each story so one story creating a thread can't leak into the next (they
+	// share the project:storybook-project scope).
+	beforeEach: () => {
+		if (typeof window !== "undefined") window.localStorage.clear();
+	},
 	decorators: [
 		// Stories that want the no-project state set
 		// `parameters.initialPath = "/"`.
@@ -81,6 +87,24 @@ export default meta;
 
 type Story = StoryObj<typeof ChatPanel>;
 
+// A fresh project scope has no chat threads (we no longer auto-seed one), so
+// the panel opens to its empty state with a "New chat" CTA. Clicking it starts
+// the first thread.
+export const EmptyState: Story = {
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const panel = await canvas.findByTestId("chat-panel");
+		expect(panel).toBeInTheDocument();
+		expect(await canvas.findByTestId("chat-empty")).toBeInTheDocument();
+		// No conversation chrome until a chat exists.
+		expect(canvas.queryByTestId("chat-input")).toBeNull();
+		await userEvent.click(await canvas.findByTestId("chat-empty-new"));
+		// Empty state clears; the conversation input appears.
+		await waitFor(() => expect(canvas.queryByTestId("chat-empty")).toBeNull());
+		expect(await canvas.findByTestId("chat-input")).toBeInTheDocument();
+	},
+};
+
 // The default story points at /api/chat — in Storybook that route doesn't
 // exist, so we expect the panel to render but show an empty conversation
 // until the user types. The send button is disabled while input is empty.
@@ -89,6 +113,8 @@ export const Default: Story = {
 		const canvas = within(canvasElement);
 		const panel = await canvas.findByTestId("chat-panel");
 		expect(panel).toBeInTheDocument();
+		// Start a chat from the empty state first.
+		await userEvent.click(await canvas.findByTestId("chat-empty-new"));
 		const input = await canvas.findByTestId("chat-input");
 		expect(input).toBeInTheDocument();
 		const send = await canvas.findByTestId("chat-send");
@@ -109,8 +135,10 @@ export const WithSeedPrompt: Story = {
 	},
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		// Start a chat — the seed prompt lands in the input once the thread mounts.
+		await userEvent.click(await canvas.findByTestId("chat-empty-new"));
 		const send = await canvas.findByTestId("chat-send");
-		expect(send).not.toBeDisabled();
+		await waitFor(() => expect(send).not.toBeDisabled());
 	},
 };
 
@@ -120,6 +148,8 @@ export const WithSeedPrompt: Story = {
 export const WithAttachedMarkdown: Story = {
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
+		// Start a chat so the conversation chrome (file input) is mounted.
+		await userEvent.click(await canvas.findByTestId("chat-empty-new"));
 		const input = (await canvas.findByTestId(
 			"chat-file-input",
 		)) as HTMLInputElement;
