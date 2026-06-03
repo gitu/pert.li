@@ -125,12 +125,18 @@ export function MergeDrawer({
 			// removal already cascades them) and impossible add_dependency ops
 			// (endpoint gone). planMergeOps filters those out so the dry-run
 			// guard below only ever fires on genuine corruption.
-			const { ops } = planMergeOps(mergeSelectionToOps(selection), liveDoc);
+			const rawOps = mergeSelectionToOps(selection);
+			const { ops } = planMergeOps(rawOps, liveDoc);
 			// There are rows but nothing landed an op — either the user accepted
 			// nothing, or every accepted change was filtered as redundant/
 			// impossible. Don't silently archive a branch that still has drift.
 			if (ops.length === 0) {
-				throw new Error("Nothing to apply — select at least one change.");
+				if (rawOps.length === 0) {
+					throw new Error("Nothing to apply — select at least one change.");
+				}
+				throw new Error(
+					"The selected changes are no longer applicable — their endpoint tasks may have been removed.",
+				);
 			}
 			// Dry-run the ops on a deep clone of main first. If any fails we
 			// abort before touching the real doc, so we never land a partial
@@ -315,11 +321,12 @@ export function MergeDrawer({
 											onClick={() => applyMutation.mutate()}
 											disabled={
 												applyMutation.isPending ||
+												archiveMutation.isPending ||
 												(accepted === 0 && !archiveOnly)
 											}
 											data-testid="merge-apply"
 										>
-											{applyMutation.isPending
+											{applyMutation.isPending || archiveMutation.isPending
 												? "Applying…"
 												: archiveOnly
 													? "Archive branch"
