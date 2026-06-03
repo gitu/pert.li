@@ -8,7 +8,7 @@ import { Button } from "#/components/ui/button";
 import { ScrollArea } from "#/components/ui/scroll-area";
 import { Sheet, SheetContent } from "#/components/ui/sheet";
 import { applyOperations } from "#/lib/ai/apply-operations";
-import { mergeSelectionToOps } from "#/lib/ai/merge-to-ops";
+import { mergeSelectionToOps, planMergeOps } from "#/lib/ai/merge-to-ops";
 import { changeWith } from "#/lib/pert/change-meta";
 import { snapshotAt } from "#/lib/pert/history";
 import {
@@ -105,6 +105,12 @@ export function MergeDrawer({
 	const applyMutation = useMutation({
 		mutationFn: async () => {
 			if (!parentHandle || !merge) throw new Error("Parent not loaded");
+			// Archive-only path: a branch with no drift from main has no rows to
+			// merge. Skip the write entirely and fall through to onSuccess, which
+			// archives the branch when requested. Keyed strictly on "no rows" —
+			// NOT on "nothing accepted" — so a branch that still has drift the
+			// user chose to keep on main can never be archived without a merge.
+			if (merge.changes.length === 0) return 0;
 			const selection = merge.changes.map((c) => {
 				const key = rowKey(c);
 				return {
@@ -112,12 +118,29 @@ export function MergeDrawer({
 					resolution: resolutions[key] ?? c.suggestedSide,
 				};
 			});
-			const ops = mergeSelectionToOps(selection);
+			const liveDoc = parentHandle.doc();
+			if (!liveDoc) throw new Error("Parent doc not available");
+			// Sanitise the batch against the live doc: dropping a task on one
+			// side leaves behind redundant remove_dependency ops (the task
+			// removal already cascades them) and impossible add_dependency ops
+			// (endpoint gone). planMergeOps filters those out so the dry-run
+			// guard below only ever fires on genuine corruption.
+			const rawOps = mergeSelectionToOps(selection);
+			const { ops } = planMergeOps(rawOps, liveDoc);
+			// There are rows but nothing landed an op — either the user accepted
+			// nothing, or every accepted change was filtered as redundant/
+			// impossible. Don't silently archive a branch that still has drift.
+			if (ops.length === 0) {
+				if (rawOps.length === 0) {
+					throw new Error("Nothing to apply — select at least one change.");
+				}
+				throw new Error(
+					"The selected changes are no longer applicable — their endpoint tasks may have been removed.",
+				);
+			}
 			// Dry-run the ops on a deep clone of main first. If any fails we
 			// abort before touching the real doc, so we never land a partial
 			// merge or a misleading "merge-applied" marker.
-			const liveDoc = parentHandle.doc();
-			if (!liveDoc) throw new Error("Parent doc not available");
 			const probe = structuredClone(liveDoc) as PertDoc;
 			const dryRun = applyOperations(probe, ops);
 			const fails = dryRun.flatMap((r) =>
@@ -279,22 +302,40 @@ export function MergeDrawer({
 								>
 									Cancel
 								</Button>
-								<Button
-									type="button"
-									size="sm"
-									onClick={() => applyMutation.mutate()}
-									disabled={
-										applyMutation.isPending ||
-										countAccepted(merge.changes, resolutions) === 0
-									}
-									data-testid="merge-apply"
-								>
-									{applyMutation.isPending
-										? "Applying…"
-										: direction === "branch-to-main"
-											? "Apply to main"
-											: "Apply to branch"}
-								</Button>
+								{(() => {
+									const accepted = countAccepted(merge.changes, resolutions);
+									// A branch with NO drift from main (no rows at all) can
+									// still be archived: enable the button so the merge flow
+									// doubles as the archive action. Gated on "no rows" — not
+									// "nothing accepted" — so a conflict-only branch (which
+									// defaults every row to main → accepted === 0) stays
+									// disabled rather than offering to archive unmerged drift.
+									const archiveOnly =
+										merge.changes.length === 0 &&
+										archiveBranch &&
+										direction === "branch-to-main";
+									return (
+										<Button
+											type="button"
+											size="sm"
+											onClick={() => applyMutation.mutate()}
+											disabled={
+												applyMutation.isPending ||
+												archiveMutation.isPending ||
+												(accepted === 0 && !archiveOnly)
+											}
+											data-testid="merge-apply"
+										>
+											{applyMutation.isPending || archiveMutation.isPending
+												? "Applying…"
+												: archiveOnly
+													? "Archive branch"
+													: direction === "branch-to-main"
+														? "Apply to main"
+														: "Apply to branch"}
+										</Button>
+									);
+								})()}
 							</div>
 						</footer>
 					</>

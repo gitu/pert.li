@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { computeMerge } from "#/lib/pert/merge";
 import {
 	createEmptyPertDoc,
+	type Dependency,
 	type Estimate,
 	type PertDoc,
 	type Task,
@@ -33,6 +34,26 @@ function build(...tasks: Task[]): PertDoc {
 
 function clone(doc: PertDoc): PertDoc {
 	return JSON.parse(JSON.stringify(doc)) as PertDoc;
+}
+
+function dep(
+	id: string,
+	from: string,
+	to: string,
+	extra?: Partial<Dependency>,
+): Dependency {
+	return {
+		id,
+		from: { taskId: from, port: "finish" },
+		to: { taskId: to, port: "start" },
+		type: "finish_to_start",
+		...extra,
+	};
+}
+
+function withDeps(doc: PertDoc, ...deps: Dependency[]): PertDoc {
+	for (const d of deps) doc.dependenciesById[d.id] = d;
+	return doc;
 }
 
 describe("computeMerge", () => {
@@ -163,6 +184,42 @@ describe("computeMerge", () => {
 		const r = computeMerge({ base, main, branch });
 		expect(r.changes).toEqual([]);
 		expect(r.counts.sameResult).toBe(1);
+	});
+
+	it("surfaces a dropped task and its cascaded dependency as two clean removes", () => {
+		const base = withDeps(
+			build(leaf("A", "Alpha"), leaf("B", "Beta")),
+			dep("ab", "A", "B"),
+		);
+		const main = clone(base);
+		const branch = build(leaf("A", "Alpha")); // B + ab cascade-removed
+		const r = computeMerge({ base, main, branch });
+		expect(r.counts.conflict).toBe(0);
+		const removed = r.changes.filter(
+			(c) =>
+				c.kind === "entity" && c.classification === "clean-remove-from-branch",
+		);
+		expect(removed.map((c) => c.id).sort()).toEqual(["B", "ab"]);
+	});
+
+	it("classifies branch-removed dep + main-modified dep as conflict-removed-vs-modified", () => {
+		const base = withDeps(
+			build(leaf("A", "Alpha"), leaf("B", "Beta")),
+			dep("ab", "A", "B"),
+		);
+		const main = withDeps(
+			build(leaf("A", "Alpha"), leaf("B", "Beta")),
+			dep("ab", "A", "B", { lagDays: 2 }),
+		);
+		// Branch removed only the dependency (both tasks survive).
+		const branch = build(leaf("A", "Alpha"), leaf("B", "Beta"));
+		const r = computeMerge({ base, main, branch });
+		const depRow = r.changes.find((c) => c.entity === "dependency");
+		expect(depRow?.kind).toBe("entity");
+		if (depRow?.kind === "entity") {
+			expect(depRow.classification).toBe("conflict-removed-vs-modified");
+			expect(depRow.suggestedSide).toBe("main");
+		}
 	});
 
 	it("property: clean rows always suggest 'branch'; conflicts always suggest 'main'", () => {
