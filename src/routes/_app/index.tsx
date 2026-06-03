@@ -55,7 +55,9 @@ function WorkspaceHome() {
 			workspaces.find((w) => w.workspaceId === activeWorkspaceId)
 				?.workspaceId) ||
 		workspaces[0]?.workspaceId ||
-		projects[0]?.workspaceId;
+		// Fall back to a *server* project's workspace — never the merged list,
+		// whose offline-created entries carry a placeholder workspaceId ("").
+		(projectsQuery.data ?? [])[0]?.workspaceId;
 	const showTutorialProminent =
 		!projectsQuery.isPending && projects.length < TUTORIAL_PROMINENT_THRESHOLD;
 
