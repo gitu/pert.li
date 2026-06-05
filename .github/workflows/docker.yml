@@ -9,19 +9,17 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
-permissions:
-  contents: read
-  packages: write
-  # Workload Identity Federation: mint a short-lived OIDC token so we can
-  # auth to Google Cloud and kick off the deploy-only Cloud Build trigger
-  # without a long-lived service-account key.
-  id-token: write
-
 jobs:
-  publish:
+  # ---- Build -----------------------------------------------------------------
+  # Build the image, gate it, and push to ghcr.io. Self-contained: needs only
+  # packages:write (to push) + contents:read (to check out).
+  build:
     name: build + push ghcr.io
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -125,15 +123,26 @@ jobs:
             APP_VERSION=${{ steps.version.outputs.value }}
           cache-from: type=gha
 
-      # ---- Deploy handoff -------------------------------------------------
-      # The image now lives on ghcr.io. We do NOT rebuild on the Google side:
-      # a deploy-only Cloud Build trigger pulls THIS image through an Artifact
-      # Registry remote-repo proxy of ghcr.io, re-runs the secret-leak gate
-      # against the real Secret Manager values, applies the version gate, and
-      # rolls out to Cloud Run. See DEPLOY.md for the one-time WIF +
-      # remote-repo + trigger setup.
-      #   main  → staging trigger (_VERSION_GATE=off, always deploys)
-      #   tag v* → prod trigger    (_VERSION_GATE=on,  from-main + newest only)
+  # ---- Deploy ----------------------------------------------------------------
+  # Runs only after `build` succeeds (image is on ghcr.io). We do NOT rebuild
+  # on the Google side: a deploy-only Cloud Build trigger pulls THIS image
+  # through an Artifact Registry remote-repo proxy of ghcr.io, re-runs the
+  # secret-leak gate against the real Secret Manager values, applies the
+  # version gate, and rolls out to Cloud Run. See DEPLOY.md for the one-time
+  # WIF + remote-repo + trigger setup.
+  #   main  → staging trigger (_VERSION_GATE=off, always deploys)
+  #   tag v* → prod trigger    (_VERSION_GATE=on,  from-main + newest only)
+  # Separate job (not just a step) so the deploy carries only id-token:write,
+  # re-runs independently of the build, and shows as its own gate in the UI.
+  deploy:
+    name: deploy (Cloud Build)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -147,14 +156,14 @@ jobs:
       # $COMMIT_SHA inside the build, which resolves the exact ghcr image tag
       # to pull and deploy. The triggers are manual-invocation (they do NOT
       # auto-fire on push) so this is the single, ordered deploy path — no
-      # race with the image push above.
+      # race with the image push in the build job.
       - name: Trigger Cloud Run deploy
         run: |
           if [ "${{ github.ref_type }}" = "tag" ]; then
             # Only v* tags promote to prod (matches the old on-version
             # `^v.*$` trigger). A non-release tag still builds + pushes the
-            # image above, but does not run the prod trigger / touch prod
-            # secrets.
+            # image in `build`, but does not run the prod trigger / touch
+            # prod secrets.
             case "${{ github.ref_name }}" in
               v*) TRIGGER="${{ vars.CLOUD_BUILD_PROD_TRIGGER }}" ;;
               *)  echo "Tag '${{ github.ref_name }}' is not a v* release tag — image pushed, no deploy."; exit 0 ;;

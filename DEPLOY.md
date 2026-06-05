@@ -52,7 +52,6 @@ of `cloudbuild.yaml` for the full substitution matrix.
 
 2. **Create the Artifact Registry remote repo** that proxies ghcr.io. Cloud
    Run deploys from here; AR caches what it pulls from ghcr.io on first request.
-   (If your ghcr package is public, no upstream credentials are needed.)
 
    ```bash
    gcloud artifacts repositories create ghcr-remote \
@@ -60,6 +59,26 @@ of `cloudbuild.yaml` for the full substitution matrix.
      --mode=remote-repository \
      --remote-docker-repo=https://ghcr.io \
      --location=europe-west1
+   ```
+
+   **The ghcr package must be pullable by the proxy.** If
+   `ghcr.io/<owner>/<repo>` is **public**, no upstream credentials are needed.
+   If it's **private**, the proxy gets `unauthorized … upstream credentials are
+   invalid` — either flip the package to public (repo → Packages → package
+   settings → Change visibility) or attach upstream credentials to the remote
+   repo: store a GitHub PAT with `read:packages` in Secret Manager, grant the
+   AR service agent `secretmanager.secretAccessor` on it, and set them on the
+   repo:
+
+   ```bash
+   echo -n '<github-pat-with-read:packages>' | \
+     gcloud secrets create ghcr-pull-token --data-file=-
+   gcloud secrets add-iam-policy-binding ghcr-pull-token \
+     --member="serviceAccount:service-${PROJECT_NUMBER}@gcp-sa-artifactregistry.iam.gserviceaccount.com" \
+     --role="roles/secretmanager.secretAccessor"
+   gcloud artifacts repositories update ghcr-remote --location=europe-west1 \
+     --remote-username=<github-username> \
+     --remote-password-secret-version=projects/<project>/secrets/ghcr-pull-token/versions/latest
    ```
 
 3. **Create the secrets** (Secret Manager). The Cloud Build deploy step
@@ -148,9 +167,18 @@ of `cloudbuild.yaml` for the full substitution matrix.
    gcloud iam service-accounts create gh-deploy --display-name="GitHub Actions deploy"
    DEPLOY_SA="gh-deploy@${PROJECT_ID}.iam.gserviceaccount.com"
 
-   # It only needs to *start* builds; the build runs as CB_SA above.
+   # It only needs to *start* builds; each build runs as the deployer SA
+   # (step 4).
    gcloud projects add-iam-policy-binding "$PROJECT_ID" \
      --member="serviceAccount:${DEPLOY_SA}" --role="roles/cloudbuild.builds.editor"
+
+   # …and because each deploy build runs AS the deployer SA, gh-deploy must be
+   # allowed to impersonate (actAs) it — otherwise `gcloud builds triggers run`
+   # fails with "does not have impersonation permission on the trigger service
+   # account". Scope the grant to just the deployer SA:
+   gcloud iam service-accounts add-iam-policy-binding \
+     "pert-li-deployer@${PROJECT_ID}.iam.gserviceaccount.com" \
+     --member="serviceAccount:${DEPLOY_SA}" --role="roles/iam.serviceAccountUser"
 
    gcloud iam workload-identity-pools create github --location=global --display-name="GitHub"
    # The attribute-condition restricts which OIDC tokens can mint a credential:
