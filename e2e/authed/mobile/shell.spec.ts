@@ -14,10 +14,11 @@ test("workspace home renders the mobile top bar, not the desktop sidebar", async
 		timeout: 10_000,
 	});
 
-	// The desktop sidebar toggles (`topbar-toggle-left`, `topbar-toggle-bottom`)
-	// are part of the desktop TopBar, which must not render on phones.
-	await expect(page.getByTestId("topbar-toggle-left")).toHaveCount(0);
-	await expect(page.getByTestId("topbar-toggle-bottom")).toHaveCount(0);
+	// The desktop panel-collapse toggles (`panel-toggle-left`,
+	// `panel-toggle-bottom`) live on the desktop shell's resize dividers, which
+	// must not render on phones.
+	await expect(page.getByTestId("panel-toggle-left")).toHaveCount(0);
+	await expect(page.getByTestId("panel-toggle-bottom")).toHaveCount(0);
 
 	const viewport = page.viewportSize();
 	const scrollWidth = await page.evaluate(

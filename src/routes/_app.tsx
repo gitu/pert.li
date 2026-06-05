@@ -9,6 +9,10 @@ import {
 import {
 	BotIcon,
 	CheckIcon,
+	ChevronDownIcon,
+	ChevronLeftIcon,
+	ChevronRightIcon,
+	ChevronUpIcon,
 	CircleDotIcon,
 	EyeIcon,
 	FolderTreeIcon,
@@ -17,10 +21,6 @@ import {
 	LayersIcon,
 	LogOutIcon,
 	MoonIcon,
-	PanelBottomCloseIcon,
-	PanelBottomIcon,
-	PanelLeftCloseIcon,
-	PanelLeftIcon,
 	PencilIcon,
 	PlusIcon,
 	ShieldIcon,
@@ -333,15 +333,13 @@ function DesktopShell({
 				user={user}
 				onNewProject={onNewProject}
 				onEditProfile={onEditProfile}
+				// Still passed so the topbar can hide the workspace switcher when
+				// the sidebar is collapsed — the collapse *control* itself now
+				// lives on the sidebar divider (see the ResizableHandle below).
 				leftCollapsed={leftCollapsed}
-				bottomCollapsed={bottomCollapsed}
-				// Hide the bottom-panel toggle on routes without a bottom
-				// panel — nothing to collapse. The chat trigger is gated on
-				// the same flag: chat is bound to the active project.
-				showBottomToggle={inProject}
+				// The chat trigger is gated on the active project: chat is bound
+				// to a project.
 				showChatTrigger={inProject}
-				onToggleLeft={toggleLeft}
-				onToggleBottom={toggleBottom}
 			/>
 			<div className="min-h-0 flex-1">
 				<ResizablePanelGroup
@@ -364,7 +362,17 @@ function DesktopShell({
 						<LeftNav onNewProject={onNewProject} />
 					</ResizablePanel>
 
-					<ResizableHandle withHandle />
+					<ResizableHandle
+						withHandle
+						toggle={{
+							collapsed: leftCollapsed,
+							onToggle: toggleLeft,
+							label: leftCollapsed ? "Show sidebar" : "Hide sidebar",
+							testId: "panel-toggle-left",
+							collapseIcon: <ChevronLeftIcon />,
+							expandIcon: <ChevronRightIcon />,
+						}}
+					/>
 
 					<ResizablePanel
 						// Remount when the bottom panel toggles in/out so the new
@@ -384,7 +392,19 @@ function DesktopShell({
 										<Outlet />
 									</main>
 								</ResizablePanel>
-								<ResizableHandle withHandle />
+								<ResizableHandle
+									withHandle
+									toggle={{
+										collapsed: bottomCollapsed,
+										onToggle: toggleBottom,
+										label: bottomCollapsed
+											? "Show details panel"
+											: "Hide details panel",
+										testId: "panel-toggle-bottom",
+										collapseIcon: <ChevronDownIcon />,
+										expandIcon: <ChevronUpIcon />,
+									}}
+								/>
 								<ResizablePanel
 									panelRef={bottomRef}
 									defaultSize="38%"
@@ -496,11 +516,7 @@ function TopBar({
 	onNewProject,
 	onEditProfile,
 	leftCollapsed,
-	bottomCollapsed,
-	showBottomToggle,
 	showChatTrigger,
-	onToggleLeft,
-	onToggleBottom,
 }: {
 	user: {
 		name?: string | null;
@@ -511,30 +527,10 @@ function TopBar({
 	onNewProject: () => void;
 	onEditProfile: () => void;
 	leftCollapsed: boolean;
-	bottomCollapsed: boolean;
-	showBottomToggle: boolean;
 	showChatTrigger: boolean;
-	onToggleLeft: () => void;
-	onToggleBottom: () => void;
 }) {
 	return (
 		<header className="flex h-12 shrink-0 items-center gap-2 border-b bg-card px-3">
-			<Button
-				type="button"
-				size="icon"
-				variant="ghost"
-				className="size-8"
-				onClick={onToggleLeft}
-				aria-label={leftCollapsed ? "Show sidebar" : "Hide sidebar"}
-				aria-pressed={!leftCollapsed}
-				data-testid="topbar-toggle-left"
-			>
-				{leftCollapsed ? (
-					<PanelLeftIcon className="size-4" />
-				) : (
-					<PanelLeftCloseIcon className="size-4" />
-				)}
-			</Button>
 			<Link to="/" className="flex items-center gap-2">
 				<div className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
 					<LayersIcon className="size-4" />
@@ -562,26 +558,6 @@ function TopBar({
 			</Button>
 			<SyncStatus />
 			{showChatTrigger && <ChatTrigger />}
-			{showBottomToggle && (
-				<Button
-					type="button"
-					size="icon"
-					variant="ghost"
-					className="size-8"
-					onClick={onToggleBottom}
-					aria-label={
-						bottomCollapsed ? "Show details panel" : "Hide details panel"
-					}
-					aria-pressed={!bottomCollapsed}
-					data-testid="topbar-toggle-bottom"
-				>
-					{bottomCollapsed ? (
-						<PanelBottomIcon className="size-4" />
-					) : (
-						<PanelBottomCloseIcon className="size-4" />
-					)}
-				</Button>
-			)}
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<Button
