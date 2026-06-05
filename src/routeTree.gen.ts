@@ -12,7 +12,6 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as PrivacyRouteImport } from './routes/privacy'
-import { Route as AboutRouteImport } from './routes/about'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as ShareTokenRouteImport } from './routes/share.$token'
@@ -35,11 +34,6 @@ const SigninRoute = SigninRouteImport.update({
 const PrivacyRoute = PrivacyRouteImport.update({
   id: '/privacy',
   path: '/privacy',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AboutRoute = AboutRouteImport.update({
-  id: '/about',
-  path: '/about',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppRoute = AppRouteImport.update({
@@ -84,7 +78,6 @@ const AppPProjectIdRoute = AppPProjectIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
-  '/about': typeof AboutRoute
   '/privacy': typeof PrivacyRoute
   '/signin': typeof SigninRoute
   '/welcome': typeof WelcomeRoute
@@ -96,7 +89,6 @@ export interface FileRoutesByFullPath {
   '/api/auth/$': typeof ApiAuthSplatRoute
 }
 export interface FileRoutesByTo {
-  '/about': typeof AboutRoute
   '/privacy': typeof PrivacyRoute
   '/signin': typeof SigninRoute
   '/welcome': typeof WelcomeRoute
@@ -111,7 +103,6 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
-  '/about': typeof AboutRoute
   '/privacy': typeof PrivacyRoute
   '/signin': typeof SigninRoute
   '/welcome': typeof WelcomeRoute
@@ -127,7 +118,6 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/about'
     | '/privacy'
     | '/signin'
     | '/welcome'
@@ -139,7 +129,6 @@ export interface FileRouteTypes {
     | '/api/auth/$'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/about'
     | '/privacy'
     | '/signin'
     | '/welcome'
@@ -153,7 +142,6 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/_app'
-    | '/about'
     | '/privacy'
     | '/signin'
     | '/welcome'
@@ -168,7 +156,6 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
-  AboutRoute: typeof AboutRoute
   PrivacyRoute: typeof PrivacyRoute
   SigninRoute: typeof SigninRoute
   WelcomeRoute: typeof WelcomeRoute
@@ -199,13 +186,6 @@ declare module '@tanstack/react-router' {
       path: '/privacy'
       fullPath: '/privacy'
       preLoaderRoute: typeof PrivacyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/about': {
-      id: '/about'
-      path: '/about'
-      fullPath: '/about'
-      preLoaderRoute: typeof AboutRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_app': {
@@ -283,7 +263,6 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
-  AboutRoute: AboutRoute,
   PrivacyRoute: PrivacyRoute,
   SigninRoute: SigninRoute,
   WelcomeRoute: WelcomeRoute,

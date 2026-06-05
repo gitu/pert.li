@@ -270,10 +270,6 @@ function SignInPage() {
 							← back to home
 						</Link>
 						<span aria-hidden>·</span>
-						<Link to="/about" className="hover:text-foreground">
-							About
-						</Link>
-						<span aria-hidden>·</span>
 						<Link to="/privacy" className="hover:text-foreground">
 							Privacy
 						</Link>

@@ -12,6 +12,10 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  # Workload Identity Federation: mint a short-lived OIDC token so we can
+  # auth to Google Cloud and kick off the deploy-only Cloud Build trigger
+  # without a long-lived service-account key.
+  id-token: write
 
 jobs:
   publish:
@@ -61,6 +65,54 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha
+            # Full 40-char commit SHA, no `sha-` prefix. The deploy-only
+            # Cloud Build trigger is run with `--sha=<commit>` and pulls
+            # exactly this tag via `${COMMIT_SHA}` — an immutable, unambiguous
+            # handle (short-SHA length matching would be fragile).
+            type=sha,prefix=,format=long
+
+      # Build the runner image into the local daemon (not pushed yet) so the
+      # secret-leak gate below can run against the real `.output/public`
+      # bundle inside it. `cache-to` is written here; the push step reuses
+      # this cache and is therefore a near-instant no-op rebuild.
+      - name: Build image (load for the secret-leak gate)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: pert-li:scan
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.value }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Pre-push gate: the production client bundle must never contain a
+      # secret value, and no server-only module may be dragged into a client
+      # chunk. GitHub doesn't hold the real prod secrets, so we feed the
+      # scanner randomly-generated sentinels. This proves (a) the gate runs
+      # end-to-end against the freshly built bundle and (b) the server-only
+      # modules in SERVER_MARKERS were tree-shaken out of the client graph —
+      # that second check needs no real secret and is the meaningful one.
+      # (Cloud Build runs the same script with the *real* Secret Manager
+      # values; this is the always-on smoke test that travels with the build.)
+      - name: Secret-leak gate (synthetic secrets)
+        run: |
+          export DATABASE_URL="postgres://scan:$(openssl rand -hex 16)@example.invalid/scan"
+          export BETTER_AUTH_SECRET="$(openssl rand -hex 32)"
+          export GEMINI_API_KEY="AIza-$(openssl rand -hex 24)"
+          export RESEND_API_KEY="re_$(openssl rand -hex 24)"
+          docker run --rm \
+            -v "$PWD":/workspace \
+            -w /app \
+            -e BUNDLE_DIR=/app/.output/public \
+            -e SECRET_CHECK_KEYS=DATABASE_URL,BETTER_AUTH_SECRET,GEMINI_API_KEY,RESEND_API_KEY \
+            -e DATABASE_URL \
+            -e BETTER_AUTH_SECRET \
+            -e GEMINI_API_KEY \
+            -e RESEND_API_KEY \
+            --entrypoint node \
+            pert-li:scan \
+            /workspace/scripts/check-secret-leak.mjs
 
       - name: Build and push
         uses: docker/build-push-action@v7
@@ -72,4 +124,45 @@ jobs:
           build-args: |
             APP_VERSION=${{ steps.version.outputs.value }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+
+      # ---- Deploy handoff -------------------------------------------------
+      # The image now lives on ghcr.io. We do NOT rebuild on the Google side:
+      # a deploy-only Cloud Build trigger pulls THIS image through an Artifact
+      # Registry remote-repo proxy of ghcr.io, re-runs the secret-leak gate
+      # against the real Secret Manager values, applies the version gate, and
+      # rolls out to Cloud Run. See DEPLOY.md for the one-time WIF +
+      # remote-repo + trigger setup.
+      #   main  → staging trigger (_VERSION_GATE=off, always deploys)
+      #   tag v* → prod trigger    (_VERSION_GATE=on,  from-main + newest only)
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      # Run the deploy-only trigger pinned to THIS commit. `--sha` sets
+      # $COMMIT_SHA inside the build, which resolves the exact ghcr image tag
+      # to pull and deploy. The triggers are manual-invocation (they do NOT
+      # auto-fire on push) so this is the single, ordered deploy path — no
+      # race with the image push above.
+      - name: Trigger Cloud Run deploy
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            # Only v* tags promote to prod (matches the old on-version
+            # `^v.*$` trigger). A non-release tag still builds + pushes the
+            # image above, but does not run the prod trigger / touch prod
+            # secrets.
+            case "${{ github.ref_name }}" in
+              v*) TRIGGER="${{ vars.CLOUD_BUILD_PROD_TRIGGER }}" ;;
+              *)  echo "Tag '${{ github.ref_name }}' is not a v* release tag — image pushed, no deploy."; exit 0 ;;
+            esac
+          else
+            TRIGGER="${{ vars.CLOUD_BUILD_STAGING_TRIGGER }}"
+          fi
+          echo "Running Cloud Build trigger '$TRIGGER' at ${{ github.sha }}"
+          gcloud builds triggers run "$TRIGGER" \
+            --sha="${{ github.sha }}" \
+            --region="${{ vars.CLOUD_BUILD_REGION }}"

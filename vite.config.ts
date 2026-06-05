@@ -40,10 +40,6 @@ const useNeonProvisioning = process.env.USE_NEON_PROVISION === "1";
 // tree. See scripts/compute-version.mjs for the resolution order.
 process.env.VITE_APP_VERSION = getAppVersion();
 
-// Stamp the build (or dev-server start) time so the About page can show it.
-// CI may set VITE_BUILD_TIME explicitly; `??=` lets that value win.
-process.env.VITE_BUILD_TIME ??= new Date().toISOString();
-
 const config = defineConfig({
 	build: { target: ["chrome111", "edge111", "firefox114", "safari16.4"] },
 	resolve: { tsconfigPaths: true },
