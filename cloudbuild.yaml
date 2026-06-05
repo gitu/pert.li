@@ -1,99 +1,82 @@
-# Cloud Build pipeline. The same file drives two triggers — staging on every
-# push to main, production on a `v*` git tag — by overriding substitutions:
+# Deploy-only Cloud Build pipeline.
 #
-#   Trigger: "main → staging"      Trigger: "tag v* → prod"
-#   ─────────────────────────      ───────────────────────
-#   Event:   push to refs/heads/main  Event:   push to refs/tags/v*
-#   _SERVICE: pert-li-staging         _SERVICE: pert-li
-#   _BETTER_AUTH_URL: https://staging.pert.li/
-#                                    _BETTER_AUTH_URL: https://pert.li/
-#   _DATABASE_URL_SECRET: DATABASE_URL_STAGING
-#                                    _DATABASE_URL_SECRET: DATABASE_URL
-#   _BETTER_AUTH_SECRET_NAME: BETTER_AUTH_SECRET_STAGING
-#                                    _BETTER_AUTH_SECRET_NAME: BETTER_AUTH_SECRET
-#   _VERSION_GATE: "off"              _VERSION_GATE: "on"
-#   (same pattern for GEMINI_API_KEY_SECRET, RESEND_API_KEY_SECRET)
+# The image is built, secret-leak-gated (synthetic secrets), and pushed to
+# ghcr.io by GitHub Actions (.github/workflows/docker.yml). This config does
+# NOT rebuild it — that would duplicate the GitHub build. It is invoked, once
+# the image is on ghcr.io, by that workflow via
+# `gcloud builds triggers run <trigger> --sha=<commit>`. It:
+#   1. pulls THIS commit's image through an Artifact Registry remote-repo
+#      proxy of ghcr.io (no Google-side build, no push),
+#   2. re-runs the secret-leak gate against the REAL Secret Manager values,
+#   3. applies the production promotion gate (_VERSION_GATE),
+#   4. rolls the image out to Cloud Run.
 #
-# Both triggers run this YAML; the only difference is which substitutions and
-# secret names they point at. Defaults below are the production values so a
-# bare `gcloud builds submit` still deploys prod — the staging trigger MUST
-# override every `_*_SECRET` variable to a separate Secret Manager entry, or
-# the staging service will read/write the prod database.
+# The same file drives two MANUAL-INVOCATION triggers — staging and prod —
+# that differ only by substitutions:
 #
-# Promotion model:
-#   • Staging tracks main head-on: every push builds and rolls out to
-#     `pert-li-staging`. No gate — staging is meant to run ahead of prod.
+#   Trigger: "deploy staging" (run by GH on main)   Trigger: "deploy prod" (run by GH on tag v*)
+#   ─────────────────────────────────────────────   ────────────────────────────────────────────
+#   _SERVICE: pert-li-staging                        _SERVICE: pert-li
+#   _BETTER_AUTH_URL: https://staging.pert.li        _BETTER_AUTH_URL: https://pert.li
+#   _DATABASE_URL_SECRET: DATABASE_URL_STAGING       _DATABASE_URL_SECRET: DATABASE_URL
+#   _VERSION_GATE: "off"                             _VERSION_GATE: "on"
+#
+# Both triggers are MANUAL — they do NOT auto-fire on push. GitHub drives the
+# deploy after the image is pushed, so there is no race between "image on
+# ghcr.io" and "deploy pulls image". Defaults below are the production values.
+#
+# Promotion model (unchanged):
+#   • Staging tracks main head-on: every push deploys to `pert-li-staging`
+#     with `_VERSION_GATE: "off"` — no gate.
 #   • Production only advances to a *newer version that shipped through main*.
-#     The prod trigger fires on a `v*` tag with `_VERSION_GATE: "on"`; the
-#     `version-gate` step (below) then deploys only when the tagged commit is
-#     an ancestor of `origin/main` ("from main") AND the tag is the newest
-#     `v*` version reachable from main ("newer than the current one"). A tag
-#     on a side branch, or an older / re-pushed tag, still builds and pushes
-#     the image but SKIPS the rollout — prod never moves backwards. Release
-#     flow: merge to main, then `git tag vX.Y.Z <main-commit> && git push
-#     origin vX.Y.Z`.
+#     The prod trigger runs with `_VERSION_GATE: "on"`; the `version-gate`
+#     step deploys only when the tagged commit is an ancestor of `origin/main`
+#     AND the tag is the newest `v*` version reachable from main. A tag on a
+#     side branch, or an older / re-pushed tag, skips the rollout — prod never
+#     moves backwards. Release: merge to main, then
+#     `git tag vX.Y.Z <main-commit> && git push origin vX.Y.Z`.
+#
+# Image reference: GitHub pushes a tag equal to the full commit SHA
+# (docker/metadata `type=sha,prefix=,format=long`). The trigger is run with
+# `--sha=<commit>`, so `${COMMIT_SHA}` resolves the exact image. The
+# remote-repo proxy lazily fetches + caches it from ghcr.io on first pull.
 #
 # Substitution variables (set on the trigger or via `--substitutions`):
-#   _REGION                  deploy region, e.g. europe-west1
+#   _REGION                  deploy region + AR location, e.g. europe-west1
 #   _SERVICE                 Cloud Run service name (per-env)
-#   _REPO                    Artifact Registry repo, e.g. pert-li
+#   _REMOTE_REPO             AR remote repository proxying https://ghcr.io
+#   _GHCR_IMAGE              lowercase ghcr path: <owner>/<repo>
 #   _BETTER_AUTH_URL         public URL of the service
-#   _RESEND_FROM_EMAIL       sender for magic-link emails; `onboarding@resend.dev`
-#                            works for accounts without a verified domain (only
-#                            delivers to the API key's owner address).
+#   _RESEND_FROM_EMAIL       sender for magic-link emails
 #   _DATABASE_URL_SECRET     Secret Manager entry holding the per-env DB URL
 #   _BETTER_AUTH_SECRET_NAME Secret Manager entry for the per-env auth secret
 #   _GEMINI_API_KEY_SECRET   Secret Manager entry for the AI provider key
 #   _RESEND_API_KEY_SECRET   Secret Manager entry for the transactional email key
 #   _VERSION_GATE            "on"  → gate the rollout on the from-main + newest-
 #                                    version checks (production tag trigger).
-#                            "off" → always roll out (staging, and manual
-#                                    `gcloud builds submit` runs). Default off.
-#
-# The build version baked into the bundle (`import.meta.env.VITE_APP_VERSION`,
-# surfaced as the footer on /privacy and /signin) is resolved at build time
-# from `git describe --tags --always --dirty` — see the compute-version step.
+#                            "off" → always roll out (staging). Default off.
 substitutions:
   _REGION: europe-west1
   _SERVICE: pert-li
-  _REPO: pert-li
-  _BETTER_AUTH_URL: https://pert-li.example.run.app
-  _RESEND_FROM_EMAIL: onboarding@resend.dev
+  _REMOTE_REPO: ghcr-remote
+  _GHCR_IMAGE: gitu/pert.li
+  _BETTER_AUTH_URL: https://pert.li
+  _RESEND_FROM_EMAIL: noreply@pert.li
   _DATABASE_URL_SECRET: DATABASE_URL
   _BETTER_AUTH_SECRET_NAME: BETTER_AUTH_SECRET
   _GEMINI_API_KEY_SECRET: GEMINI_API_KEY
   _RESEND_API_KEY_SECRET: RESEND_API_KEY
   _VERSION_GATE: "off"
 
-images:
-  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}"
-  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:latest"
-
 options:
   logging: CLOUD_LOGGING_ONLY
-  machineType: E2_HIGHCPU_8
 
 steps:
-  # 0a. Pre-pull cache images for each intermediate stage AND the final
-  #     `:latest`. The runner image only ships final-stage layers, so without
-  #     per-stage cache images we'd lose hits on the slow `deps` and `build`
-  #     stages (pnpm fetch + install + tsc + vite). All best-effort — the
-  #     first ever build has nothing to pull.
-  - id: pull-cache
-    name: gcr.io/cloud-builders/docker
-    entrypoint: bash
-    args:
-      - -c
-      - |
-        for tag in cache-deps cache-build cache-prod-deps latest; do
-          docker pull ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:$$tag || true
-        done
-
   # 0b. Resolve the human-readable build version (e.g. `v0.3.2`, or
-  #     `v0.3.2-4-gabc1234` between tags). Cloud Build hands us a shallow
-  #     clone with no tags, so `git fetch --tags` first. Persisted to a
-  #     workspace file so subsequent docker build steps can read it as
-  #     `$(cat /workspace/APP_VERSION)`. Mirrors scripts/compute-version.mjs.
+  #     `v0.3.2-4-gabc1234` between tags) from git. Recorded as an env var on
+  #     the Cloud Run service (deploy step) and used by the version-gate as
+  #     the "new" version. Mirrors scripts/compute-version.mjs (same value
+  #     GitHub baked into the image via --build-arg APP_VERSION).
   - id: compute-version
     name: gcr.io/cloud-builders/git
     entrypoint: bash
@@ -106,22 +89,18 @@ steps:
         git describe --tags --always --dirty > /workspace/APP_VERSION
         printf 'APP_VERSION=%s\n' "$(cat /workspace/APP_VERSION)"
 
-  # 0c. Promotion gate. Decides whether the deploy step at the end may roll
-  #     out, by writing `yes`/`no` to /workspace/DEPLOY_GO (the deploy step
-  #     reads it and is a no-op on `no`). Runs on every build but only gates
-  #     when `_VERSION_GATE=on` (production tag trigger); staging and manual
-  #     submits pass `off` and always deploy.
+  # 0c. Promotion gate. Decides whether the deploy step may roll out, by
+  #     writing `yes`/`no` to /workspace/DEPLOY_GO (the deploy step reads it
+  #     and is a no-op on `no`). Only gates when `_VERSION_GATE=on` (production
+  #     tag trigger); staging passes `off` and always deploys.
   #
   #     With the gate on, prod rolls out only when BOTH hold:
   #       1. "from main"  — the built commit (HEAD) is an ancestor of
-  #          origin/main, so the release shipped through the main line and not
-  #          off a side branch / detached tag.
-  #       2. "newer than current" — the version (= the pushed tag, via
-  #          `git describe` on a tagged commit) is the highest `v*` tag
-  #          reachable from main, by `sort -V`. An older or re-pushed tag is
-  #          not the max, so prod never rolls backwards.
-  #     Either check failing writes `no` and exits 0 — the image is still built
-  #     and pushed (handy for inspection / manual rollout), just not deployed.
+  #          origin/main, so the release shipped through the main line.
+  #       2. "newer than current" — the version (= the pushed tag) is the
+  #          highest `v*` tag reachable from main, by `sort -V`. An older or
+  #          re-pushed tag is not the max, so prod never rolls backwards.
+  #     Either check failing writes `no` and exits 0 (clean skip).
   - id: version-gate
     name: gcr.io/cloud-builders/git
     entrypoint: bash
@@ -195,103 +174,17 @@ steps:
         echo "GATE: $$NEW is on main and the newest version — prod rollout allowed"
         echo yes > /workspace/DEPLOY_GO
 
-  # 1a. Build + push the `deps` stage as its own cache image. This is the
-  #     stage that runs `pnpm fetch` and is invalidated only when the
-  #     lockfile / package.json changes — cache hits here save the most time.
-  - id: build-deps-cache
-    name: gcr.io/cloud-builders/docker
-    waitFor: ["pull-cache"]
-    env:
-      - DOCKER_BUILDKIT=1
-    args:
-      - build
-      - --target=deps
-      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-deps
-      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-deps
-      - --build-arg=BUILDKIT_INLINE_CACHE=1
-      - .
-
-  # 1b. Build + push the `build` stage. Includes the deps stage + the
-  #     compile step (`pnpm install --offline` + `pnpm build`). Uses bash
-  #     entrypoint so APP_VERSION (resolved by step 0b) can be passed as
-  #     a build-arg via shell expansion.
-  - id: build-build-cache
-    name: gcr.io/cloud-builders/docker
-    waitFor: ["build-deps-cache", "compute-version"]
-    entrypoint: bash
-    env:
-      - DOCKER_BUILDKIT=1
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        docker build \
-          --target=build \
-          --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-build \
-          --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-deps \
-          --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-build \
-          --build-arg=BUILDKIT_INLINE_CACHE=1 \
-          --build-arg=APP_VERSION="$(cat /workspace/APP_VERSION)" \
-          .
-
-  # 1c. Build + push the `prod-deps` stage (production-only node_modules).
-  - id: build-prod-deps-cache
-    name: gcr.io/cloud-builders/docker
-    waitFor: ["build-deps-cache"]
-    env:
-      - DOCKER_BUILDKIT=1
-    args:
-      - build
-      - --target=prod-deps
-      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-prod-deps
-      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-deps
-      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-prod-deps
-      - --build-arg=BUILDKIT_INLINE_CACHE=1
-      - .
-
-  # 1. Build the final runner image, tagged with the commit SHA and `latest`.
-  #    BuildKit reuses the deps / build / prod-deps stage layers built above.
-  #    Bash entrypoint so APP_VERSION can be read from the workspace file
-  #    written by step 0b and passed as both a build-arg (bakes into the
-  #    bundle) and an extra image tag (e.g. `:v0.3.2`) for `gcloud run
-  #    revisions list` clarity.
-  - id: build
-    name: gcr.io/cloud-builders/docker
-    waitFor: ["build-build-cache", "build-prod-deps-cache"]
-    entrypoint: bash
-    env:
-      - DOCKER_BUILDKIT=1
-    args:
-      - -c
-      - |
-        set -euo pipefail
-        APP_VERSION="$(cat /workspace/APP_VERSION)"
-        # Docker tag chars: [A-Za-z0-9_.-], <=128. git describe output is
-        # already safe; the sed below strips a hypothetical `-dirty` (never
-        # set on CI's fresh checkout, but cheap insurance).
-        IMAGE_TAG="$(echo "$$APP_VERSION" | sed 's/-dirty$//')"
-        docker build \
-          --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA} \
-          --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:$$IMAGE_TAG \
-          --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:latest \
-          --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-deps \
-          --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-build \
-          --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:cache-prod-deps \
-          --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:latest \
-          --build-arg=BUILDKIT_INLINE_CACHE=1 \
-          --build-arg=APP_VERSION="$$APP_VERSION" \
-          .
-
-  # 2. Pre-push gate: scan the just-built client bundle for any literal
-  #    secret values pulled from Secret Manager. Blocks `push` + `deploy`
-  #    if a server-only secret ever ends up in .output/public/. We reuse
-  #    the freshly built image (it already has node + .output) and bind
-  #    the secrets in via secretEnv; the scripts dir comes in from the
-  #    Cloud Build workspace mount.
+  # 1. Secret-leak gate against the REAL Secret Manager values. Pulls THIS
+  #    commit's image through the AR remote-repo proxy and scans its client
+  #    bundle (.output/public) for any literal secret value or server-only
+  #    module that leaked into a client chunk. GitHub already ran this with
+  #    synthetic secrets; this is the defense-in-depth pass with the actual
+  #    per-env values. Scripts come from the trigger's source checkout
+  #    (mounted at /workspace), pinned to ${COMMIT_SHA}.
   - id: secrets-check
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
-    waitFor: ["build"]
+    waitFor: ["-"]
     secretEnv:
       - DATABASE_URL
       - BETTER_AUTH_SECRET
@@ -301,7 +194,11 @@ steps:
       - -c
       - |
         set -euo pipefail
-        IMAGE=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+        # The cloud-builders/docker builder auto-authenticates to this
+        # project's Artifact Registry (incl. the remote-repo proxy), so the
+        # pull below needs no `gcloud auth configure-docker` — and this image
+        # has no gcloud anyway.
+        IMAGE=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REMOTE_REPO}/${_GHCR_IMAGE}:${COMMIT_SHA}
         docker run --rm \
           -v "$$PWD":/workspace \
           -w /app \
@@ -318,43 +215,20 @@ steps:
   # Schema management runs at container start, not here. The runner image's
   # entrypoint (`scripts/docker-entrypoint.sh` → `scripts/migrate.mjs`)
   # applies versioned SQL migrations from `./drizzle/` against the live DB
-  # before the server binds, recording each one in
-  # `drizzle.__drizzle_migrations`. Single source of truth, pinned to the
-  # SQL files committed to the repo — schema changes ship via
-  # `pnpm db:generate` and the generated `drizzle/NNNN_*.sql` file, not
-  # via `drizzle-kit push` inferring from `src/db/schema.ts`.
-  #
-  # Failure mode if a deploy crashes with `42710 type "..." already exists`
-  # (e.g. a DB previously managed with `drizzle-kit push` — empty journal,
-  # populated schema): boot once with `BASELINE_MIGRATIONS=1` on the Cloud
-  # Run service to mark current journal entries as applied without running
-  # their SQL, then clear the flag.
+  # before the server binds. See DEPLOY.md for the BASELINE_MIGRATIONS escape
+  # hatch (`42710 ... already exists`).
 
-  # 3. Push all tags — both the deployable ones (:SHA and :latest) and the
-  #    per-stage cache images (:cache-deps, :cache-build, :cache-prod-deps)
-  #    so the next run can rehydrate them via --cache-from.
-  - id: push
-    name: gcr.io/cloud-builders/docker
-    waitFor: ["secrets-check"]
-    args:
-      - push
-      - --all-tags
-      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}
-
-  # 4. Deploy to Cloud Run — but only if the version-gate (step 0c) said yes.
-  #    On a gated prod build that didn't win the gate, DEPLOY_GO=no and this
-  #    step is a clean no-op (the image is already built + pushed). min=0
-  #    (scale to zero) per project decision; session-affinity keeps a given
-  #    client on a single instance so the in-memory Automerge Repo stays
-  #    consistent for their session. Real-time fan-out across instances would
-  #    need a Redis pub/sub (defer until we see multi-instance load).
-  #
-  #    APP_VERSION is recorded as an env var on the service so the currently
-  #    deployed version is visible via `gcloud run services describe`.
+  # 2. Deploy to Cloud Run from the proxied image — but only if the
+  #    version-gate (step 0c) said yes. On a gated prod build that didn't win
+  #    the gate, DEPLOY_GO=no and this step is a clean no-op. min=0 (scale to
+  #    zero); session-affinity keeps a client on one instance so the in-memory
+  #    Automerge Repo stays consistent for their session. APP_VERSION is
+  #    recorded as a service env var so the live version is visible via
+  #    `gcloud run services describe`.
   - id: deploy
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
-    waitFor: ["push", "version-gate"]
+    waitFor: ["secrets-check", "version-gate", "compute-version"]
     args:
       - -c
       - |
@@ -365,7 +239,7 @@ steps:
         fi
         APP_VERSION="$(cat /workspace/APP_VERSION)"
         gcloud run deploy ${_SERVICE} \
-          --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA} \
+          --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REMOTE_REPO}/${_GHCR_IMAGE}:${COMMIT_SHA} \
           --region=${_REGION} \
           --platform=managed \
           --allow-unauthenticated \
@@ -380,11 +254,9 @@ steps:
           --set-env-vars=NODE_ENV=production,AUTOMERGE_STORAGE=postgres,BETTER_AUTH_URL=${_BETTER_AUTH_URL},RESEND_FROM_EMAIL=${_RESEND_FROM_EMAIL},APP_VERSION="$$APP_VERSION" \
           --set-secrets=DATABASE_URL=${_DATABASE_URL_SECRET}:latest,BETTER_AUTH_SECRET=${_BETTER_AUTH_SECRET_NAME}:latest,GEMINI_API_KEY=${_GEMINI_API_KEY_SECRET}:latest,RESEND_API_KEY=${_RESEND_API_KEY_SECRET}:latest
 
-# Secret Manager bindings — referenced by step `secretEnv:` lists.
-# Each entry exposes the secret value as a normal env var inside the
-# step's shell. The Secret Manager entry names are substitution-driven
-# so the same YAML can target staging vs prod with distinct secret stores
-# (see the header comment for the per-trigger override matrix).
+# Secret Manager bindings — referenced by the secrets-check step's secretEnv.
+# The Secret Manager entry names are substitution-driven so the same YAML can
+# target staging vs prod with distinct secret stores (see header matrix).
 availableSecrets:
   secretManager:
     - versionName: projects/${PROJECT_ID}/secrets/${_DATABASE_URL_SECRET}/versions/latest
