@@ -8,6 +8,10 @@ import {
 } from "@tanstack/react-router";
 import { useStore } from "@tanstack/react-store";
 import {
+	ChevronDownIcon,
+	ChevronLeftIcon,
+	ChevronRightIcon,
+	ChevronUpIcon,
 	GitBranchIcon,
 	GridIcon,
 	ListIcon,
@@ -18,7 +22,8 @@ import {
 	Share2Icon,
 	TimerIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { PanelImperativeHandle } from "react-resizable-panels";
 import { CanvasLoading } from "#/components/canvas/canvas-loading";
 import { PertCanvas } from "#/components/pert/canvas/canvas";
 import { ExportProjectButton } from "#/components/pert/exchange/export-button";
@@ -126,6 +131,18 @@ function ProjectCanvas() {
 	// keeps the bottom sheet, and non-fullscreen uses the shell bottom panel.
 	const showDock = !isMobile && fullscreenActive && selectedTaskId != null;
 
+	// Collapse toggle for the docked inspector. Distinct from the dock's Close
+	// button (which deselects the task and hides the dock): collapsing keeps the
+	// task selected and the panel mounted at size 0, so you can peek at the full
+	// canvas and bring the editor back without re-selecting.
+	const dockRef = useRef<PanelImperativeHandle>(null);
+	const [dockCollapsed, setDockCollapsed] = useState(false);
+	const toggleDock = useCallback(() => {
+		const p = dockRef.current;
+		if (!p) return;
+		p.isCollapsed() ? p.expand() : p.collapse();
+	}, []);
+
 	return (
 		<div
 			ref={fullscreenRef}
@@ -161,11 +178,36 @@ function ProjectCanvas() {
 					</ResizablePanel>
 					{showDock && (
 						<>
-							<ResizableHandle withHandle />
+							<ResizableHandle
+								withHandle
+								toggle={{
+									collapsed: dockCollapsed,
+									onToggle: toggleDock,
+									label: dockCollapsed
+										? "Show details panel"
+										: "Hide details panel",
+									testId: "panel-toggle-dock",
+									side: portrait ? "bottom" : "right",
+									collapseIcon: portrait ? (
+										<ChevronDownIcon />
+									) : (
+										<ChevronRightIcon />
+									),
+									expandIcon: portrait ? (
+										<ChevronUpIcon />
+									) : (
+										<ChevronLeftIcon />
+									),
+								}}
+							/>
 							<ResizablePanel
+								panelRef={dockRef}
 								defaultSize={portrait ? "42%" : "32%"}
 								minSize="20%"
 								maxSize="60%"
+								collapsible
+								collapsedSize={0}
+								onResize={(size) => setDockCollapsed(size.asPercentage === 0)}
 								className="bg-card"
 							>
 								<FullscreenInspectorDock

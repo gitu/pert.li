@@ -61,3 +61,48 @@ test("bottom-panel divider toggle collapses and re-expands the details panel", a
 	await expect(toggle).toHaveAttribute("aria-pressed", "true");
 	await expect(page.getByTestId("right-tabs")).toBeVisible();
 });
+
+test("chat-rail divider toggle collapses and re-expands the pinned chat", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await page
+		.getByRole("banner")
+		.getByRole("button", { name: "New project" })
+		.click();
+	await page.getByLabel("Title").fill(`Chat rail ${Date.now()}`);
+	await page.getByRole("button", { name: "Create" }).click();
+	await page.waitForURL(/\/p\/[^/]+(\?|$)/, { timeout: 10_000 });
+
+	// Open the chat (sheet) then pin it into the right rail, where the divider
+	// toggle lives.
+	await page.getByTestId("topbar-chat-trigger").click();
+	const pin = page.getByTestId("chat-pin-toggle");
+	await expect(pin).toBeVisible();
+	await pin.click();
+
+	const toggle = page.getByTestId("panel-toggle-chat");
+	await expect(toggle).toBeVisible();
+	await expect(toggle).toHaveAttribute("aria-pressed", "true");
+	// The pin control lives in the chat header, inside the rail.
+	await expect(page.getByTestId("chat-pin-toggle")).toBeVisible();
+
+	const horizontalOverflow = () =>
+		page.evaluate(
+			() =>
+				document.documentElement.scrollWidth -
+				document.documentElement.clientWidth,
+		);
+
+	await toggle.click();
+	await expect(toggle).toHaveAttribute("aria-pressed", "false");
+	// Rail collapsed to zero width: the toggle stays pinned on the divider so
+	// the rail can be brought back without unpinning, and the collapsed (clipped)
+	// chat content must not spill and push a horizontal scrollbar onto the page.
+	await expect(toggle).toBeVisible();
+	expect(await horizontalOverflow()).toBeLessThanOrEqual(1);
+
+	await toggle.click();
+	await expect(toggle).toHaveAttribute("aria-pressed", "true");
+	await expect(page.getByTestId("chat-pin-toggle")).toBeVisible();
+});

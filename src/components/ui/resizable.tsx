@@ -15,10 +15,26 @@ type HandleToggle = {
 	/** aria-label — caller flips the wording with `collapsed`. */
 	label: string;
 	testId?: string;
+	/**
+	 * Which edge the collapsible panel sits on, relative to this divider. The
+	 * button protrudes toward the *content* side so it stays fully on-screen
+	 * when the panel collapses to size 0 and the divider lands at the very
+	 * edge. Defaults to "left" (collapsible panel on the left, e.g. a sidebar).
+	 */
+	side?: "left" | "right" | "bottom";
 	/** Shown when expanded; should point the collapse direction. */
 	collapseIcon: ReactNode;
 	/** Shown when collapsed; should point the expand direction. */
 	expandIcon: ReactNode;
+};
+
+// Anchor the toggle on the side opposite the collapsible panel so it never
+// clips at the collapsed edge: a left panel's button extends right, a right
+// panel's extends left, a bottom panel's extends up.
+const TOGGLE_POSITION: Record<NonNullable<HandleToggle["side"]>, string> = {
+	left: "left-0 top-3",
+	right: "right-0 top-3",
+	bottom: "bottom-0 left-1/2 -translate-x-1/2",
 };
 
 function ResizablePanelGroup({
@@ -55,12 +71,6 @@ function ResizableHandle({
 			data-slot="resizable-handle"
 			className={cn(
 				"relative flex w-px items-center justify-center bg-border after:absolute after:inset-y-0 after:left-1/2 after:w-1 after:-translate-x-1/2 focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:outline-hidden aria-[orientation=horizontal]:h-px aria-[orientation=horizontal]:w-full aria-[orientation=horizontal]:after:left-0 aria-[orientation=horizontal]:after:h-1 aria-[orientation=horizontal]:after:w-full aria-[orientation=horizontal]:after:translate-x-0 aria-[orientation=horizontal]:after:-translate-y-1/2 [&[aria-orientation=horizontal]>div]:rotate-90",
-				// A vertical divider anchors its toggle near the top and lets it
-				// protrude toward the content side (left-0) so it stays fully
-				// on-screen even when the panel collapses to the very edge. A
-				// horizontal divider re-anchors it: centered horizontally and
-				// sitting just above the line so it clears the bottom edge.
-				"[&[aria-orientation=horizontal]_[data-resize-toggle]]:bottom-0 [&[aria-orientation=horizontal]_[data-resize-toggle]]:left-1/2 [&[aria-orientation=horizontal]_[data-resize-toggle]]:top-auto [&[aria-orientation=horizontal]_[data-resize-toggle]]:-translate-x-1/2",
 				className,
 			)}
 			{...props}
@@ -82,7 +92,10 @@ function ResizableHandle({
 					onClick={toggle.onToggle}
 					aria-label={toggle.label}
 					aria-pressed={!toggle.collapsed}
-					className="absolute left-0 top-3 z-20 flex size-5 items-center justify-center rounded-sm border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-hidden [&_svg]:size-3.5"
+					className={cn(
+						"absolute z-20 flex size-5 items-center justify-center rounded-sm border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-hidden [&_svg]:size-3.5",
+						TOGGLE_POSITION[toggle.side ?? "left"],
+					)}
 				>
 					{toggle.collapsed ? toggle.expandIcon : toggle.collapseIcon}
 				</button>

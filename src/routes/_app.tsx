@@ -308,13 +308,18 @@ function DesktopShell({
 	onNewProject: () => void;
 	onEditProfile: () => void;
 }) {
-	// Refs into the collapsible panels so the topbar buttons can drive them
+	// Refs into the collapsible panels so the divider toggles can drive them
 	// imperatively (react-resizable-panels handles the size animation + min
 	// clamping). Mirror collapse state into React so the button icons can flip.
 	const leftRef = useRef<PanelImperativeHandle>(null);
 	const bottomRef = useRef<PanelImperativeHandle>(null);
+	const chatRef = useRef<PanelImperativeHandle>(null);
 	const [leftCollapsed, setLeftCollapsed] = useState(false);
 	const [bottomCollapsed, setBottomCollapsed] = useState(false);
+	// Collapsing the pinned chat rail keeps it *pinned* (its panel stays
+	// mounted at size 0) — distinct from closing it, which drops the dock back
+	// to sheet mode. So the conversation and the pinned arrangement both survive.
+	const [chatCollapsed, setChatCollapsed] = useState(false);
 
 	const toggleLeft = useCallback(() => {
 		const p = leftRef.current;
@@ -323,6 +328,11 @@ function DesktopShell({
 	}, []);
 	const toggleBottom = useCallback(() => {
 		const p = bottomRef.current;
+		if (!p) return;
+		p.isCollapsed() ? p.expand() : p.collapse();
+	}, []);
+	const toggleChat = useCallback(() => {
+		const p = chatRef.current;
 		if (!p) return;
 		p.isCollapsed() ? p.expand() : p.collapse();
 	}, []);
@@ -369,6 +379,7 @@ function DesktopShell({
 							onToggle: toggleLeft,
 							label: leftCollapsed ? "Show sidebar" : "Hide sidebar",
 							testId: "panel-toggle-left",
+							side: "left",
 							collapseIcon: <ChevronLeftIcon />,
 							expandIcon: <ChevronRightIcon />,
 						}}
@@ -401,6 +412,7 @@ function DesktopShell({
 											? "Show details panel"
 											: "Hide details panel",
 										testId: "panel-toggle-bottom",
+										side: "bottom",
 										collapseIcon: <ChevronDownIcon />,
 										expandIcon: <ChevronUpIcon />,
 									}}
@@ -428,12 +440,31 @@ function DesktopShell({
 
 					{pinnedChat && (
 						<>
-							<ResizableHandle withHandle />
+							<ResizableHandle
+								withHandle
+								toggle={{
+									collapsed: chatCollapsed,
+									onToggle: toggleChat,
+									label: chatCollapsed ? "Show chat" : "Hide chat",
+									testId: "panel-toggle-chat",
+									side: "right",
+									collapseIcon: <ChevronRightIcon />,
+									expandIcon: <ChevronLeftIcon />,
+								}}
+							/>
 							<ResizablePanel
+								panelRef={chatRef}
 								defaultSize="32%"
 								minSize="20%"
 								maxSize="50%"
-								className="bg-card"
+								collapsible
+								collapsedSize={0}
+								onResize={(size) => setChatCollapsed(size.asPercentage === 0)}
+								// Clip the portaled chat so a zero-width (collapsed) rail
+								// doesn't let the chat's min-width content spill off-screen
+								// — the sidebar/bottom panels clip via their own inner
+								// scroll/overflow, but this slot has none of its own.
+								className="overflow-hidden bg-card"
 							>
 								<div ref={setPinnedSlot} className="h-full" />
 							</ResizablePanel>
