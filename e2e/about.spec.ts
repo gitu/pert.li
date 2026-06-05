@@ -2,7 +2,9 @@
 // so any browser console error or warning — including a React SSR hydration
 // mismatch — fails these tests. The About page renders build metadata, which is
 // a classic hydration-mismatch trap, so we want that guard here.
+
 import { expect, test } from "./console";
+import { COOKIE_HINT_KEY } from "./fixtures";
 
 test.describe("/about (unauthenticated)", () => {
 	test("renders the about page and states pert.li is open source", async ({
@@ -63,6 +65,13 @@ test.describe("/about (unauthenticated)", () => {
 	});
 
 	test("is reachable from the welcome page footer", async ({ page }) => {
+		// The cookie-hint banner is `fixed bottom-0` and overlays the page-bottom
+		// footer, so its links aren't clickable until it's gone. Pre-dismiss it
+		// (as a returning visitor would have) so the About link is actionable.
+		await page.addInitScript(
+			(key) => window.localStorage.setItem(key, "1"),
+			COOKIE_HINT_KEY,
+		);
 		await page.goto("/welcome");
 		await page
 			.getByRole("contentinfo")

@@ -94,14 +94,21 @@ const OPEN_SOURCE: Array<{
 
 function formatBuildTime(iso: string | null): string | null {
 	if (!iso) return null;
-	// Format deterministically straight from the ISO string — no locale or
-	// timezone lookup. The server and client must render the byte-identical
-	// string or React reports a hydration mismatch (and `toLocaleString`
-	// resolves differently under the server's locale/TZ than the browser's).
-	const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(iso);
-	if (!match) return null;
-	const [, year, month, day, hour, minute] = match;
-	return `${year}-${month}-${day} ${hour}:${minute} UTC`;
+	const date = new Date(iso);
+	if (Number.isNaN(date.getTime())) return null;
+	// Format from the date's UTC components. This is deterministic — the server
+	// and client must render the byte-identical string or React reports a
+	// hydration mismatch, and `toLocaleString` resolves differently under the
+	// server's locale/TZ than the browser's. Reading UTC components (rather than
+	// slicing the raw string) also keeps the "UTC" label honest when the input
+	// carries a non-Z offset, e.g. `…+02:00` — it's converted, not mislabeled.
+	const pad = (n: number) => String(n).padStart(2, "0");
+	const y = date.getUTCFullYear();
+	const mo = pad(date.getUTCMonth() + 1);
+	const d = pad(date.getUTCDate());
+	const h = pad(date.getUTCHours());
+	const mi = pad(date.getUTCMinutes());
+	return `${y}-${mo}-${d} ${h}:${mi} UTC`;
 }
 
 function AboutPage() {
