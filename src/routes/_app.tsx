@@ -31,6 +31,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import { ProfileDialog } from "#/components/account/profile-dialog";
+import { SyncNowItem } from "#/components/account/sync-now-item";
 import { UserAvatar } from "#/components/account/user-avatar";
 import { ChatPanel } from "#/components/ai/chat-panel";
 import { MobileBottomNav } from "#/components/app-shell/mobile-bottom-nav";
@@ -626,6 +627,7 @@ function TopBar({
 							</Link>
 						</DropdownMenuItem>
 					)}
+					<SyncNowItem />
 					<ThemeMenu />
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onClick={() => void signOutEverywhere()}>
