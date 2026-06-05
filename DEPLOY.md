@@ -1,8 +1,21 @@
 # Deploying pert.li to Cloud Run
 
 The repo ships with a multi-stage `Dockerfile` and a `cloudbuild.yaml` that
-builds the image, pushes it to Artifact Registry, and rolls out to Cloud
-Run on every push to `main`.
+builds the image, pushes it to Artifact Registry, and rolls out to Cloud Run.
+The **same** `cloudbuild.yaml` drives two environments via per-trigger
+substitutions:
+
+| Environment | Trigger event | `_SERVICE` | Rolls out when |
+| --- | --- | --- | --- |
+| **Staging** | push to `main` | `pert-li-staging` | always (every push) |
+| **Production** | push of a `v*` tag | `pert-li` | only if the tag is reachable from `main` **and** is the newest `v*` version (the `_VERSION_GATE=on` check) |
+
+So `main` continuously deploys staging, and production only advances to a
+newer version that shipped through `main`. To release: merge to `main`, then
+`git tag vX.Y.Z <main-commit> && git push origin vX.Y.Z`. A tag on a side
+branch, or an older / re-pushed tag, still builds the image but **skips** the
+production rollout — prod never moves backwards. See the header of
+`cloudbuild.yaml` for the full substitution matrix.
 
 ## One-time setup
 
@@ -50,6 +63,29 @@ Run on every push to `main`.
    `cloudbuild.yaml` or set `LLM_PROVIDER=<name>` and rely on the
    auto-detect order in `src/lib/ai/provider.ts`.
 
+   **Staging gets its own secrets.** The staging trigger overrides every
+   `_*_SECRET` substitution so staging reads/writes a **separate database**
+   and never touches prod data. Create the `_STAGING` counterparts (at
+   minimum a distinct `DATABASE_URL_STAGING`; reuse the others only if you
+   accept the coupling):
+
+   ```bash
+   echo -n 'postgres://...neon-STAGING-url...' | \
+     gcloud secrets create DATABASE_URL_STAGING --data-file=-
+   echo -n "$(npx -y @better-auth/cli secret)" | \
+     gcloud secrets create BETTER_AUTH_SECRET_STAGING --data-file=-
+   echo -n 'AIza...your-gemini-key...' | \
+     gcloud secrets create GEMINI_API_KEY_STAGING --data-file=-
+   echo -n 're_...your-resend-api-key...' | \
+     gcloud secrets create RESEND_API_KEY_STAGING --data-file=-
+   ```
+
+   The staging trigger then points `_DATABASE_URL_SECRET=DATABASE_URL_STAGING`,
+   `_BETTER_AUTH_SECRET_NAME=BETTER_AUTH_SECRET_STAGING`, etc. (see step 6).
+   ⚠️ If the staging trigger omits these overrides it falls back to the
+   production defaults in `cloudbuild.yaml` and **staging will write the prod
+   database.**
+
 4. **Grant the Cloud Build service account permission** to deploy to Cloud
    Run and read the secrets:
 
@@ -80,23 +116,91 @@ Run on every push to `main`.
    will record every journal entry as applied without re-running its
    SQL. Clear the flag afterwards.
 
-6. **Create the Cloud Build trigger** pointing at your GitHub repo's
-   `main` branch:
+6. **Create the two Cloud Build triggers.** A given trigger targets a given
+   environment purely through its `--substitutions` — the build config is
+   shared. The two knobs that matter most are `_SERVICE` (which Cloud Run
+   service to deploy) and `_DATABASE_URL_SECRET` (which Secret Manager entry
+   to mount as `DATABASE_URL`).
+
+   **Staging — push to `main`:**
 
    ```bash
    gcloud builds triggers create github \
-     --name=pert-li-main \
+     --name=pert-li-staging \
      --repo-name=pert.li \
      --repo-owner=<your-github-owner> \
      --branch-pattern='^main$' \
      --build-config=cloudbuild.yaml \
-     --substitutions=_BETTER_AUTH_URL=https://pert-li-<PROJECT_NUMBER>.europe-west1.run.app
+     --substitutions=\
+   _SERVICE=pert-li-staging,\
+   _VERSION_GATE=off,\
+   _BETTER_AUTH_URL=https://staging.pert.li/,\
+   _DATABASE_URL_SECRET=DATABASE_URL_STAGING,\
+   _BETTER_AUTH_SECRET_NAME=BETTER_AUTH_SECRET_STAGING,\
+   _GEMINI_API_KEY_SECRET=GEMINI_API_KEY_STAGING,\
+   _RESEND_API_KEY_SECRET=RESEND_API_KEY_STAGING
    ```
 
-   The first deploy creates the service URL; once you have it, update the
-   trigger's `_BETTER_AUTH_URL` substitution to match. Better Auth uses
-   this for cookie domain and redirect URLs — if it's wrong, sign-in
-   silently fails.
+   **Production — push of a `v*` tag:**
+
+   ```bash
+   gcloud builds triggers create github \
+     --name=pert-li-prod \
+     --repo-name=pert.li \
+     --repo-owner=<your-github-owner> \
+     --tag-pattern='^v.*$' \
+     --build-config=cloudbuild.yaml \
+     --substitutions=\
+   _SERVICE=pert-li,\
+   _VERSION_GATE=on,\
+   _BETTER_AUTH_URL=https://pert.li/
+   ```
+
+   Production keeps the prod secret defaults from `cloudbuild.yaml`
+   (`DATABASE_URL`, `BETTER_AUTH_SECRET`, …) so it only needs to override
+   `_SERVICE`, `_VERSION_GATE`, and `_BETTER_AUTH_URL`. `_VERSION_GATE=on`
+   is what enforces "from main and newer than the current version" before a
+   rollout.
+
+   **Switching service / overriding the database secret on an _existing_
+   trigger.** Both knobs are just substitutions, so repoint a trigger
+   without recreating it. `triggers update` **replaces** the substitution
+   map, so always pass the full set you want:
+
+   ```bash
+   # Point the main trigger at staging + a separate DB (the repoint you need
+   # if `main` currently deploys prod):
+   gcloud builds triggers update pert-li-staging \
+     --substitutions=\
+   _SERVICE=pert-li-staging,\
+   _VERSION_GATE=off,\
+   _BETTER_AUTH_URL=https://staging.pert.li/,\
+   _DATABASE_URL_SECRET=DATABASE_URL_STAGING,\
+   _BETTER_AUTH_SECRET_NAME=BETTER_AUTH_SECRET_STAGING,\
+   _GEMINI_API_KEY_SECRET=GEMINI_API_KEY_STAGING,\
+   _RESEND_API_KEY_SECRET=RESEND_API_KEY_STAGING
+   ```
+
+   `_SERVICE` selects the Cloud Run service the `deploy` step targets;
+   `_DATABASE_URL_SECRET` selects the Secret Manager entry bound to
+   `DATABASE_URL` (the service reads/writes whatever DB that URL points at).
+   Inspect what a trigger is currently set to with:
+
+   ```bash
+   gcloud builds triggers describe pert-li-staging \
+     --format='value(substitutions)'
+   ```
+
+   > ⚠️ **You already have `main` deploying prod.** Until the `main` trigger
+   > is repointed to `pert-li-staging` (and a `_DATABASE_URL_STAGING` secret),
+   > the next push to `main` rolls out to **production**. Run the
+   > `triggers update` above before merging more work to `main`.
+
+   The first staging deploy creates the service URL; once you have it, update
+   the trigger's `_BETTER_AUTH_URL` to match (and map `staging.pert.li` /
+   `pert.li` to the services via Cloud Run domain mappings). Better Auth uses
+   `_BETTER_AUTH_URL` for cookie domain and redirect URLs — if it's wrong,
+   sign-in silently fails.
 
 ## Local smoke test of the production image
 
@@ -127,4 +231,13 @@ to `ws://localhost:8080/sync`.
   (durable state is in Postgres; live sync is in-process). Adding a
   Redis pub/sub between instances is the next step if concurrent load
   grows.
-- **Rollback**: `gcloud run services update-traffic pert-li --to-revisions=<prev>=100`.
+- **Releasing to prod**: merge to `main` (auto-deploys staging), verify on
+  staging, then tag: `git tag vX.Y.Z <main-commit> && git push origin vX.Y.Z`.
+  The prod build runs the version gate (`version-gate` step) — if the tag
+  isn't reachable from `main` or isn't the newest `v*` version, the build
+  succeeds and pushes the image but logs `deploy skipped — version gate did
+  not approve …` and does not roll out. The deployed version is recorded as
+  the `APP_VERSION` env var on the service (`gcloud run services describe
+  pert-li --region=europe-west1 --format='value(spec.template.spec.containers[0].env)'`).
+- **Rollback**: `gcloud run services update-traffic <service> --region=europe-west1 --to-revisions=<prev>=100`
+  (`<service>` is `pert-li` for prod, `pert-li-staging` for staging).
