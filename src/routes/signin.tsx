@@ -5,6 +5,7 @@ import { VersionFooter } from "#/components/legal/version-footer";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
+import { useAppConfig } from "#/lib/app-config";
 import { authClient } from "#/lib/auth-client";
 import { getOidcButton } from "#/server/oidc";
 
@@ -29,6 +30,7 @@ export const Route = createFileRoute("/signin")({
 
 function SignInPage() {
 	const navigate = useNavigate();
+	const { appName, privacy } = useAppConfig();
 	const oidcButton = Route.useLoaderData();
 	const { callbackURL } = Route.useSearch();
 	const callback = callbackURL ?? "/";
@@ -123,7 +125,7 @@ function SignInPage() {
 						</h1>
 						<p className="text-sm text-muted-foreground">
 							{mode === "signin"
-								? "Welcome back to pert.li."
+								? `Welcome back to ${appName}.`
 								: mode === "signup"
 									? "Pick a name and an email to get started. Prefer not to set a password? Use a sign-in link instead."
 									: "We'll email a one-time link. Works for new accounts too — no password ever required."}
@@ -273,10 +275,14 @@ function SignInPage() {
 						<Link to="/about" className="hover:text-foreground">
 							About
 						</Link>
-						<span aria-hidden>·</span>
-						<Link to="/privacy" className="hover:text-foreground">
-							Privacy
-						</Link>
+						{privacy.mode !== "disabled" && (
+							<>
+								<span aria-hidden>·</span>
+								<Link to="/privacy" className="hover:text-foreground">
+									Privacy
+								</Link>
+							</>
+						)}
 					</div>
 				</form>
 				<VersionFooter />

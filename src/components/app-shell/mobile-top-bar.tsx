@@ -25,6 +25,7 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "#/components/ui/dropdown-menu";
+import { useAppConfig } from "#/lib/app-config";
 import { signOutEverywhere } from "#/lib/auth/sign-out";
 import { chatDock, useChatDockMode } from "#/lib/chat-dock";
 import { useViewMode } from "#/lib/view-mode";
@@ -54,6 +55,7 @@ export function MobileTopBar({
 }: Props) {
 	const params = useParams({ strict: false }) as { projectId?: string };
 	const inProject = Boolean(params.projectId);
+	const { appName } = useAppConfig();
 
 	return (
 		<header className="flex h-12 shrink-0 items-center gap-1 border-b bg-card px-2">
@@ -72,7 +74,7 @@ export function MobileTopBar({
 				<div className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
 					<LayersIcon className="size-4" />
 				</div>
-				<span className="text-sm font-semibold tracking-tight">pert.li</span>
+				<span className="text-sm font-semibold tracking-tight">{appName}</span>
 			</Link>
 			<div className="flex-1" />
 			{inProject && <EditModeToggle />}

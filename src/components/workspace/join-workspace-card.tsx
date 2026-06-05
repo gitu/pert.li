@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { LayersIcon } from "lucide-react";
 import { Button } from "#/components/ui/button";
+import { useAppConfig } from "#/lib/app-config";
 import type { WorkspaceInvitationPreview } from "#/types/workspace";
 
 export type JoinWorkspaceCardProps = {
@@ -18,6 +19,7 @@ export type JoinWorkspaceCardProps = {
 // server loader.
 export function JoinWorkspaceCard(props: JoinWorkspaceCardProps) {
 	const { preview } = props;
+	const { appName } = useAppConfig();
 	return (
 		<div className="w-full max-w-md space-y-5 rounded-lg border bg-card p-6 shadow-sm">
 			<div className="flex items-center gap-3">
@@ -26,7 +28,7 @@ export function JoinWorkspaceCard(props: JoinWorkspaceCardProps) {
 				</div>
 				<div>
 					<div className="text-sm text-muted-foreground">
-						pert.li workspace invitation
+						{appName} workspace invitation
 					</div>
 					<h1 className="text-lg font-semibold leading-tight tracking-tight">
 						{preview?.workspaceName ?? "Workspace"}

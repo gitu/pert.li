@@ -9,6 +9,7 @@ import {
 	UsersIcon,
 } from "lucide-react";
 import { Button } from "#/components/ui/button";
+import { useAppConfig } from "#/lib/app-config";
 import { markWelcomeSeen } from "#/lib/welcome";
 
 export const Route = createFileRoute("/welcome")({
@@ -21,6 +22,7 @@ export const Route = createFileRoute("/welcome")({
 // re-reading the pitch.
 
 function WelcomePage() {
+	const { appName, privacy } = useAppConfig();
 	return (
 		<div className="min-h-svh bg-background">
 			<header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
@@ -29,7 +31,7 @@ function WelcomePage() {
 						<LayersIcon className="size-4" />
 					</div>
 					<span className="text-base font-semibold tracking-tight">
-						pert.li
+						{appName}
 					</span>
 				</Link>
 				<div className="flex items-center gap-2">
@@ -56,14 +58,16 @@ function WelcomePage() {
 
 			<footer className="border-t">
 				<div className="mx-auto flex max-w-6xl flex-col gap-2 px-6 py-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-					<div>pert.li — collaborative PERT planning.</div>
+					<div>{appName} — collaborative PERT planning.</div>
 					<div className="flex items-center gap-4">
 						<Link to="/about" className="hover:text-foreground">
 							About
 						</Link>
-						<Link to="/privacy" className="hover:text-foreground">
-							Privacy
-						</Link>
+						{privacy.mode !== "disabled" && (
+							<Link to="/privacy" className="hover:text-foreground">
+								Privacy
+							</Link>
+						)}
 						<Link to="/signin" className="hover:text-foreground">
 							Sign in
 						</Link>
@@ -75,6 +79,7 @@ function WelcomePage() {
 }
 
 function Hero() {
+	const { appName } = useAppConfig();
 	return (
 		<section className="relative overflow-hidden rounded-3xl border bg-gradient-to-br from-primary/[0.08] via-card to-card p-10 sm:p-14">
 			<div
@@ -94,7 +99,7 @@ function Hero() {
 					Plan something nested.
 				</h1>
 				<p className="mt-4 max-w-prose text-base text-muted-foreground sm:text-lg">
-					pert.li turns rough scopes into PERT charts you can actually steer:
+					{appName} turns rough scopes into PERT charts you can actually steer:
 					three-point estimates, a deterministic critical path, nested
 					sub-projects, and a chat assistant that creates the tasks for you.
 					Every edit syncs live — no save button, no merge conflicts.

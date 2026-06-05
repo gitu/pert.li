@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { LayersIcon } from "lucide-react";
 import { VersionFooter } from "#/components/legal/version-footer";
+import { useAppConfig } from "#/lib/app-config";
 import { BUILD_TIME, BUILD_VERSION } from "#/lib/build-info";
 
 export const Route = createFileRoute("/about")({
@@ -112,6 +113,7 @@ function formatBuildTime(iso: string | null): string | null {
 }
 
 function AboutPage() {
+	const { appName } = useAppConfig();
 	const buildTime = formatBuildTime(BUILD_TIME);
 
 	return (
@@ -122,7 +124,7 @@ function AboutPage() {
 						<LayersIcon className="size-4" />
 					</div>
 					<span className="text-base font-semibold tracking-tight">
-						pert.li
+						{appName}
 					</span>
 				</Link>
 				<Link
@@ -136,12 +138,12 @@ function AboutPage() {
 			<main className="mx-auto max-w-3xl px-6 pb-24">
 				<article className="prose prose-zinc dark:prose-invert max-w-none">
 					<h1 className="text-3xl font-semibold tracking-tight">
-						About pert.li
+						{`About ${appName}`}
 					</h1>
 					<p className="text-sm text-muted-foreground">
-						pert.li is a collaborative project-planning app — task graphs,
-						dependencies, and a built-in AI assistant — built on TanStack Start
-						and powered by Claude.
+						{`${appName} is a collaborative project-planning app`} — task
+						graphs, dependencies, and a built-in AI assistant — built on
+						TanStack Start and powered by Claude.
 					</p>
 
 					<h2 className="mt-10 text-xl font-semibold tracking-tight">

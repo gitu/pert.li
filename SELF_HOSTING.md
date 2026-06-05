@@ -177,15 +177,40 @@ Register `<BETTER_AUTH_URL>/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>` as
 the redirect URI with your IdP. Leaving these unset hides the SSO button
 on `/signin`.
 
-### Privacy policy
+### Branding (page title / app name)
 
-The built-in `/privacy` route states pert.li sets no analytics or tracking
-cookies — only functional ones for sign-in and OAuth state. To redirect to
-your own policy page instead:
+White-label the app name and browser tab title. Both are read from the
+environment **at request time**, so a deploy can change them without rebuilding.
 
 ```env
-PRIVACY_POLICY_URL=https://yourdomain.com/legal/privacy
+# Quote values that contain spaces so shells / deployment UIs parse them whole.
+APP_NAME="Acme Planner"                 # visible brand / wordmark (default "pert.li")
+APP_TITLE="Acme Planner — Estimator"    # browser tab <title>
 ```
+
+`APP_NAME` replaces the wordmark shown in the app chrome and on the public
+pages (welcome, sign-in, privacy, share, invitations). `APP_TITLE` sets the
+document `<title>`; if you set only `APP_NAME`, the tab title defaults to it.
+Leave both unset for the hosted `pert.li` branding.
+
+### Privacy policy
+
+The built-in `/privacy` route states the app sets no analytics or tracking
+cookies — only functional ones for sign-in and OAuth state. You can either
+redirect it to your own policy, or drop it entirely:
+
+```env
+# Option A — redirect /privacy to your own policy page:
+PRIVACY_POLICY_URL=https://yourdomain.com/legal/privacy
+
+# Option B — drop the privacy page entirely (/privacy 404s, and the footer
+# and cookie-notice privacy links are removed). Takes precedence over the URL.
+PRIVACY_POLICY_DISABLED=1
+```
+
+The informational cookie notice (it explains the functional sign-in cookie)
+stays even when the policy is dropped — only its "Read the privacy policy"
+link is removed.
 
 ## Operational notes
 

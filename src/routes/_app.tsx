@@ -74,6 +74,7 @@ import { CreateProjectDialog } from "#/components/workspace/create-project-dialo
 import { ProjectList } from "#/components/workspace/project-list";
 import { WorkspaceSwitcher } from "#/components/workspace/workspace-switcher";
 import { useActiveWorkspaceId } from "#/lib/active-workspace";
+import { useAppConfig } from "#/lib/app-config";
 import { useOfflineSession } from "#/lib/auth/offline-session";
 import { signOutEverywhere } from "#/lib/auth/sign-out";
 import { RepoProvider } from "#/lib/automerge/provider";
@@ -562,13 +563,14 @@ function TopBar({
 	leftCollapsed: boolean;
 	showChatTrigger: boolean;
 }) {
+	const { appName } = useAppConfig();
 	return (
 		<header className="flex h-12 shrink-0 items-center gap-2 border-b bg-card px-3">
 			<Link to="/" className="flex items-center gap-2">
 				<div className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
 					<LayersIcon className="size-4" />
 				</div>
-				<span className="font-semibold tracking-tight">pert.li</span>
+				<span className="font-semibold tracking-tight">{appName}</span>
 			</Link>
 			{/* The workspace selector lives with the sidebar conceptually — hide
 			    it whenever the sidebar is collapsed so the user gets a clean,
