@@ -10,10 +10,10 @@ import { Store, useStore } from "@tanstack/react-store";
 // different settings (smoothstep vs bezier is just taste).
 
 export type EdgeStyle =
-	| "smoothstep" // rounded elbow (default)
+	| "smoothstep" // rounded elbow
 	| "step" // hard right-angle elbow
 	| "straight" // direct line
-	| "bezier" // full cubic — React Flow's "default"
+	| "bezier" // full cubic — React Flow's "default" (default)
 	| "simplebezier"; // tighter symmetric cubic
 
 export const EDGE_STYLES: ReadonlyArray<{
@@ -77,7 +77,7 @@ export type CanvasPrefs = {
 };
 
 const DEFAULT_PREFS: CanvasPrefs = {
-	edgeStyle: "smoothstep",
+	edgeStyle: "bezier",
 	spacing: "comfortable",
 	continuousLayout: false,
 };

@@ -20,7 +20,7 @@ beforeEach(() => {
 describe("canvasPrefsStore", () => {
 	it("returns defaults when no prefs are stored for the project", () => {
 		expect(getCanvasPrefs("p1")).toEqual({
-			edgeStyle: "smoothstep",
+			edgeStyle: "bezier",
 			spacing: "comfortable",
 			continuousLayout: false,
 		});
@@ -103,7 +103,7 @@ describe("EDGE_STYLES + helpers", () => {
 			},
 		}));
 		expect(getCanvasPrefs("p1")).toEqual({
-			edgeStyle: "smoothstep",
+			edgeStyle: "bezier",
 			spacing: "compact",
 			continuousLayout: false,
 		});
