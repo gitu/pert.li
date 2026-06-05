@@ -41,6 +41,17 @@
 # `--sha=<commit>`, so `${COMMIT_SHA}` resolves the exact image. The
 # remote-repo proxy lazily fetches + caches it from ghcr.io on first pull.
 #
+# Release-tag rollout: on a gated prod build (`_VERSION_GATE=on`) the deploy
+# step rolls out `…:${APP_VERSION}` instead of `…:${COMMIT_SHA}`, so the live
+# Cloud Run revision references the human-readable release version (e.g.
+# `v0.3.2`) rather than an opaque 40-char SHA. This is sound because the
+# version-gate only writes DEPLOY_GO=yes when APP_VERSION is the newest `v*`
+# tag on main — i.e. exactly the tag GitHub also pushed to ghcr.io as an image
+# tag (`type=ref,event=tag`). It is the SAME digest the SHA-pinned secret-leak
+# gate just scanned (both tags come from one GitHub build). Staging
+# (`_VERSION_GATE=off`) keeps the immutable `${COMMIT_SHA}` reference, since a
+# push-to-main has no corresponding `v*` image tag on ghcr.io.
+#
 # Substitution variables (set on the trigger or via `--substitutions`):
 #   _REGION                  deploy region + AR location, e.g. europe-west1
 #   _SERVICE                 Cloud Run service name (per-env)
@@ -53,8 +64,11 @@
 #   _GEMINI_API_KEY_SECRET   Secret Manager entry for the AI provider key
 #   _RESEND_API_KEY_SECRET   Secret Manager entry for the transactional email key
 #   _VERSION_GATE            "on"  → gate the rollout on the from-main + newest-
-#                                    version checks (production tag trigger).
-#                            "off" → always roll out (staging). Default off.
+#                                    version checks (production tag trigger),
+#                                    and roll out the version-tagged image
+#                                    (see "Release-tag rollout" above).
+#                            "off" → always roll out (staging), by commit SHA.
+#                                    Default off.
 substitutions:
   _REGION: europe-west1
   _SERVICE: pert-li
@@ -238,8 +252,21 @@ steps:
           exit 0
         fi
         APP_VERSION="$(cat /workspace/APP_VERSION)"
+        # On a gated prod release, deploy the version-tagged image
+        # (`…:${APP_VERSION}`, e.g. `…:v0.3.2`) so the live revision shows the
+        # release version, not an opaque SHA. The version-gate only reaches
+        # DEPLOY_GO=yes with _VERSION_GATE=on when APP_VERSION is the newest v*
+        # tag on main — exactly the tag GitHub pushed to ghcr.io — so this tag
+        # is guaranteed to resolve (same digest the SHA-pinned secret-leak gate
+        # scanned). Staging (_VERSION_GATE=off) keeps the commit-SHA reference.
+        if [ "${_VERSION_GATE}" = "on" ]; then
+          IMAGE_REF="$$APP_VERSION"
+        else
+          IMAGE_REF="${COMMIT_SHA}"
+        fi
+        echo "Deploying ${_SERVICE} from image tag :$$IMAGE_REF"
         gcloud run deploy ${_SERVICE} \
-          --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REMOTE_REPO}/${_GHCR_IMAGE}:${COMMIT_SHA} \
+          --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REMOTE_REPO}/${_GHCR_IMAGE}:$$IMAGE_REF \
           --region=${_REGION} \
           --platform=managed \
           --allow-unauthenticated \

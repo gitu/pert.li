@@ -20,7 +20,11 @@ push main / tag ─► GitHub Actions: build + gate (synthetic) + push ghcr.io
 ```
 
 Cloud Run can't pull from ghcr.io directly, so the remote-repo proxy bridges it
-(lazy fetch + cache, keyed by the immutable full-commit-SHA tag GitHub pushes).
+(lazy fetch + cache). The secret-leak gate always scans the immutable
+full-commit-SHA tag GitHub pushes; **staging** then rolls out that same SHA tag,
+while a **production** release rolls out the human-readable version tag
+(`…:v0.3.2`, which GitHub also pushed) so the live Cloud Run revision shows the
+release version rather than an opaque SHA — same digest either way.
 The **same** `cloudbuild.yaml` drives two environments via per-trigger
 substitutions:
 
