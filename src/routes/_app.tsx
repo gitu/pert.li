@@ -13,6 +13,7 @@ import {
 	EyeIcon,
 	FolderTreeIcon,
 	HistoryIcon,
+	InfoIcon,
 	LaptopIcon,
 	LayersIcon,
 	LogOutIcon,
@@ -620,6 +621,13 @@ function TopBar({
 						</DropdownMenuItem>
 					)}
 					<ThemeMenu />
+					<DropdownMenuSeparator />
+					<DropdownMenuItem asChild>
+						<Link to="/about" data-testid="topbar-nav-about">
+							<InfoIcon className="size-4" />
+							About
+						</Link>
+					</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onClick={() => void signOutEverywhere()}>
 						<LogOutIcon className="size-4" />
