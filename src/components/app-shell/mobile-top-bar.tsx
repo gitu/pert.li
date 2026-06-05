@@ -3,6 +3,7 @@ import {
 	BotIcon,
 	EyeIcon,
 	HistoryIcon,
+	InfoIcon,
 	LayersIcon,
 	LogOutIcon,
 	MenuIcon,
@@ -125,6 +126,13 @@ export function MobileTopBar({
 						</DropdownMenuItem>
 					)}
 					<SyncNowItem />
+					<DropdownMenuSeparator />
+					<DropdownMenuItem asChild>
+						<Link to="/about" data-testid="mobile-nav-about">
+							<InfoIcon className="size-4" />
+							About
+						</Link>
+					</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onClick={() => void signOutEverywhere()}>
 						<LogOutIcon className="size-4" />
