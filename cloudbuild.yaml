@@ -253,7 +253,7 @@ steps:
         fi
         APP_VERSION="$(cat /workspace/APP_VERSION)"
         # On a gated prod release, deploy the version-tagged image
-        # (`…:${APP_VERSION}`, e.g. `…:v0.3.2`) so the live revision shows the
+        # (the resolved version, e.g. `…:v0.3.2`) so the live revision shows the
         # release version, not an opaque SHA. The version-gate only reaches
         # DEPLOY_GO=yes with _VERSION_GATE=on when APP_VERSION is the newest v*
         # tag on main — exactly the tag GitHub pushed to ghcr.io — so this tag
