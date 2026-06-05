@@ -9,6 +9,7 @@ import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
 import { Toaster } from "#/components/ui/sonner";
 import { TooltipProvider } from "#/components/ui/tooltip";
+import { useAppConfig } from "#/lib/app-config";
 import { ShareRepoProvider } from "#/lib/automerge/provider";
 import { setShareIdentity } from "#/lib/share-identity";
 import { ViewModeProvider } from "#/lib/view-mode";
@@ -194,6 +195,7 @@ function ShareHeader({
 	mode: "view" | "edit";
 	expiresAt: string | null;
 }) {
+	const { appName } = useAppConfig();
 	const Icon = mode === "edit" ? PenLineIcon : EyeIcon;
 	const expiry = expiresAt
 		? new Date(expiresAt).toLocaleString(undefined, {
@@ -208,7 +210,9 @@ function ShareHeader({
 			</div>
 			<div className="min-w-0 flex-1">
 				<div className="truncate text-sm font-medium">{title}</div>
-				<div className="text-xs text-muted-foreground">Shared via pert.li</div>
+				<div className="text-xs text-muted-foreground">
+					Shared via {appName}
+				</div>
 			</div>
 			<span
 				className="inline-flex items-center gap-1.5 rounded-full border bg-background px-2.5 py-1 text-xs"
@@ -276,6 +280,7 @@ function NamePrompt({ onSubmit }: { onSubmit: (name: string) => void }) {
 }
 
 function InvalidShare() {
+	const { appName } = useAppConfig();
 	return (
 		<ShareShell>
 			<div className="grid h-full place-items-center p-6 text-center">
@@ -291,7 +296,7 @@ function InvalidShare() {
 						a fresh share link.
 					</p>
 					<Button asChild variant="secondary" size="sm">
-						<Link to="/">Go to pert.li</Link>
+						<Link to="/">Go to {appName}</Link>
 					</Button>
 				</div>
 			</div>

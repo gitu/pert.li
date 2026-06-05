@@ -1,16 +1,27 @@
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import {
+	createFileRoute,
+	Link,
+	notFound,
+	redirect,
+} from "@tanstack/react-router";
 import { LayersIcon } from "lucide-react";
 import { VersionFooter } from "#/components/legal/version-footer";
-import { getPrivacySettings } from "#/server/legal";
+import { useAppConfig } from "#/lib/app-config";
+import { getAppConfig } from "#/server/config";
 
 export const Route = createFileRoute("/privacy")({
 	loader: async () => {
-		const { externalUrl } = await getPrivacySettings();
+		const { privacy } = await getAppConfig();
 		// On-prem / white-label deployments point this at their own policy URL.
 		// We throw a redirect from the loader so the route never renders our
 		// default copy when an override is configured.
-		if (externalUrl) {
-			throw redirect({ href: externalUrl, reloadDocument: true });
+		if (privacy.mode === "external" && privacy.externalUrl) {
+			throw redirect({ href: privacy.externalUrl, reloadDocument: true });
+		}
+		// Operators can drop the privacy policy entirely; the route then has no
+		// page to render, so it 404s like any other unknown path.
+		if (privacy.mode === "disabled") {
+			throw notFound();
 		}
 		return null;
 	},
@@ -18,6 +29,7 @@ export const Route = createFileRoute("/privacy")({
 });
 
 function PrivacyPage() {
+	const { appName } = useAppConfig();
 	return (
 		<div className="min-h-svh bg-background">
 			<header className="mx-auto flex max-w-3xl items-center justify-between px-6 py-5">
@@ -26,7 +38,7 @@ function PrivacyPage() {
 						<LayersIcon className="size-4" />
 					</div>
 					<span className="text-base font-semibold tracking-tight">
-						pert.li
+						{appName}
 					</span>
 				</Link>
 				<Link
@@ -43,7 +55,7 @@ function PrivacyPage() {
 						Privacy policy
 					</h1>
 					<p className="text-sm text-muted-foreground">
-						Default policy for the hosted pert.li deployment. On-prem
+						Default policy for the hosted {appName} deployment. On-prem
 						deployments may publish their own at a URL configured by the
 						operator.
 					</p>
@@ -52,7 +64,7 @@ function PrivacyPage() {
 						No tracking
 					</h2>
 					<p>
-						pert.li runs no analytics, no advertising pixels, no third-party
+						{appName} runs no analytics, no advertising pixels, no third-party
 						trackers, and no fingerprinting. There is no Google Analytics, no
 						Segment, no Sentry session replay, no Meta Pixel, no Hotjar — no
 						telemetry of any kind on your browsing.
@@ -60,7 +72,7 @@ function PrivacyPage() {
 
 					<h2 className="mt-8 text-xl font-semibold tracking-tight">Cookies</h2>
 					<p>
-						Every cookie pert.li stores is strictly necessary for the app to
+						Every cookie {appName} stores is strictly necessary for the app to
 						function. There are no optional or marketing cookies, so there is
 						nothing to "consent" to — the cookie hint at the bottom of the
 						screen is informational, not a consent gate.

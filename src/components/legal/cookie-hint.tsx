@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import { XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "#/components/ui/button";
+import { useAppConfig } from "#/lib/app-config";
 
 const STORAGE_KEY = "pertli.cookieHintDismissed.v1";
 
@@ -28,6 +29,7 @@ function writeDismissed(): void {
 }
 
 export function CookieHint() {
+	const { appName, privacy } = useAppConfig();
 	// Start hidden so we don't paint a banner during SSR and then have it
 	// flash away on hydration. The effect flips it on once we've read storage.
 	const [visible, setVisible] = useState(false);
@@ -44,15 +46,23 @@ export function CookieHint() {
 		>
 			<div className="flex w-full max-w-3xl items-start gap-3 rounded-lg border bg-card/95 p-3 text-sm shadow-lg backdrop-blur sm:items-center sm:p-4">
 				<p className="flex-1 text-muted-foreground">
-					pert.li only stores cookies that are required for the app to work
-					(your sign-in session). No analytics, no tracking, no ads.{" "}
-					<Link
-						to="/privacy"
-						className="text-foreground underline-offset-4 hover:underline"
-					>
-						Read the privacy policy
-					</Link>
-					.
+					{appName} only stores cookies that are required for the app to work
+					(your sign-in session). No analytics, no tracking, no ads.
+					{/* When the operator drops the privacy policy entirely there's no
+					    page to link to, so we keep the informational notice but omit
+					    the link. */}
+					{privacy.mode !== "disabled" && (
+						<>
+							{" "}
+							<Link
+								to="/privacy"
+								className="text-foreground underline-offset-4 hover:underline"
+							>
+								Read the privacy policy
+							</Link>
+							.
+						</>
+					)}
 				</p>
 				<Button
 					type="button"

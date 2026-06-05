@@ -119,13 +119,23 @@ OIDC_SCOPES=             # comma-separated; defaults to "openid,email,profile"
 
 Register `<app-origin>/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>` as the redirect URI with the IdP. For Entra ID the discovery URL is `https://login.microsoftonline.com/<tenant-id>/v2.0/.well-known/openid-configuration`.
 
-Optional — privacy policy URL override:
+Optional — white-label branding (page title / app name):
+
+```env
+APP_NAME=                # visible brand / wordmark; defaults to "pert.li"
+APP_TITLE=               # browser document <title>; defaults to APP_NAME, or the full hosted tagline if neither is set
+```
+
+These are resolved at **request time** on the server (`src/lib/app-config.ts` → `resolveAppConfig`, exposed via the `getAppConfig` server fn in `src/server/config.ts`), threaded into the page through the root route loader, and read by components via the `useAppConfig()` context hook. Because they're runtime env (not build-time `VITE_*`), a deploy can rebrand without rebuilding. `APP_NAME` replaces the wordmark across the chrome and public pages; `APP_TITLE` sets the document `<title>` (used at SSR via the root route's `head`).
+
+Optional — privacy policy override:
 
 ```env
 PRIVACY_POLICY_URL=      # if set, /privacy redirects here instead of the default
+PRIVACY_POLICY_DISABLED= # "1"/"true" → drop privacy entirely (/privacy 404s, footer + cookie-notice links removed). Wins over the URL.
 ```
 
-The built-in `/privacy` route documents what cookies pert.li stores (only functional ones for sign-in / OAuth state) and explicitly states no analytics or tracking are used. Self-hosted deployments that need their own legal copy can either replace `src/routes/privacy.tsx` or set this env var to redirect users to an external policy page.
+The built-in `/privacy` route documents what cookies the app stores (only functional ones for sign-in / OAuth state) and explicitly states no analytics or tracking are used. Self-hosted deployments that need their own legal copy can replace `src/routes/privacy.tsx`, set `PRIVACY_POLICY_URL` to redirect users to an external policy page, or set `PRIVACY_POLICY_DISABLED` to remove the page and all links to it. Privacy mode is part of the same `getAppConfig` config; the informational cookie notice stays even when the policy is dropped (only its policy link is removed).
 
 ## Testing rules
 
