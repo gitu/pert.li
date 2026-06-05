@@ -1,5 +1,5 @@
-# Cloud Build pipeline. The same file drives two triggers — staging on push
-# to main, production on a `v*` git tag — by overriding substitutions:
+# Cloud Build pipeline. The same file drives two triggers — staging on every
+# push to main, production on a `v*` git tag — by overriding substitutions:
 #
 #   Trigger: "main → staging"      Trigger: "tag v* → prod"
 #   ─────────────────────────      ───────────────────────
@@ -11,6 +11,7 @@
 #                                    _DATABASE_URL_SECRET: DATABASE_URL
 #   _BETTER_AUTH_SECRET_NAME: BETTER_AUTH_SECRET_STAGING
 #                                    _BETTER_AUTH_SECRET_NAME: BETTER_AUTH_SECRET
+#   _VERSION_GATE: "off"              _VERSION_GATE: "on"
 #   (same pattern for GEMINI_API_KEY_SECRET, RESEND_API_KEY_SECRET)
 #
 # Both triggers run this YAML; the only difference is which substitutions and
@@ -18,6 +19,19 @@
 # bare `gcloud builds submit` still deploys prod — the staging trigger MUST
 # override every `_*_SECRET` variable to a separate Secret Manager entry, or
 # the staging service will read/write the prod database.
+#
+# Promotion model:
+#   • Staging tracks main head-on: every push builds and rolls out to
+#     `pert-li-staging`. No gate — staging is meant to run ahead of prod.
+#   • Production only advances to a *newer version that shipped through main*.
+#     The prod trigger fires on a `v*` tag with `_VERSION_GATE: "on"`; the
+#     `version-gate` step (below) then deploys only when the tagged commit is
+#     an ancestor of `origin/main` ("from main") AND the tag is the newest
+#     `v*` version reachable from main ("newer than the current one"). A tag
+#     on a side branch, or an older / re-pushed tag, still builds and pushes
+#     the image but SKIPS the rollout — prod never moves backwards. Release
+#     flow: merge to main, then `git tag vX.Y.Z <main-commit> && git push
+#     origin vX.Y.Z`.
 #
 # Substitution variables (set on the trigger or via `--substitutions`):
 #   _REGION                  deploy region, e.g. europe-west1
@@ -31,6 +45,10 @@
 #   _BETTER_AUTH_SECRET_NAME Secret Manager entry for the per-env auth secret
 #   _GEMINI_API_KEY_SECRET   Secret Manager entry for the AI provider key
 #   _RESEND_API_KEY_SECRET   Secret Manager entry for the transactional email key
+#   _VERSION_GATE            "on"  → gate the rollout on the from-main + newest-
+#                                    version checks (production tag trigger).
+#                            "off" → always roll out (staging, and manual
+#                                    `gcloud builds submit` runs). Default off.
 #
 # The build version baked into the bundle (`import.meta.env.VITE_APP_VERSION`,
 # surfaced as the footer on /privacy and /signin) is resolved at build time
@@ -45,6 +63,7 @@ substitutions:
   _BETTER_AUTH_SECRET_NAME: BETTER_AUTH_SECRET
   _GEMINI_API_KEY_SECRET: GEMINI_API_KEY
   _RESEND_API_KEY_SECRET: RESEND_API_KEY
+  _VERSION_GATE: "off"
 
 images:
   - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}"
@@ -86,6 +105,95 @@ steps:
         git fetch --tags --depth=100 2>/dev/null || true
         git describe --tags --always --dirty > /workspace/APP_VERSION
         printf 'APP_VERSION=%s\n' "$(cat /workspace/APP_VERSION)"
+
+  # 0c. Promotion gate. Decides whether the deploy step at the end may roll
+  #     out, by writing `yes`/`no` to /workspace/DEPLOY_GO (the deploy step
+  #     reads it and is a no-op on `no`). Runs on every build but only gates
+  #     when `_VERSION_GATE=on` (production tag trigger); staging and manual
+  #     submits pass `off` and always deploy.
+  #
+  #     With the gate on, prod rolls out only when BOTH hold:
+  #       1. "from main"  — the built commit (HEAD) is an ancestor of
+  #          origin/main, so the release shipped through the main line and not
+  #          off a side branch / detached tag.
+  #       2. "newer than current" — the version (= the pushed tag, via
+  #          `git describe` on a tagged commit) is the highest `v*` tag
+  #          reachable from main, by `sort -V`. An older or re-pushed tag is
+  #          not the max, so prod never rolls backwards.
+  #     Either check failing writes `no` and exits 0 — the image is still built
+  #     and pushed (handy for inspection / manual rollout), just not deployed.
+  - id: version-gate
+    name: gcr.io/cloud-builders/git
+    entrypoint: bash
+    waitFor: ["compute-version"]
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        if [ "${_VERSION_GATE}" != "on" ]; then
+          echo "version gate off (_VERSION_GATE=${_VERSION_GATE}) — deploy allowed"
+          echo yes > /workspace/DEPLOY_GO
+          exit 0
+        fi
+
+        # fail_unverifiable: when the gate is ON we must never silently skip a
+        # real release because of a transient fetch/auth problem. A genuine
+        # "not on main" / "not newest" verdict is a clean skip (exit 0); an
+        # inability to *establish the facts* fails the build loudly (exit 1)
+        # so the release is retried rather than quietly dropped.
+        fail_unverifiable() {
+          echo "GATE: cannot verify prod promotion — $$1" >&2
+          echo "GATE: failing the build instead of skipping, so a real release is not silently dropped." >&2
+          exit 1
+        }
+
+        # Need full history + tags to resolve ancestry and the version set.
+        # Cloud Build gives a shallow clone; unshallow best-effort (a complete
+        # clone makes --unshallow fail harmlessly — that's fine).
+        git fetch --unshallow 2>/dev/null || git fetch 2>/dev/null || true
+        # origin/main and the tag set are prerequisites — these MUST succeed.
+        git fetch origin '+refs/heads/main:refs/remotes/origin/main' 2>/dev/null \
+          || fail_unverifiable "git fetch origin main failed"
+        git rev-parse --verify -q origin/main >/dev/null \
+          || fail_unverifiable "origin/main could not be resolved after fetch"
+        git fetch --tags 2>/dev/null \
+          || fail_unverifiable "git fetch --tags failed"
+
+        NEW="$(cat /workspace/APP_VERSION)"
+
+        # 1. from-main: HEAD must be an ancestor of origin/main. Distinguish a
+        #    real "not an ancestor" (rc=1 → skip) from a merge-base error
+        #    (rc>1 → unverifiable → fail).
+        set +e
+        git merge-base --is-ancestor HEAD origin/main
+        rc=$$?
+        set -e
+        if [ "$$rc" -gt 1 ]; then
+          fail_unverifiable "git merge-base errored (rc=$$rc)"
+        fi
+        if [ "$$rc" -ne 0 ]; then
+          echo "GATE: commit $(git rev-parse --short HEAD) is not on main — skipping prod rollout"
+          echo no > /workspace/DEPLOY_GO
+          exit 0
+        fi
+
+        # 2. newest-version: NEW must be the highest v* tag reachable from main.
+        #    HEAD is on main (check 1) and the prod trigger fires on a v* tag,
+        #    so that tag is merged into main and the list cannot legitimately
+        #    be empty — an empty result here means the tag set didn't resolve,
+        #    which is unverifiable, not a clean "no tags".
+        HIGHEST="$(git tag --merged origin/main --list 'v*' | sort -V | tail -1)"
+        if [ -z "$$HIGHEST" ]; then
+          fail_unverifiable "no v* tags resolved on main (tag fetch incomplete?)"
+        fi
+        if [ "$$NEW" != "$$HIGHEST" ]; then
+          echo "GATE: version $$NEW is not the newest on main (newest is $$HIGHEST) — skipping prod rollout"
+          echo no > /workspace/DEPLOY_GO
+          exit 0
+        fi
+
+        echo "GATE: $$NEW is on main and the newest version — prod rollout allowed"
+        echo yes > /workspace/DEPLOY_GO
 
   # 1a. Build + push the `deps` stage as its own cache image. This is the
   #     stage that runs `pnpm fetch` and is invalidated only when the
@@ -233,32 +341,44 @@ steps:
       - --all-tags
       - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}
 
-  # 4. Deploy to Cloud Run. min=0 (scale to zero) per project decision;
-  #    session-affinity keeps a given client on a single instance so the
-  #    in-memory Automerge Repo stays consistent for their session.
-  #    Real-time fan-out across instances would need a Redis pub/sub
-  #    (defer until we see multi-instance load).
+  # 4. Deploy to Cloud Run — but only if the version-gate (step 0c) said yes.
+  #    On a gated prod build that didn't win the gate, DEPLOY_GO=no and this
+  #    step is a clean no-op (the image is already built + pushed). min=0
+  #    (scale to zero) per project decision; session-affinity keeps a given
+  #    client on a single instance so the in-memory Automerge Repo stays
+  #    consistent for their session. Real-time fan-out across instances would
+  #    need a Redis pub/sub (defer until we see multi-instance load).
+  #
+  #    APP_VERSION is recorded as an env var on the service so the currently
+  #    deployed version is visible via `gcloud run services describe`.
   - id: deploy
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    entrypoint: gcloud
+    entrypoint: bash
+    waitFor: ["push", "version-gate"]
     args:
-      - run
-      - deploy
-      - ${_SERVICE}
-      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
-      - --region=${_REGION}
-      - --platform=managed
-      - --allow-unauthenticated
-      - --port=8080
-      - --min-instances=0
-      - --max-instances=3
-      - --concurrency=80
-      - --cpu=1
-      - --memory=1Gi
-      - --timeout=3600
-      - --session-affinity
-      - --set-env-vars=NODE_ENV=production,AUTOMERGE_STORAGE=postgres,BETTER_AUTH_URL=${_BETTER_AUTH_URL},RESEND_FROM_EMAIL=${_RESEND_FROM_EMAIL}
-      - --set-secrets=DATABASE_URL=${_DATABASE_URL_SECRET}:latest,BETTER_AUTH_SECRET=${_BETTER_AUTH_SECRET_NAME}:latest,GEMINI_API_KEY=${_GEMINI_API_KEY_SECRET}:latest,RESEND_API_KEY=${_RESEND_API_KEY_SECRET}:latest
+      - -c
+      - |
+        set -euo pipefail
+        if [ "$(cat /workspace/DEPLOY_GO 2>/dev/null || echo no)" != "yes" ]; then
+          echo "deploy skipped — version gate did not approve this build for ${_SERVICE}"
+          exit 0
+        fi
+        APP_VERSION="$(cat /workspace/APP_VERSION)"
+        gcloud run deploy ${_SERVICE} \
+          --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA} \
+          --region=${_REGION} \
+          --platform=managed \
+          --allow-unauthenticated \
+          --port=8080 \
+          --min-instances=0 \
+          --max-instances=3 \
+          --concurrency=80 \
+          --cpu=1 \
+          --memory=1Gi \
+          --timeout=3600 \
+          --session-affinity \
+          --set-env-vars=NODE_ENV=production,AUTOMERGE_STORAGE=postgres,BETTER_AUTH_URL=${_BETTER_AUTH_URL},RESEND_FROM_EMAIL=${_RESEND_FROM_EMAIL},APP_VERSION="$$APP_VERSION" \
+          --set-secrets=DATABASE_URL=${_DATABASE_URL_SECRET}:latest,BETTER_AUTH_SECRET=${_BETTER_AUTH_SECRET_NAME}:latest,GEMINI_API_KEY=${_GEMINI_API_KEY_SECRET}:latest,RESEND_API_KEY=${_RESEND_API_KEY_SECRET}:latest
 
 # Secret Manager bindings — referenced by step `secretEnv:` lists.
 # Each entry exposes the secret value as a normal env var inside the
