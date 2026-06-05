@@ -21,6 +21,11 @@
 #   _DATABASE_URL_SECRET: DATABASE_URL_STAGING       _DATABASE_URL_SECRET: DATABASE_URL
 #   _VERSION_GATE: "off"                             _VERSION_GATE: "on"
 #
+# The deploy step also auto-derives APP_NAME from _SERVICE (no substitution
+# needed): staging (`*staging*`) ships APP_NAME="[STAGING] pert.li" so the
+# wordmark + browser tab announce the environment; prod leaves it unset and
+# keeps the default "pert.li" branding.
+#
 # Both triggers are MANUAL — they do NOT auto-fire on push. GitHub drives the
 # deploy after the image is pushed, so there is no race between "image on
 # ghcr.io" and "deploy pulls image". Defaults below are the production values.
@@ -265,6 +270,14 @@ steps:
           IMAGE_REF="${COMMIT_SHA}"
         fi
         echo "Deploying ${_SERVICE} from image tag :$$IMAGE_REF"
+        # Base env shared by both environments.
+        ENV_VARS="NODE_ENV=production,AUTOMERGE_STORAGE=postgres,BETTER_AUTH_URL=${_BETTER_AUTH_URL},RESEND_FROM_EMAIL=${_RESEND_FROM_EMAIL},APP_VERSION=$$APP_VERSION"
+        # Staging announces itself in the wordmark + browser tab so it's never
+        # mistaken for prod. Keyed off the service name (prod is `pert-li`,
+        # staging `pert-li-staging`); APP_NAME also derives the document <title>.
+        case "${_SERVICE}" in
+          *staging*) ENV_VARS="$$ENV_VARS,APP_NAME=[STAGING] pert.li" ;;
+        esac
         gcloud run deploy ${_SERVICE} \
           --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REMOTE_REPO}/${_GHCR_IMAGE}:$$IMAGE_REF \
           --region=${_REGION} \
@@ -278,7 +291,7 @@ steps:
           --memory=1Gi \
           --timeout=3600 \
           --session-affinity \
-          --set-env-vars=NODE_ENV=production,AUTOMERGE_STORAGE=postgres,BETTER_AUTH_URL=${_BETTER_AUTH_URL},RESEND_FROM_EMAIL=${_RESEND_FROM_EMAIL},APP_VERSION="$$APP_VERSION" \
+          --set-env-vars="$$ENV_VARS" \
           --set-secrets=DATABASE_URL=${_DATABASE_URL_SECRET}:latest,BETTER_AUTH_SECRET=${_BETTER_AUTH_SECRET_NAME}:latest,GEMINI_API_KEY=${_GEMINI_API_KEY_SECRET}:latest,RESEND_API_KEY=${_RESEND_API_KEY_SECRET}:latest
 
 # Secret Manager bindings — referenced by the secrets-check step's secretEnv.
