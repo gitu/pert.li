@@ -9,6 +9,10 @@ import {
 import {
 	BotIcon,
 	CheckIcon,
+	ChevronDownIcon,
+	ChevronLeftIcon,
+	ChevronRightIcon,
+	ChevronUpIcon,
 	CircleDotIcon,
 	EyeIcon,
 	FolderTreeIcon,
@@ -17,10 +21,6 @@ import {
 	LayersIcon,
 	LogOutIcon,
 	MoonIcon,
-	PanelBottomCloseIcon,
-	PanelBottomIcon,
-	PanelLeftCloseIcon,
-	PanelLeftIcon,
 	PencilIcon,
 	PlusIcon,
 	ShieldIcon,
@@ -308,13 +308,18 @@ function DesktopShell({
 	onNewProject: () => void;
 	onEditProfile: () => void;
 }) {
-	// Refs into the collapsible panels so the topbar buttons can drive them
+	// Refs into the collapsible panels so the divider toggles can drive them
 	// imperatively (react-resizable-panels handles the size animation + min
 	// clamping). Mirror collapse state into React so the button icons can flip.
 	const leftRef = useRef<PanelImperativeHandle>(null);
 	const bottomRef = useRef<PanelImperativeHandle>(null);
+	const chatRef = useRef<PanelImperativeHandle>(null);
 	const [leftCollapsed, setLeftCollapsed] = useState(false);
 	const [bottomCollapsed, setBottomCollapsed] = useState(false);
+	// Collapsing the pinned chat rail keeps it *pinned* (its panel stays
+	// mounted at size 0) — distinct from closing it, which drops the dock back
+	// to sheet mode. So the conversation and the pinned arrangement both survive.
+	const [chatCollapsed, setChatCollapsed] = useState(false);
 
 	const toggleLeft = useCallback(() => {
 		const p = leftRef.current;
@@ -326,6 +331,11 @@ function DesktopShell({
 		if (!p) return;
 		p.isCollapsed() ? p.expand() : p.collapse();
 	}, []);
+	const toggleChat = useCallback(() => {
+		const p = chatRef.current;
+		if (!p) return;
+		p.isCollapsed() ? p.expand() : p.collapse();
+	}, []);
 
 	return (
 		<div className="flex h-svh w-svw flex-col bg-background">
@@ -333,15 +343,13 @@ function DesktopShell({
 				user={user}
 				onNewProject={onNewProject}
 				onEditProfile={onEditProfile}
+				// Still passed so the topbar can hide the workspace switcher when
+				// the sidebar is collapsed — the collapse *control* itself now
+				// lives on the sidebar divider (see the ResizableHandle below).
 				leftCollapsed={leftCollapsed}
-				bottomCollapsed={bottomCollapsed}
-				// Hide the bottom-panel toggle on routes without a bottom
-				// panel — nothing to collapse. The chat trigger is gated on
-				// the same flag: chat is bound to the active project.
-				showBottomToggle={inProject}
+				// The chat trigger is gated on the active project: chat is bound
+				// to a project.
 				showChatTrigger={inProject}
-				onToggleLeft={toggleLeft}
-				onToggleBottom={toggleBottom}
 			/>
 			<div className="min-h-0 flex-1">
 				<ResizablePanelGroup
@@ -364,7 +372,18 @@ function DesktopShell({
 						<LeftNav onNewProject={onNewProject} />
 					</ResizablePanel>
 
-					<ResizableHandle withHandle />
+					<ResizableHandle
+						withHandle
+						toggle={{
+							collapsed: leftCollapsed,
+							onToggle: toggleLeft,
+							label: leftCollapsed ? "Show sidebar" : "Hide sidebar",
+							testId: "panel-toggle-left",
+							side: "left",
+							collapseIcon: <ChevronLeftIcon />,
+							expandIcon: <ChevronRightIcon />,
+						}}
+					/>
 
 					<ResizablePanel
 						// Remount when the bottom panel toggles in/out so the new
@@ -384,7 +403,20 @@ function DesktopShell({
 										<Outlet />
 									</main>
 								</ResizablePanel>
-								<ResizableHandle withHandle />
+								<ResizableHandle
+									withHandle
+									toggle={{
+										collapsed: bottomCollapsed,
+										onToggle: toggleBottom,
+										label: bottomCollapsed
+											? "Show details panel"
+											: "Hide details panel",
+										testId: "panel-toggle-bottom",
+										side: "bottom",
+										collapseIcon: <ChevronDownIcon />,
+										expandIcon: <ChevronUpIcon />,
+									}}
+								/>
 								<ResizablePanel
 									panelRef={bottomRef}
 									defaultSize="38%"
@@ -408,12 +440,31 @@ function DesktopShell({
 
 					{pinnedChat && (
 						<>
-							<ResizableHandle withHandle />
+							<ResizableHandle
+								withHandle
+								toggle={{
+									collapsed: chatCollapsed,
+									onToggle: toggleChat,
+									label: chatCollapsed ? "Show chat" : "Hide chat",
+									testId: "panel-toggle-chat",
+									side: "right",
+									collapseIcon: <ChevronRightIcon />,
+									expandIcon: <ChevronLeftIcon />,
+								}}
+							/>
 							<ResizablePanel
+								panelRef={chatRef}
 								defaultSize="32%"
 								minSize="20%"
 								maxSize="50%"
-								className="bg-card"
+								collapsible
+								collapsedSize={0}
+								onResize={(size) => setChatCollapsed(size.asPercentage === 0)}
+								// Clip the portaled chat so a zero-width (collapsed) rail
+								// doesn't let the chat's min-width content spill off-screen
+								// — the sidebar/bottom panels clip via their own inner
+								// scroll/overflow, but this slot has none of its own.
+								className="overflow-hidden bg-card"
 							>
 								<div ref={setPinnedSlot} className="h-full" />
 							</ResizablePanel>
@@ -496,11 +547,7 @@ function TopBar({
 	onNewProject,
 	onEditProfile,
 	leftCollapsed,
-	bottomCollapsed,
-	showBottomToggle,
 	showChatTrigger,
-	onToggleLeft,
-	onToggleBottom,
 }: {
 	user: {
 		name?: string | null;
@@ -511,30 +558,10 @@ function TopBar({
 	onNewProject: () => void;
 	onEditProfile: () => void;
 	leftCollapsed: boolean;
-	bottomCollapsed: boolean;
-	showBottomToggle: boolean;
 	showChatTrigger: boolean;
-	onToggleLeft: () => void;
-	onToggleBottom: () => void;
 }) {
 	return (
 		<header className="flex h-12 shrink-0 items-center gap-2 border-b bg-card px-3">
-			<Button
-				type="button"
-				size="icon"
-				variant="ghost"
-				className="size-8"
-				onClick={onToggleLeft}
-				aria-label={leftCollapsed ? "Show sidebar" : "Hide sidebar"}
-				aria-pressed={!leftCollapsed}
-				data-testid="topbar-toggle-left"
-			>
-				{leftCollapsed ? (
-					<PanelLeftIcon className="size-4" />
-				) : (
-					<PanelLeftCloseIcon className="size-4" />
-				)}
-			</Button>
 			<Link to="/" className="flex items-center gap-2">
 				<div className="grid size-7 place-items-center rounded-md bg-primary text-primary-foreground">
 					<LayersIcon className="size-4" />
@@ -562,26 +589,6 @@ function TopBar({
 			</Button>
 			<SyncStatus />
 			{showChatTrigger && <ChatTrigger />}
-			{showBottomToggle && (
-				<Button
-					type="button"
-					size="icon"
-					variant="ghost"
-					className="size-8"
-					onClick={onToggleBottom}
-					aria-label={
-						bottomCollapsed ? "Show details panel" : "Hide details panel"
-					}
-					aria-pressed={!bottomCollapsed}
-					data-testid="topbar-toggle-bottom"
-				>
-					{bottomCollapsed ? (
-						<PanelBottomIcon className="size-4" />
-					) : (
-						<PanelBottomCloseIcon className="size-4" />
-					)}
-				</Button>
-			)}
 			<DropdownMenu>
 				<DropdownMenuTrigger asChild>
 					<Button

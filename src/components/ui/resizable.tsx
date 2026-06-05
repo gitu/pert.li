@@ -1,7 +1,41 @@
 import { GripVerticalIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import * as ResizablePrimitive from "react-resizable-panels";
 
 import { cn } from "#/lib/utils.ts";
+
+// A collapse/expand affordance rendered directly on a resize divider, so the
+// control lives on the bar's own edge instead of floating in a far-off toolbar.
+// The button stays clickable when the panel collapses to size 0 (the separator
+// stays pinned at the screen edge) and the chevron flips to point the way it
+// will re-expand.
+type HandleToggle = {
+	collapsed: boolean;
+	onToggle: () => void;
+	/** aria-label — caller flips the wording with `collapsed`. */
+	label: string;
+	testId?: string;
+	/**
+	 * Which edge the collapsible panel sits on, relative to this divider. The
+	 * button protrudes toward the *content* side so it stays fully on-screen
+	 * when the panel collapses to size 0 and the divider lands at the very
+	 * edge. Defaults to "left" (collapsible panel on the left, e.g. a sidebar).
+	 */
+	side?: "left" | "right" | "bottom";
+	/** Shown when expanded; should point the collapse direction. */
+	collapseIcon: ReactNode;
+	/** Shown when collapsed; should point the expand direction. */
+	expandIcon: ReactNode;
+};
+
+// Anchor the toggle on the side opposite the collapsible panel so it never
+// clips at the collapsed edge: a left panel's button extends right, a right
+// panel's extends left, a bottom panel's extends up.
+const TOGGLE_POSITION: Record<NonNullable<HandleToggle["side"]>, string> = {
+	left: "left-0 top-3",
+	right: "right-0 top-3",
+	bottom: "bottom-0 left-1/2 -translate-x-1/2",
+};
 
 function ResizablePanelGroup({
 	className,
@@ -25,10 +59,12 @@ function ResizablePanel({ ...props }: ResizablePrimitive.PanelProps) {
 
 function ResizableHandle({
 	withHandle,
+	toggle,
 	className,
 	...props
 }: ResizablePrimitive.SeparatorProps & {
 	withHandle?: boolean;
+	toggle?: HandleToggle;
 }) {
 	return (
 		<ResizablePrimitive.Separator
@@ -43,6 +79,26 @@ function ResizableHandle({
 				<div className="z-10 flex h-4 w-3 items-center justify-center rounded-xs border bg-border">
 					<GripVerticalIcon className="size-2.5" />
 				</div>
+			)}
+			{toggle && (
+				<button
+					type="button"
+					data-resize-toggle=""
+					data-testid={toggle.testId}
+					// Stop the pointer/mouse-down from reaching the separator so a
+					// click toggles the panel instead of starting a resize drag.
+					onPointerDown={(e) => e.stopPropagation()}
+					onMouseDown={(e) => e.stopPropagation()}
+					onClick={toggle.onToggle}
+					aria-label={toggle.label}
+					aria-pressed={!toggle.collapsed}
+					className={cn(
+						"absolute z-20 flex size-5 items-center justify-center rounded-sm border bg-background text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-hidden [&_svg]:size-3.5",
+						TOGGLE_POSITION[toggle.side ?? "left"],
+					)}
+				>
+					{toggle.collapsed ? toggle.expandIcon : toggle.collapseIcon}
+				</button>
 			)}
 		</ResizablePrimitive.Separator>
 	);
