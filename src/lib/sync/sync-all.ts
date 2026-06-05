@@ -15,38 +15,42 @@ export type SyncAllDeps = {
 	listProjects: (
 		workspaceId: string,
 	) => Promise<Array<{ automergeDocUrl: AutomergeUrl }>>;
-	// Re-announces a doc to the sync server. Best-effort: the caller wraps
-	// repo.find() so a single bad URL can't abort the whole sweep.
-	find: (url: AutomergeUrl) => void;
+	// Pulls a doc from the sync server. `repo.find()` is async: it resolves once
+	// the doc is found locally or delivered from a peer, and rejects when the
+	// doc is unavailable / times out. We await it so the result reflects what was
+	// actually pulled, not merely scheduled — see syncAllProjects below.
+	find: (url: AutomergeUrl) => Promise<unknown>;
 };
 
 export type SyncAllResult = {
 	workspaces: number;
+	// Unique project docs we attempted to pull.
 	projects: number;
+	// Docs whose find() resolved (found locally or delivered from the server).
+	synced: number;
 };
 
-// Re-announces every project doc across every accessible workspace. Dedups doc
-// URLs (a project can surface via more than one membership) so each is found
-// once. Returns counts for the result toast.
+// Pulls every project doc across every accessible workspace from the sync
+// server. Dedups doc URLs (a project can surface via more than one membership)
+// so each is found once, then awaits all finds together. `Promise.allSettled`
+// keeps it best-effort: a single unavailable / timed-out doc (a rejected
+// promise) can't abort the rest, nor leak as an unhandled rejection. Returns
+// counts for the result toast.
 export async function syncAllProjects(
 	deps: SyncAllDeps,
 ): Promise<SyncAllResult> {
 	const workspaces = await deps.listWorkspaces();
-	const seen = new Set<AutomergeUrl>();
+	const urls = new Set<AutomergeUrl>();
 
 	for (const { workspaceId } of workspaces) {
 		const projects = await deps.listProjects(workspaceId);
-		for (const { automergeDocUrl } of projects) {
-			if (seen.has(automergeDocUrl)) continue;
-			seen.add(automergeDocUrl);
-			// Best-effort per doc — a single failure must not strand the rest.
-			try {
-				deps.find(automergeDocUrl);
-			} catch {
-				// ignore: nudging is fire-and-forget
-			}
-		}
+		for (const { automergeDocUrl } of projects) urls.add(automergeDocUrl);
 	}
 
-	return { workspaces: workspaces.length, projects: seen.size };
+	const results = await Promise.allSettled(
+		[...urls].map((url) => deps.find(url)),
+	);
+	const synced = results.filter((r) => r.status === "fulfilled").length;
+
+	return { workspaces: workspaces.length, projects: urls.size, synced };
 }

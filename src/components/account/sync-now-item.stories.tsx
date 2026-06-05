@@ -43,6 +43,11 @@ export const Offline: Story = {
 	args: { state: "offline" },
 };
 
+export const Loading: Story = {
+	name: "Loading (repo booting)",
+	args: { state: "loading" },
+};
+
 export const ClickFires: Story = {
 	name: "Click fires onSelect",
 	args: { state: "idle" },

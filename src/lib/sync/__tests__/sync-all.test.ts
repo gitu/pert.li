@@ -9,7 +9,7 @@ const url = (seed: string) => `automerge:${seed}` as AutomergeUrl;
 
 describe("syncAllProjects", () => {
 	it("finds every project doc across every workspace and returns counts", async () => {
-		const find = vi.fn();
+		const find = vi.fn(async () => {});
 		const result = await syncAllProjects({
 			listWorkspaces: async () => [
 				{ workspaceId: "w1" },
@@ -26,11 +26,11 @@ describe("syncAllProjects", () => {
 		expect(find).toHaveBeenCalledWith(url("a"));
 		expect(find).toHaveBeenCalledWith(url("b"));
 		expect(find).toHaveBeenCalledWith(url("c"));
-		expect(result).toEqual({ workspaces: 2, projects: 3 });
+		expect(result).toEqual({ workspaces: 2, projects: 3, synced: 3 });
 	});
 
 	it("dedups a doc URL that surfaces in more than one workspace", async () => {
-		const find = vi.fn();
+		const find = vi.fn(async () => {});
 		const result = await syncAllProjects({
 			listWorkspaces: async () => [
 				{ workspaceId: "w1" },
@@ -46,13 +46,17 @@ describe("syncAllProjects", () => {
 
 		expect(find).toHaveBeenCalledTimes(3);
 		expect(find).toHaveBeenCalledWith(url("shared"));
-		expect(result).toEqual({ workspaces: 2, projects: 3 });
+		expect(result).toEqual({ workspaces: 2, projects: 3, synced: 3 });
 	});
 
-	it("keeps going when a single find throws (best-effort)", async () => {
-		const find = vi.fn((u: AutomergeUrl) => {
-			if (u === url("bad")) throw new Error("boom");
-		});
+	it("counts a doc that fails to sync without aborting the rest", async () => {
+		// repo.find() rejects when a doc is unavailable / times out. allSettled
+		// must keep the other docs going and never throw.
+		const find = vi.fn((u: AutomergeUrl) =>
+			u === url("bad")
+				? Promise.reject(new Error("unavailable"))
+				: Promise.resolve(),
+		);
 		const result = await syncAllProjects({
 			listWorkspaces: async () => [{ workspaceId: "w1" }],
 			listProjects: async () => [
@@ -64,12 +68,12 @@ describe("syncAllProjects", () => {
 		});
 
 		expect(find).toHaveBeenCalledTimes(3);
-		// Still counts the doc as visited even though the nudge threw.
-		expect(result).toEqual({ workspaces: 1, projects: 3 });
+		// Attempted all three; only the two that resolved count as synced.
+		expect(result).toEqual({ workspaces: 1, projects: 3, synced: 2 });
 	});
 
 	it("handles workspaces with no projects", async () => {
-		const find = vi.fn();
+		const find = vi.fn(async () => {});
 		const result = await syncAllProjects({
 			listWorkspaces: async () => [{ workspaceId: "empty" }],
 			listProjects: async () => [],
@@ -77,11 +81,11 @@ describe("syncAllProjects", () => {
 		});
 
 		expect(find).not.toHaveBeenCalled();
-		expect(result).toEqual({ workspaces: 1, projects: 0 });
+		expect(result).toEqual({ workspaces: 1, projects: 0, synced: 0 });
 	});
 
 	it("handles no accessible workspaces", async () => {
-		const find = vi.fn();
+		const find = vi.fn(async () => {});
 		const result = await syncAllProjects({
 			listWorkspaces: async () => [],
 			listProjects: async () => {
@@ -91,6 +95,6 @@ describe("syncAllProjects", () => {
 		});
 
 		expect(find).not.toHaveBeenCalled();
-		expect(result).toEqual({ workspaces: 0, projects: 0 });
+		expect(result).toEqual({ workspaces: 0, projects: 0, synced: 0 });
 	});
 });

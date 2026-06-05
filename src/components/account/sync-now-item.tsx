@@ -7,7 +7,9 @@ import { syncAllProjects } from "#/lib/sync/sync-all";
 import { useOnlineStatus } from "#/lib/use-online-status";
 import { listMyWorkspaces, listProjects } from "#/server/workspace.ts";
 
-export type SyncNowState = "idle" | "syncing" | "offline";
+// "loading" = the browser Automerge repo hasn't finished booting yet (distinct
+// from "offline", so we don't mislabel a momentary startup as no connection).
+export type SyncNowState = "idle" | "syncing" | "offline" | "loading";
 
 // Presentational menu item. Kept free of repo/network deps so Storybook can
 // exercise every state directly.
@@ -50,34 +52,35 @@ export function SyncNowItem() {
 	const online = useOnlineStatus();
 	const [syncing, setSyncing] = useState(false);
 
-	// No repo yet (still booting) or offline → there's nothing the sync server
-	// can hand back, so surface it as offline rather than letting a click no-op.
-	const offline = !online || !repo;
+	// Offline → the sync server can't hand anything back. No repo yet → still
+	// booting; surface that as a distinct disabled "loading" rather than
+	// mislabelling it "Offline".
 	const state: SyncNowState = syncing
 		? "syncing"
-		: offline
+		: !online
 			? "offline"
-			: "idle";
+			: !repo
+				? "loading"
+				: "idle";
 
 	const onSelect = () => {
 		if (!repo || syncing) return;
 		setSyncing(true);
+		// repo.find() resolves once a doc is found locally or pulled from the
+		// sync server; allSettled inside syncAllProjects keeps a single failed
+		// doc from rejecting the whole sweep.
 		const run = syncAllProjects({
 			listWorkspaces: () => listMyWorkspaces(),
 			listProjects: (workspaceId) => listProjects({ data: { workspaceId } }),
-			find: (url) => {
-				try {
-					repo.find(url);
-				} catch {
-					// best-effort nudge
-				}
-			},
+			find: (url) => repo.find(url),
 		}).finally(() => setSyncing(false));
 
 		toast.promise(run, {
 			loading: "Syncing all projects…",
-			success: (r) =>
-				`Synced ${r.projects} project${r.projects === 1 ? "" : "s"} from the server`,
+			success: ({ synced, projects }) =>
+				synced === projects
+					? `Synced ${synced} project${synced === 1 ? "" : "s"} from the server`
+					: `Synced ${synced} of ${projects} projects`,
 			error: "Couldn’t sync projects",
 		});
 	};
