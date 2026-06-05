@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useRef } from "react";
 import { toast } from "sonner";
+import { SyncNowItem } from "#/components/account/sync-now-item";
 import { UserAvatar } from "#/components/account/user-avatar";
 import { SyncStatus } from "#/components/sync/sync-status";
 import { Button } from "#/components/ui/button";
@@ -123,6 +124,7 @@ export function MobileTopBar({
 							</Link>
 						</DropdownMenuItem>
 					)}
+					<SyncNowItem />
 					<DropdownMenuSeparator />
 					<DropdownMenuItem onClick={() => void signOutEverywhere()}>
 						<LogOutIcon className="size-4" />
