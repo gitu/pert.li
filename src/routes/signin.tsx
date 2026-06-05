@@ -2,6 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { z } from "zod";
 import { VersionFooter } from "#/components/legal/version-footer";
+import { BrandMark } from "#/components/marketing/brand-mark";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
@@ -109,10 +110,11 @@ function SignInPage() {
 
 	return (
 		<div className="min-h-svh grid place-items-center bg-background p-6">
-			<div className="flex w-full max-w-sm flex-col items-stretch gap-4">
+			<div className="flex w-full max-w-sm flex-col items-stretch gap-6">
+				<BrandMark className="justify-center" />
 				<form
 					onSubmit={onSubmit}
-					className="w-full space-y-5 rounded-lg border bg-card p-6 shadow-sm"
+					className="w-full space-y-5 rounded-xl border bg-card p-6 shadow-sm"
 					data-hydrated={hydrated || undefined}
 				>
 					<div className="space-y-1">
@@ -268,17 +270,26 @@ function SignInPage() {
 					</div>
 
 					<div className="flex items-center justify-center gap-3 text-center text-xs text-muted-foreground">
-						<Link to="/" className="hover:text-foreground">
+						<Link
+							to="/"
+							className="text-muted-foreground hover:text-foreground"
+						>
 							← back to home
 						</Link>
 						<span aria-hidden>·</span>
-						<Link to="/about" className="hover:text-foreground">
+						<Link
+							to="/about"
+							className="text-muted-foreground hover:text-foreground"
+						>
 							About
 						</Link>
 						{privacy.mode !== "disabled" && (
 							<>
 								<span aria-hidden>·</span>
-								<Link to="/privacy" className="hover:text-foreground">
+								<Link
+									to="/privacy"
+									className="text-muted-foreground hover:text-foreground"
+								>
 									Privacy
 								</Link>
 							</>

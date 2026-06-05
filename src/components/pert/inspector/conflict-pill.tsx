@@ -81,7 +81,7 @@ function FieldResolver({
 }) {
 	const [open, setOpen] = useState(false);
 	return (
-		<div className="flex items-center justify-between gap-2 rounded bg-card/60 px-2 py-1">
+		<div className="flex items-center justify-between gap-2 rounded bg-card/40 px-2 py-1">
 			<span className="font-medium tabular-nums text-[10px] uppercase tracking-wide text-muted-foreground">
 				{field.field}
 			</span>

@@ -1,11 +1,6 @@
-import {
-	createFileRoute,
-	Link,
-	notFound,
-	redirect,
-} from "@tanstack/react-router";
-import { LayersIcon } from "lucide-react";
-import { VersionFooter } from "#/components/legal/version-footer";
+import { createFileRoute, notFound, redirect } from "@tanstack/react-router";
+import { MarketingFooter } from "#/components/marketing/marketing-footer";
+import { MarketingHeader } from "#/components/marketing/marketing-header";
 import { useAppConfig } from "#/lib/app-config";
 import { getAppConfig } from "#/server/config";
 
@@ -31,25 +26,10 @@ export const Route = createFileRoute("/privacy")({
 function PrivacyPage() {
 	const { appName } = useAppConfig();
 	return (
-		<div className="min-h-svh bg-background">
-			<header className="mx-auto flex max-w-3xl items-center justify-between px-6 py-5">
-				<Link to="/" className="flex items-center gap-2">
-					<div className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground">
-						<LayersIcon className="size-4" />
-					</div>
-					<span className="text-base font-semibold tracking-tight">
-						{appName}
-					</span>
-				</Link>
-				<Link
-					to="/signin"
-					className="text-sm text-muted-foreground hover:text-foreground"
-				>
-					Sign in
-				</Link>
-			</header>
+		<div className="flex min-h-svh flex-col bg-background">
+			<MarketingHeader width="reading" />
 
-			<main className="mx-auto max-w-3xl px-6 pb-24">
+			<main className="mx-auto w-full max-w-3xl flex-1 px-6 pt-12">
 				<article className="prose prose-zinc dark:prose-invert max-w-none">
 					<h1 className="text-3xl font-semibold tracking-tight">
 						Privacy policy
@@ -158,14 +138,8 @@ function PrivacyPage() {
 						log.
 					</p>
 				</article>
-
-				<div className="mt-10 flex items-center justify-between gap-3 text-xs text-muted-foreground">
-					<Link to="/" className="hover:text-foreground">
-						← back to home
-					</Link>
-					<VersionFooter className="text-xs text-muted-foreground/70 tabular-nums" />
-				</div>
 			</main>
+			<MarketingFooter width="reading" />
 		</div>
 	);
 }

@@ -17,7 +17,11 @@ test.describe("/privacy", () => {
 
 	test("links back to the home page", async ({ page }) => {
 		await page.goto("/privacy");
-		await page.getByRole("link", { name: /back to home/i }).click();
+		// Home is the brand lockup in the shared MarketingHeader.
+		await page
+			.getByRole("banner")
+			.getByRole("link", { name: /pert\.li/i })
+			.click();
 		await expect(page).toHaveURL(/\/$/);
 	});
 

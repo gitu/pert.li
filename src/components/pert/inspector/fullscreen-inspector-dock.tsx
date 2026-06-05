@@ -18,7 +18,7 @@ export function FullscreenInspectorDock({ onClose }: { onClose: () => void }) {
 			data-testid="fullscreen-inspector-dock"
 			className="flex h-full min-h-0 flex-col overflow-hidden bg-card"
 		>
-			<div className="flex shrink-0 items-center justify-between border-b bg-card/60 px-3 py-1.5">
+			<div className="flex shrink-0 items-center justify-between border-b bg-card/40 px-3 py-1.5">
 				<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
 					Task details
 				</div>
