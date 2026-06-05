@@ -192,7 +192,7 @@ production rollout — prod never moves backwards. See the header of
    ```
 
    > ⚠️ **You already have `main` deploying prod.** Until the `main` trigger
-   > is repointed to `pert-li-staging` (and a `_DATABASE_URL_STAGING` secret),
+   > is repointed to `pert-li-staging` (and a `DATABASE_URL_STAGING` secret),
    > the next push to `main` rolls out to **production**. Run the
    > `triggers update` above before merging more work to `main`.
 

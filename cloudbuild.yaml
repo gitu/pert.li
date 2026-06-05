@@ -136,27 +136,55 @@ steps:
           exit 0
         fi
 
+        # fail_unverifiable: when the gate is ON we must never silently skip a
+        # real release because of a transient fetch/auth problem. A genuine
+        # "not on main" / "not newest" verdict is a clean skip (exit 0); an
+        # inability to *establish the facts* fails the build loudly (exit 1)
+        # so the release is retried rather than quietly dropped.
+        fail_unverifiable() {
+          echo "GATE: cannot verify prod promotion — $$1" >&2
+          echo "GATE: failing the build instead of skipping, so a real release is not silently dropped." >&2
+          exit 1
+        }
+
         # Need full history + tags to resolve ancestry and the version set.
-        # Cloud Build gives a shallow clone; unshallow best-effort.
+        # Cloud Build gives a shallow clone; unshallow best-effort (a complete
+        # clone makes --unshallow fail harmlessly — that's fine).
         git fetch --unshallow 2>/dev/null || git fetch 2>/dev/null || true
-        git fetch origin '+refs/heads/main:refs/remotes/origin/main' 2>/dev/null || true
-        git fetch --tags 2>/dev/null || true
+        # origin/main and the tag set are prerequisites — these MUST succeed.
+        git fetch origin '+refs/heads/main:refs/remotes/origin/main' 2>/dev/null \
+          || fail_unverifiable "git fetch origin main failed"
+        git rev-parse --verify -q origin/main >/dev/null \
+          || fail_unverifiable "origin/main could not be resolved after fetch"
+        git fetch --tags 2>/dev/null \
+          || fail_unverifiable "git fetch --tags failed"
 
         NEW="$(cat /workspace/APP_VERSION)"
 
-        # 1. from-main: HEAD must be an ancestor of origin/main.
-        if ! git merge-base --is-ancestor HEAD origin/main 2>/dev/null; then
+        # 1. from-main: HEAD must be an ancestor of origin/main. Distinguish a
+        #    real "not an ancestor" (rc=1 → skip) from a merge-base error
+        #    (rc>1 → unverifiable → fail).
+        set +e
+        git merge-base --is-ancestor HEAD origin/main
+        rc=$$?
+        set -e
+        if [ "$$rc" -gt 1 ]; then
+          fail_unverifiable "git merge-base errored (rc=$$rc)"
+        fi
+        if [ "$$rc" -ne 0 ]; then
           echo "GATE: commit $(git rev-parse --short HEAD) is not on main — skipping prod rollout"
           echo no > /workspace/DEPLOY_GO
           exit 0
         fi
 
         # 2. newest-version: NEW must be the highest v* tag reachable from main.
+        #    HEAD is on main (check 1) and the prod trigger fires on a v* tag,
+        #    so that tag is merged into main and the list cannot legitimately
+        #    be empty — an empty result here means the tag set didn't resolve,
+        #    which is unverifiable, not a clean "no tags".
         HIGHEST="$(git tag --merged origin/main --list 'v*' | sort -V | tail -1)"
         if [ -z "$$HIGHEST" ]; then
-          echo "GATE: no v* tags on main — skipping prod rollout"
-          echo no > /workspace/DEPLOY_GO
-          exit 0
+          fail_unverifiable "no v* tags resolved on main (tag fetch incomplete?)"
         fi
         if [ "$$NEW" != "$$HIGHEST" ]; then
           echo "GATE: version $$NEW is not the newest on main (newest is $$HIGHEST) — skipping prod rollout"
