@@ -400,12 +400,15 @@ jobs:
         run: pnpm storybook:ci
 
   pr-screenshots:
-    # PR-only, informational. Renders every story whose source file changed
-    # on this branch, pushes the PNGs to the `screenshots` orphan branch
-    # under `pr-<num>/`, and posts a sticky PR comment that embeds each
-    # image inline via raw.githubusercontent.com (works anonymously now
-    # that the repo is public; Camo proxies it). Deliberately NOT in the
-    # ci-ready gate — a flake here should never block merge.
+    # PR-only, informational. Renders every story, pixel-diffs each against
+    # the `main` baseline (baseline/ on the screenshots orphan branch), and
+    # for the stories that actually changed pushes the new render + a diff
+    # overlay to `pr-<num>/` and posts a sticky PR comment embedding them
+    # inline via raw.githubusercontent.com (works anonymously now that the
+    # repo is public; Camo proxies it). A tolerance heuristic (see
+    # scripts/diff-screenshots.mjs) keeps sub-pixel noise from flagging a
+    # story. Deliberately NOT in the ci-ready gate — a flake here should
+    # never block merge.
     name: PR screenshots
     # Skip on forks: GITHUB_TOKEN on a fork PR is read-only by default,
     # so the screenshots-branch push would fail and the sticky comment
@@ -511,9 +514,10 @@ jobs:
       - name: Build Storybook
         if: steps.diff.outputs.has_changes == 'true'
         # Static build gives us a reproducible `index.json` (mapping
-        # story id -> importPath) for the changed-stories filter, and
-        # lets test-storybook run against a plain file server instead
-        # of `storybook dev` (no compile-on-demand variance).
+        # story id -> title/name/importPath) that the diff step uses to
+        # label flagged stories, and lets test-storybook run against a
+        # plain file server instead of `storybook dev` (no compile-on-demand
+        # variance — important so the baseline and PR render identically).
         run: pnpm build-storybook --quiet
 
       - name: Screenshot every story
@@ -537,25 +541,52 @@ jobs:
           }
           kill "$(cat /tmp/sb-http.pid)" 2>/dev/null || true
 
-      - name: Filter screenshots to affected stories
+      - name: Fetch baseline from screenshots branch
         if: steps.diff.outputs.has_changes == 'true'
-        id: match
-        env:
-          BASE_REF: origin/${{ github.base_ref }}
+        # Pull the current `main` baseline (baseline/<id>.png) off the
+        # screenshots orphan branch so we can pixel-diff this PR against it.
+        # On a repo where the branch / baseline doesn't exist yet (first run
+        # before any push-to-main has seeded it) we just create an empty
+        # `baseline/` — every story then classifies as `new`, which is the
+        # correct "no baseline to compare against" behaviour.
         run: |
           set -euo pipefail
-          node scripts/changed-stories.mjs "$BASE_REF" storybook-static/index.json > changed-stories.json
-          jq '.stories[] | .id + " (" + .title + " / " + .name + ")"' changed-stories.json
+          mkdir -p baseline
+          if git ls-remote --exit-code --heads origin screenshots >/dev/null 2>&1; then
+            git fetch -q --depth=1 origin screenshots
+            # Extract only baseline/ from the fetched branch into ./baseline.
+            git --work-tree=. checkout FETCH_HEAD -- baseline 2>/dev/null || \
+              echo "screenshots branch has no baseline/ yet — treating all stories as new"
+          else
+            echo "no screenshots branch yet — treating all stories as new"
+          fi
+          echo "baseline images: $(find baseline -name '*.png' 2>/dev/null | wc -l)"
+
+      - name: Diff against baseline
+        if: steps.diff.outputs.has_changes == 'true'
+        id: match
+        # Pixel-compare every rendered story against the baseline. Only
+        # stories the heuristic flags as changed / new / removed land in
+        # changed-stories.json (unchanged ones are dropped). Diff overlays
+        # go to pr-diff/; we stage the new render + overlay per flagged story.
+        run: |
+          set -euo pipefail
+          node scripts/diff-screenshots.mjs \
+            baseline pr-screenshots storybook-static/index.json pr-diff changed-stories.json
+          jq '.stories[] | .id + " [" + .status + "] (" + .title + " / " + .name + ")"' changed-stories.json
           mkdir -p pr-staging
-          for id in $(jq -r '.stories[].id' changed-stories.json); do
-            src="pr-screenshots/${id}.png"
-            if [ -f "$src" ]; then
-              cp "$src" "pr-staging/${id}.png"
+          # Stage the new render + (when present) the diff overlay for every
+          # flagged story. `removed` stories have no render — skip them here;
+          # the comment renders them as a text line.
+          for id in $(jq -r '.stories[] | select(.status=="changed" or .status=="new") | .id' changed-stories.json); do
+            if [ -f "pr-screenshots/${id}.png" ]; then
+              cp "pr-screenshots/${id}.png" "pr-staging/${id}.png"
             else
               echo "::warning::no screenshot rendered for story id $id"
             fi
+            [ -f "pr-diff/${id}.diff.png" ] && cp "pr-diff/${id}.diff.png" "pr-staging/${id}.diff.png" || true
           done
-          ls -la pr-staging/
+          ls -la pr-staging/ || true
           count=$(jq '.stories | length' changed-stories.json)
           echo "matched=$count" >> "$GITHUB_OUTPUT"
 
@@ -582,11 +613,11 @@ jobs:
           header: pr-screenshots
           path: comment.md
 
-      - name: Remove sticky comment when no stories are affected
+      - name: Remove sticky comment when nothing changed visually
         # Two paths land here: (1) the quick gate skipped entirely (no
-        # UI-adjacent changes); (2) the gate ran but no story directory
-        # tree was touched. Either way, wipe any stale comment so the PR
-        # doesn't keep showing screenshots from a prior commit.
+        # UI-adjacent changes); (2) the gate ran but every story matched the
+        # baseline within tolerance. Either way, wipe any stale comment so the
+        # PR doesn't keep showing screenshots from a prior commit.
         if: steps.diff.outputs.has_changes != 'true' || steps.match.outputs.matched == '0'
         uses: marocchino/sticky-pull-request-comment@v3
         with:
@@ -598,7 +629,12 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: pr-screenshots
-          path: pr-screenshots
+          # All renders + the diff overlays + the classification JSON, so a
+          # surprising flag (or a missed one) can be inspected offline.
+          path: |
+            pr-screenshots
+            pr-diff
+            changed-stories.json
           retention-days: 7
           if-no-files-found: ignore
 

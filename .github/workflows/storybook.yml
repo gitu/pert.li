@@ -68,3 +68,116 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+
+  baseline-screenshots:
+    # Refresh the visual-regression baseline on every push to main. Renders
+    # every story, pixel-diffs against the baseline currently on the
+    # screenshots branch, and pushes only the stories that actually changed
+    # (scripts/publish-baseline-screenshots.sh commits the delta) — so the
+    # branch carries a stable, up-to-date `main` baseline that PR runs diff
+    # against. Independent of the Pages build/deploy above.
+    name: update screenshot baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Override the workflow-level contents:read — we push the baseline
+      # delta to the screenshots branch with the default GITHUB_TOKEN.
+      contents: write
+    env:
+      # Story modules transitively import code that reads these at load time
+      # (better-auth client config, chat provider sniff). Dummy values keep
+      # imports happy; nothing runs against them.
+      BETTER_AUTH_SECRET: ci-only-not-secret
+      ANTHROPIC_API_KEY: ci-placeholder
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        # compute-version.mjs (run from .storybook/vite.config.ts) needs full
+        # history for `git describe`, matching the build job above.
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.3.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Approve build scripts
+        run: pnpm approve-builds --all
+        continue-on-error: true
+
+      # Same Playwright browser caching strategy as the CI jobs — the
+      # test-runner drives stories through Playwright, so we only need
+      # Chromium, keyed on the installed @playwright/test version.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
+
+      - name: Install Chromium (+ system deps)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Chromium system deps only
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+
+      - name: Build Storybook
+        run: pnpm build-storybook --quiet
+
+      - name: Render every story
+        env:
+          STORYBOOK_SCREENSHOT_DIR: ${{ github.workspace }}/main-screenshots
+        run: |
+          set -euo pipefail
+          mkdir -p "$STORYBOOK_SCREENSHOT_DIR"
+          ( cd storybook-static && python3 -m http.server 6006 >/tmp/sb-http.log 2>&1 ) &
+          echo "$!" > /tmp/sb-http.pid
+          pnpm exec wait-on -l tcp:6006 -t 60000
+          pnpm exec test-storybook --url http://localhost:6006 || {
+            status=$?
+            echo "test-storybook exited with $status; continuing so we still publish whatever rendered"
+          }
+          kill "$(cat /tmp/sb-http.pid)" 2>/dev/null || true
+
+      - name: Fetch current baseline
+        run: |
+          set -euo pipefail
+          mkdir -p baseline
+          if git ls-remote --exit-code --heads origin screenshots >/dev/null 2>&1; then
+            git fetch -q --depth=1 origin screenshots
+            git --work-tree=. checkout FETCH_HEAD -- baseline 2>/dev/null || \
+              echo "screenshots branch has no baseline/ yet — first seed"
+          else
+            echo "no screenshots branch yet — first seed"
+          fi
+          echo "existing baseline images: $(find baseline -name '*.png' 2>/dev/null | wc -l)"
+
+      - name: Diff new render against baseline
+        run: |
+          set -euo pipefail
+          node scripts/diff-screenshots.mjs \
+            baseline main-screenshots storybook-static/index.json /tmp/baseline-diff changed-stories.json
+          jq '.counts' changed-stories.json
+
+      - name: Publish baseline delta
+        env:
+          HEAD_SHA: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/publish-baseline-screenshots.sh changed-stories.json main-screenshots

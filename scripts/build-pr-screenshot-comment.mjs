@@ -1,60 +1,93 @@
 #!/usr/bin/env node
-// Produce the markdown body for the sticky "PR screenshots" comment.
+// Produce the markdown body for the sticky "Visual changes" PR comment.
 //
 // Inputs (env / argv):
 //   $REPO              — "owner/name" (defaults to $GITHUB_REPOSITORY)
 //   $SCREENSHOT_BRANCH — branch where images live (default: "screenshots")
 //   $PR_NUMBER         — PR number
 //   $HEAD_SHA          — head commit SHA (links the comment to the source)
-//   argv[2]            — path to the changed-stories JSON
-//   argv[3]            — directory holding the rendered PNGs
+//   argv[2]            — path to the diff-screenshots JSON (changed-stories.json)
+//   argv[3]            — directory holding the staged PNGs (<id>.png + <id>.diff.png)
 //   argv[4]            — output markdown file (default: stdout)
 //
-// For each story in the input JSON we embed the PNG inline via a
-// markdown image pointed at raw.githubusercontent.com on the
-// screenshots branch. The repo is public, so GitHub's Camo image
-// proxy can fetch the raw URL anonymously and the image renders in
-// the PR conversation without the reviewer having to click through.
-// We also wrap the image in a link to the same raw URL so a click
-// opens the full-size PNG.
-// Stories whose PNG is missing on disk are listed as "(render failed)".
+// The stories in the input JSON are only the ones that differ from the
+// baseline (diff-screenshots.mjs omits unchanged stories). Each is rendered
+// according to its status:
+//   - changed        → new render + pixel-diff overlay, both linked full-size
+//   - changed + size  → new render only (dimensions changed, no overlay)
+//   - new            → new render only, flagged as a new story
+//   - removed        → text line, no image
+// Images embed via raw.githubusercontent.com on the screenshots branch; the
+// repo is public so GitHub's Camo proxy fetches them anonymously and they
+// render inline. Each image links to the same raw URL for a full-size view.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-// Pure helper: given the parsed changed-stories payload and a predicate
-// telling us which screenshots actually landed on disk, produce the
-// markdown body that the sticky comment action posts. Exported so the
-// unit test can exercise grouping / fallback behavior without touching
-// the filesystem.
-export function renderComment({ stories, repo, prNumber, branch = "screenshots", headSha = "", hasScreenshot }) {
+function img(name, url) {
+	return `[![${name}](${url})](${url})`;
+}
+
+// Pure helper: given the diff payload and a predicate telling us which PNGs
+// actually landed on disk, produce the sticky-comment markdown. Exported so
+// the unit test can exercise the per-status rendering without the filesystem.
+export function renderComment({
+	stories,
+	repo,
+	prNumber,
+	branch = "screenshots",
+	headSha = "",
+	hasScreenshot,
+}) {
 	const urlBase = `https://raw.githubusercontent.com/${repo}/${branch}/pr-${prNumber}`;
-	const lines = ["## 📸 PR screenshots", ""];
+	const lines = ["## 📸 Visual changes", ""];
 
 	if (!stories || stories.length === 0) {
-		lines.push("_No story directories were touched by this PR._");
+		lines.push("_No stories changed visually against the `main` baseline._");
 	} else {
+		const n = stories.length;
 		lines.push(
-			`Rendered ${stories.length} stor${stories.length === 1 ? "y" : "ies"} from files touched in this PR.`,
+			`${n} stor${n === 1 ? "y" : "ies"} changed visually against the \`main\` baseline.`,
 		);
 		lines.push("");
+
 		const byTitle = new Map();
 		for (const story of stories) {
 			if (!byTitle.has(story.title)) byTitle.set(story.title, []);
 			byTitle.get(story.title).push(story);
 		}
+
 		for (const [title, group] of byTitle) {
 			lines.push(`### ${title}`);
 			lines.push(`<sub>\`${group[0].file}\`</sub>`);
 			lines.push("");
 			for (const story of group) {
-				if (hasScreenshot(story)) {
-					const url = `${urlBase}/${story.id}.png`;
-					lines.push(`**${story.name}**`);
+				if (story.status === "removed") {
+					lines.push(`**${story.name}** — 🗑 _story removed_`);
 					lines.push("");
-					lines.push(`[![${story.name}](${url})](${url})`);
-					lines.push("");
-				} else {
+					continue;
+				}
+				if (!hasScreenshot(story, "png")) {
 					lines.push(`**${story.name}** — _render failed_`);
+					lines.push("");
+					continue;
+				}
+				const label =
+					story.status === "new"
+						? `**${story.name}** — 🆕 _new story_`
+						: story.sizeChanged
+							? `**${story.name}** — ↔ _size changed_`
+							: `**${story.name}**`;
+				lines.push(label);
+				lines.push("");
+				lines.push(img(story.name, `${urlBase}/${story.id}.png`));
+				lines.push("");
+				// Only `changed` stories of equal size carry a diff overlay.
+				if (
+					story.status === "changed" &&
+					!story.sizeChanged &&
+					hasScreenshot(story, "diff.png")
+				) {
+					lines.push(img(`${story.name} diff`, `${urlBase}/${story.id}.diff.png`));
 					lines.push("");
 				}
 			}
@@ -69,7 +102,8 @@ export function renderComment({ stories, repo, prNumber, branch = "screenshots",
 	return `${lines.join("\n")}\n`;
 }
 
-const invokedDirectly = process.argv[1] && path.resolve(process.argv[1]).endsWith("build-pr-screenshot-comment.mjs");
+const invokedDirectly =
+	process.argv[1] && path.resolve(process.argv[1]).endsWith("build-pr-screenshot-comment.mjs");
 
 if (invokedDirectly) {
 	const repo = process.env.REPO || process.env.GITHUB_REPOSITORY;
@@ -95,7 +129,8 @@ if (invokedDirectly) {
 		prNumber,
 		branch,
 		headSha,
-		hasScreenshot: (story) => existsSync(path.join(screenshotDir, `${story.id}.png`)),
+		hasScreenshot: (story, suffix) =>
+			existsSync(path.join(screenshotDir, `${story.id}.${suffix}`)),
 	});
 
 	if (outPath) {

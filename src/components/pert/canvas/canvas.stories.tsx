@@ -241,6 +241,12 @@ const meta = {
 	title: "PERT/Canvas",
 	component: Stage,
 	parameters: { layout: "padded" },
+	// The xyflow + elkjs auto-layout re-positions the whole graph by a few
+	// sub-pixels from one build to the next, so byte-level screenshot diffing
+	// flags these stories on unrelated PRs (the baseline is always a different
+	// build than the PR). Opt them out of the visual-regression diff — the
+	// play functions below still run as functional tests in the storybook job.
+	tags: ["no-screenshot-diff"],
 } satisfies Meta<typeof Stage>;
 
 export default meta;

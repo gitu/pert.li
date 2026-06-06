@@ -1,101 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { renderComment } from "../build-pr-screenshot-comment.mjs";
-import { matchStoriesToFiles } from "../changed-stories.mjs";
-
-// Minimal shape mirroring storybook's `storybook-static/index.json`.
-// Real builds add a bunch of metadata; the matcher only reads
-// `id`, `title`, `name`, `importPath`, `type`.
-const INDEX = {
-	v: 5,
-	entries: {
-		"foo-bar--default": {
-			id: "foo-bar--default",
-			title: "Foo/Bar",
-			name: "Default",
-			importPath: "./src/components/foo/bar.stories.tsx",
-			type: "story",
-		},
-		"foo-bar--with-icon": {
-			id: "foo-bar--with-icon",
-			title: "Foo/Bar",
-			name: "With Icon",
-			importPath: "./src/components/foo/bar.stories.tsx",
-			type: "story",
-		},
-		"foo-bar--docs": {
-			id: "foo-bar--docs",
-			title: "Foo/Bar",
-			name: "docs",
-			importPath: "./src/components/foo/bar.stories.tsx",
-			type: "docs",
-		},
-		"widget--basic": {
-			id: "widget--basic",
-			title: "Widget",
-			name: "Basic",
-			// Each story lives in its own component dir — mirrors the
-			// real repo, where stories are always nested 2+ levels deep
-			// under `src/`. The matcher's dirname heuristic relies on
-			// that convention to scope changes correctly.
-			importPath: "./src/components/widget/widget.stories.tsx",
-			type: "story",
-		},
-	},
-};
-
-describe("matchStoriesToFiles", () => {
-	it("returns the stories whose importPath matches a changed file (and excludes docs)", () => {
-		const out = matchStoriesToFiles(INDEX, ["src/components/foo/bar.stories.tsx"]);
-		expect(out.map((s) => s.id).sort()).toEqual(["foo-bar--default", "foo-bar--with-icon"]);
-		// Each match carries the normalized file path back to the caller
-		// (the CI workflow uses it to render the file-path subtitle in the
-		// sticky comment).
-		expect(out.every((s) => s.file === "src/components/foo/bar.stories.tsx")).toBe(true);
-	});
-
-	it("matches a sibling source file in the same directory", () => {
-		// Touching `bar.tsx` (the component the story renders) should
-		// flag every story exported from `bar.stories.tsx`.
-		const out = matchStoriesToFiles(INDEX, ["src/components/foo/bar.tsx"]);
-		expect(out.map((s) => s.id).sort()).toEqual(["foo-bar--default", "foo-bar--with-icon"]);
-	});
-
-	it("matches a nested file under the story directory", () => {
-		// Touching anything under `src/components/foo/` (e.g. a child
-		// component or local util) should still flag stories at that
-		// level — the dirname-prefix match walks the whole subtree.
-		const out = matchStoriesToFiles(INDEX, ["src/components/foo/internal/helper.ts"]);
-		expect(out.map((s) => s.id).sort()).toEqual(["foo-bar--default", "foo-bar--with-icon"]);
-	});
-
-	it("does NOT match a sibling directory with a shared prefix", () => {
-		// `src/components/foo-bar/` must not bleed into stories living
-		// in `src/components/foo/`. The matcher uses `dir + "/"` as the
-		// prefix to defend against this.
-		const out = matchStoriesToFiles(INDEX, ["src/components/foo-bar/anything.ts"]);
-		expect(out).toEqual([]);
-	});
-
-	it("returns nothing when changes are outside every story's directory tree", () => {
-		expect(matchStoriesToFiles(INDEX, ["src/lib/utils.ts"])).toEqual([]);
-		expect(matchStoriesToFiles(INDEX, ["src/server/routes.ts"])).toEqual([]);
-	});
-
-	it("survives a malformed index", () => {
-		expect(matchStoriesToFiles({}, ["src/components/foo/bar.stories.tsx"])).toEqual([]);
-		expect(matchStoriesToFiles(null, ["src/components/foo/bar.stories.tsx"])).toEqual([]);
-	});
-});
 
 describe("renderComment", () => {
 	const baseArgs = {
 		repo: "gitu/pert.li",
 		prNumber: "42",
 		headSha: "deadbeef1234",
+		// Default: every requested PNG (after + diff) exists on disk.
 		hasScreenshot: () => true,
 	};
+	const urlBase = "https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42";
 
-	it("groups stories by title and embeds raw.githubusercontent images linked to the full-size PNG", () => {
+	it("groups changed stories by title and embeds after + diff, both linked full-size", () => {
 		const out = renderComment({
 			...baseArgs,
 			stories: [
@@ -104,62 +20,119 @@ describe("renderComment", () => {
 					title: "Foo/Bar",
 					name: "Default",
 					file: "src/components/foo/bar.stories.tsx",
+					status: "changed",
 				},
 				{
 					id: "foo-bar--with-icon",
 					title: "Foo/Bar",
 					name: "With Icon",
 					file: "src/components/foo/bar.stories.tsx",
+					status: "changed",
 				},
 			],
 		});
+		expect(out).toContain("## 📸 Visual changes");
+		expect(out).toContain("2 stories changed visually against the `main` baseline.");
 		expect(out).toContain("### Foo/Bar");
 		expect(out).toContain("`src/components/foo/bar.stories.tsx`");
-		// Images embed via raw.githubusercontent.com — the repo is public
-		// so Camo can fetch the URL anonymously and the screenshot
-		// renders inline. Each image is wrapped in a link to the same
-		// raw URL so clicking opens the full-size PNG.
+		// New render embed, linked to the full-size PNG.
 		expect(out).toContain(
-			"[![Default](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--default.png)](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--default.png)",
+			`[![Default](${urlBase}/foo-bar--default.png)](${urlBase}/foo-bar--default.png)`,
 		);
+		// Diff overlay embed for a changed story.
 		expect(out).toContain(
-			"[![With Icon](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--with-icon.png)](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--with-icon.png)",
+			`[![Default diff](${urlBase}/foo-bar--default.diff.png)](${urlBase}/foo-bar--default.diff.png)`,
 		);
-		// Each story name appears as bold above its image.
 		expect(out).toContain("**Default**");
 		expect(out).toContain("**With Icon**");
-		// We no longer route through github.com/blob — that was a
-		// workaround for the private-repo era.
-		expect(out).not.toContain("github.com/gitu/pert.li/blob/");
-		// The title heading appears only once even though we have two
-		// stories under it.
+		// Title heading appears once even with two stories under it.
 		expect(out.match(/### Foo\/Bar/g)).toHaveLength(1);
 	});
 
-	it("renders a fallback line for stories whose screenshot is missing", () => {
+	it("embeds only the new render (no diff overlay) for a new story", () => {
 		const out = renderComment({
 			...baseArgs,
 			stories: [
-				{ id: "x--y", title: "X", name: "Y", file: "src/x.stories.tsx" },
+				{ id: "w--basic", title: "Widget", name: "Basic", file: "src/w.stories.tsx", status: "new" },
+			],
+		});
+		expect(out).toContain("**Basic** — 🆕 _new story_");
+		expect(out).toContain(`[![Basic](${urlBase}/w--basic.png)](${urlBase}/w--basic.png)`);
+		// A brand-new story has no baseline, so no diff overlay is referenced.
+		expect(out).not.toContain("w--basic.diff.png");
+	});
+
+	it("flags a size change and skips the diff overlay (dimensions differ)", () => {
+		const out = renderComment({
+			...baseArgs,
+			stories: [
+				{
+					id: "w--basic",
+					title: "Widget",
+					name: "Basic",
+					file: "src/w.stories.tsx",
+					status: "changed",
+					sizeChanged: true,
+				},
+			],
+		});
+		expect(out).toContain("**Basic** — ↔ _size changed_");
+		expect(out).toContain(`[![Basic](${urlBase}/w--basic.png)]`);
+		// pixelmatch can't diff unequal sizes, so no overlay is embedded.
+		expect(out).not.toContain("w--basic.diff.png");
+	});
+
+	it("renders a removed story as a text line with no image", () => {
+		const out = renderComment({
+			...baseArgs,
+			stories: [
+				{ id: "gone--x", title: "Gone", name: "X", file: "src/gone.stories.tsx", status: "removed" },
+			],
+		});
+		expect(out).toContain("**X** — 🗑 _story removed_");
+		// No image link for a removed story.
+		expect(out).not.toMatch(/!\[X\]\(http/);
+	});
+
+	it("falls back to 'render failed' when the after PNG is missing", () => {
+		const out = renderComment({
+			...baseArgs,
+			stories: [
+				{ id: "x--y", title: "X", name: "Y", file: "src/x.stories.tsx", status: "changed" },
 			],
 			hasScreenshot: () => false,
 		});
 		expect(out).toContain("_render failed");
-		// Missing-screenshot stories must not produce a link to a 404'd
-		// image; they're rendered as bold name + "render failed" instead.
+		// Missing-screenshot stories must not produce a link to a 404'd image.
 		expect(out).not.toMatch(/!\[/);
 		expect(out).not.toMatch(/\]\(http/);
 	});
 
+	it("embeds the after render even when the diff overlay is missing", () => {
+		// A changed story whose overlay failed to write should still show the
+		// new render rather than collapsing to "render failed".
+		const out = renderComment({
+			...baseArgs,
+			stories: [
+				{ id: "x--y", title: "X", name: "Y", file: "src/x.stories.tsx", status: "changed" },
+			],
+			hasScreenshot: (_story, suffix) => suffix === "png",
+		});
+		expect(out).toContain(`[![Y](${urlBase}/x--y.png)]`);
+		expect(out).not.toContain("x--y.diff.png");
+	});
+
 	it("renders the empty-state message when nothing changed", () => {
 		const out = renderComment({ ...baseArgs, stories: [] });
-		expect(out).toContain("No story directories were touched");
+		expect(out).toContain("No stories changed visually against the `main` baseline.");
 	});
 
 	it("trims the head sha to 7 chars in the footer", () => {
 		const out = renderComment({
 			...baseArgs,
-			stories: [{ id: "x--y", title: "X", name: "Y", file: "src/x.stories.tsx" }],
+			stories: [
+				{ id: "x--y", title: "X", name: "Y", file: "src/x.stories.tsx", status: "changed" },
+			],
 		});
 		expect(out).toContain("updated for deadbee");
 	});

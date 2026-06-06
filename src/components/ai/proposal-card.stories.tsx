@@ -259,6 +259,11 @@ export const OperationsListCollapsedWhenHealthy: Story = {
 // ACTUALLY created under (→ task_xxx) so the raw operation can be correlated
 // with the diff and the live document.
 export const RemappedIdShownInOperations: Story = {
+	// The remapped id is freshly generated (crypto-random) on every render, so
+	// the "→ task_xxx" text differs each build — opt out of the screenshot diff
+	// so it doesn't flag on every PR. The play function still asserts the
+	// remap behaviour functionally.
+	tags: ["no-screenshot-diff"],
 	args: {
 		projectId: "story-proposal-remapped-id",
 		operations: [
