@@ -126,7 +126,7 @@ APP_NAME=                # visible brand / wordmark; defaults to "pert.li"
 APP_TITLE=               # browser document <title>; defaults to APP_NAME, or the full hosted tagline if neither is set
 ```
 
-These are resolved at **request time** on the server (`src/lib/app-config.ts` → `resolveAppConfig`, exposed via the `getAppConfig` server fn in `src/server/config.ts`), threaded into the page through the root route loader, and read by components via the `useAppConfig()` context hook. Because they're runtime env (not build-time `VITE_*`), a deploy can rebrand without rebuilding. `APP_NAME` replaces the wordmark across the chrome and public pages; `APP_TITLE` sets the document `<title>` (used at SSR via the root route's `head`).
+These are resolved at **request time** on the server (`src/lib/app-config.ts` → `resolveAppConfig`, exposed via the `getAppConfig` server fn in `src/server/config.ts`), threaded into the page through the root route loader, and read by components via the `useAppConfig()` context hook. Because they're runtime env (not build-time `VITE_*`), a deploy can rebrand without rebuilding. `APP_NAME` replaces the wordmark across the chrome and public pages; `APP_TITLE` sets the document `<title>` (used at SSR via the root route's `head`). Both also drive the **PWA install name**: the web app manifest is generated per request at `/api/manifest` (`src/routes/api/manifest.ts` → `buildManifest` in `src/lib/pwa/manifest.ts`), mapping `APP_NAME` → manifest `short_name` (home-screen label) and `APP_TITLE` → manifest `name` (full install / splash name), so a rebranded deployment installs under its own name.
 
 Optional — privacy policy override:
 

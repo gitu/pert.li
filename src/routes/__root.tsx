@@ -59,7 +59,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 			},
 			{
 				rel: "manifest",
-				href: "/manifest.json",
+				href: "/api/manifest",
 			},
 		],
 	}),
