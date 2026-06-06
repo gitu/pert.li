@@ -115,9 +115,10 @@ OIDC_DISCOVERY_URL=      # https://idp.example.com/.well-known/openid-configurat
 OIDC_CLIENT_ID=
 OIDC_CLIENT_SECRET=
 OIDC_SCOPES=             # comma-separated; defaults to "openid,email,profile"
+OIDC_AUTO_REDIRECT=      # "1"/"true" → /signin forwards straight to the IdP (escape hatch: /signin?local=1)
 ```
 
-Register `<app-origin>/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>` as the redirect URI with the IdP. For Entra ID the discovery URL is `https://login.microsoftonline.com/<tenant-id>/v2.0/.well-known/openid-configuration`.
+Register `<app-origin>/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>` as the redirect URI with the IdP. For Entra ID the discovery URL is `https://login.microsoftonline.com/<tenant-id>/v2.0/.well-known/openid-configuration`. `OIDC_AUTO_REDIRECT` (parsed in `src/lib/auth-oidc.ts`, carried to the client via the secret-free `OidcPublicInfo` from `getOidcButton`) makes `/signin` auto-forward to the provider for single-IdP deployments; `/signin?local=1` always renders the email/password form so the bootstrap admin can still sign in.
 
 Optional — white-label branding (page title / app name):
 

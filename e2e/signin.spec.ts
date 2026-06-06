@@ -82,6 +82,21 @@ test.describe("/signin", () => {
 		).toHaveCount(0);
 	});
 
+	test("?local=1 still renders the email/password form (SSO bypass path)", async ({
+		page,
+	}) => {
+		// The bypass is a no-op when no IdP is configured, but the param must
+		// never break the form — it's the documented escape hatch for on-prem
+		// auto-redirect deployments, and an admin reaching for it must always
+		// land on a working sign-in form.
+		await page.goto("/signin?local=1");
+		await expect(
+			page.getByRole("heading", { name: "Sign in", exact: true }),
+		).toBeVisible();
+		await expect(page.getByLabel("Email")).toBeVisible();
+		await expect(page.getByLabel("Password")).toBeVisible();
+	});
+
 	test("footer links to the privacy policy", async ({ page }) => {
 		await page.goto("/signin");
 		await page.getByRole("link", { name: "Privacy", exact: true }).click();

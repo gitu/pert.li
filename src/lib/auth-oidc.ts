@@ -20,17 +20,28 @@ export type OidcProviderConfig = {
 	clientId: string;
 	clientSecret: string;
 	scopes: string[];
+	/** When true, /signin forwards straight to the IdP without a click. Opt-in
+	 * via OIDC_AUTO_REDIRECT for on-prem deployments standardized on one IdP;
+	 * the email/password form stays reachable at /signin?local=1. */
+	autoRedirect: boolean;
 };
 
 /** Subset of the config that's safe to ship to the browser (no secrets). */
 export type OidcPublicInfo = Pick<
 	OidcProviderConfig,
-	"providerId" | "displayName"
+	"providerId" | "displayName" | "autoRedirect"
 >;
 
 const DEFAULT_PROVIDER_ID = "oidc";
 const DEFAULT_DISPLAY_NAME = "SSO";
 const DEFAULT_SCOPES = ["openid", "email", "profile"];
+
+/** Truthy-string parse for boolean env flags: "1"/"true" (case-insensitive,
+ * trimmed) → true; anything else (incl. unset) → false. */
+function parseBoolEnv(raw: string | undefined): boolean {
+	const v = raw?.trim().toLowerCase();
+	return v === "1" || v === "true";
+}
 
 export function parseOidcConfig(env: OidcEnv): OidcProviderConfig | null {
 	const discoveryUrl = env.OIDC_DISCOVERY_URL?.trim();
@@ -50,9 +61,14 @@ export function parseOidcConfig(env: OidcEnv): OidcProviderConfig | null {
 		clientId,
 		clientSecret,
 		scopes,
+		autoRedirect: parseBoolEnv(env.OIDC_AUTO_REDIRECT),
 	};
 }
 
 export function toPublicInfo(config: OidcProviderConfig): OidcPublicInfo {
-	return { providerId: config.providerId, displayName: config.displayName };
+	return {
+		providerId: config.providerId,
+		displayName: config.displayName,
+		autoRedirect: config.autoRedirect,
+	};
 }

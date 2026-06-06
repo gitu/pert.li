@@ -32,7 +32,33 @@ describe("parseOidcConfig", () => {
 			clientId: "client",
 			clientSecret: "secret",
 			scopes: ["openid", "email", "profile"],
+			autoRedirect: false,
 		});
+	});
+
+	it("parses OIDC_AUTO_REDIRECT as a truthy flag", () => {
+		const base = {
+			OIDC_DISCOVERY_URL:
+				"https://idp.example.com/.well-known/openid-configuration",
+			OIDC_CLIENT_ID: "client",
+			OIDC_CLIENT_SECRET: "secret",
+		};
+		expect(parseOidcConfig(base)?.autoRedirect).toBe(false);
+		expect(
+			parseOidcConfig({ ...base, OIDC_AUTO_REDIRECT: "1" })?.autoRedirect,
+		).toBe(true);
+		expect(
+			parseOidcConfig({ ...base, OIDC_AUTO_REDIRECT: "true" })?.autoRedirect,
+		).toBe(true);
+		expect(
+			parseOidcConfig({ ...base, OIDC_AUTO_REDIRECT: "  TRUE " })?.autoRedirect,
+		).toBe(true);
+		expect(
+			parseOidcConfig({ ...base, OIDC_AUTO_REDIRECT: "0" })?.autoRedirect,
+		).toBe(false);
+		expect(
+			parseOidcConfig({ ...base, OIDC_AUTO_REDIRECT: "yes" })?.autoRedirect,
+		).toBe(false);
 	});
 
 	it("uses provided id/name/scopes overrides", () => {
@@ -72,7 +98,7 @@ describe("parseOidcConfig", () => {
 });
 
 describe("toPublicInfo", () => {
-	it("strips secrets, leaving only id + display name", () => {
+	it("strips secrets, leaving only id + display name + autoRedirect", () => {
 		const info = toPublicInfo({
 			providerId: "entra",
 			displayName: "Entra ID",
@@ -80,9 +106,18 @@ describe("toPublicInfo", () => {
 			clientId: "client",
 			clientSecret: "secret",
 			scopes: ["openid"],
+			autoRedirect: true,
 		});
-		expect(info).toEqual({ providerId: "entra", displayName: "Entra ID" });
-		// Make sure no other keys leak through.
-		expect(Object.keys(info).sort()).toEqual(["displayName", "providerId"]);
+		expect(info).toEqual({
+			providerId: "entra",
+			displayName: "Entra ID",
+			autoRedirect: true,
+		});
+		// Make sure no other keys (secrets, urls, scopes) leak through.
+		expect(Object.keys(info).sort()).toEqual([
+			"autoRedirect",
+			"displayName",
+			"providerId",
+		]);
 	});
 });
