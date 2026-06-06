@@ -400,24 +400,23 @@ jobs:
         run: pnpm storybook:ci
 
   pr-screenshots:
-    # PR-only, informational. Renders every story whose source file changed
-    # on this branch, pushes the PNGs to the `screenshots` orphan branch
-    # under `pr-<num>/`, and posts a sticky PR comment that embeds each
-    # image inline via raw.githubusercontent.com (works anonymously now
-    # that the repo is public; Camo proxies it). Deliberately NOT in the
-    # ci-ready gate — a flake here should never block merge.
+    # PR-only, informational. Re-renders every Storybook story into the
+    # committed `screenshots/<id>.png` visual-regression baselines and, when
+    # a baseline actually changed, AUTO-COMMITS the updated PNGs back onto
+    # the PR branch. GitHub then renders the before/after natively in the
+    # PR's "Files changed" tab (2-up / swipe / onion-skin). A slim sticky
+    # comment indexes what changed and links to that tab. Deliberately NOT
+    # in the ci-ready gate — a flake here should never block merge.
     name: PR screenshots
-    # Skip on forks: GITHUB_TOKEN on a fork PR is read-only by default,
-    # so the screenshots-branch push would fail and the sticky comment
-    # could not be created. Re-enable for forks later via a
-    # pull_request_target variant if we want it.
+    # Skip on forks: the push token is unavailable / read-only on a fork
+    # PR, so the auto-commit push would fail. Re-enable for forks later via
+    # a pull_request_target variant if we want it.
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      # `contents: write` so we can push to the screenshots branch with
-      # the default GITHUB_TOKEN. `pull-requests: write` for the sticky
-      # comment action.
+      # `contents: write` so we can push the regenerated baselines back to
+      # the PR branch. `pull-requests: write` for the sticky comment action.
       contents: write
       pull-requests: write
     env:
@@ -427,28 +426,45 @@ jobs:
       BETTER_AUTH_SECRET: ci-only-not-secret
       ANTHROPIC_API_KEY: ci-placeholder
     steps:
-      - name: Checkout
+      - name: Checkout PR head branch
         uses: actions/checkout@v6
         with:
-          # We need the merge base on disk to diff against — the default
-          # shallow checkout only carries HEAD. fetch-depth 0 is overkill
-          # for the diff but matches db-back-compat (cache hit overlap).
+          # Check out the PR's actual head branch (not the detached merge
+          # ref) so we can commit regenerated baselines onto it and push.
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          # `SCREENSHOT_PUSH_TOKEN` (a fine-grained PAT or GitHub App token)
+          # makes the auto-commit push RE-TRIGGER CI, so the new head commit
+          # gets its required checks; the follow-up run finds the baselines
+          # already match and commits nothing (bounded). Falls back to the
+          # default token, which still pushes but won't re-trigger checks.
+          token: ${{ secrets.SCREENSHOT_PUSH_TOKEN || secrets.GITHUB_TOKEN }}
+          # Full history so the UI-change gate can diff against the base.
           fetch-depth: 0
 
       - name: Detect UI changes (quick gate)
         id: diff
         env:
           BASE_REF: origin/${{ github.base_ref }}
-        # Eager gate: run the screenshot pipeline whenever the PR touches
-        # anything plausibly UI-impacting. The precise filtering (which
-        # stories actually appear in the comment) happens later in
-        # `scripts/changed-stories.mjs` against the built storybook index,
-        # using a directory-tree match — so this gate intentionally errs
-        # on the side of running. A `pr-screenshots` run that finds zero
-        # affected stories costs ~1-2min of CI; missing a UI change costs
-        # a review round-trip, which is worse.
+        # Skip the (expensive) render entirely on PRs that touch nothing
+        # UI-adjacent. When it does run, we re-render ALL stories and let
+        # `git diff` on the baseline dir surface exactly the ones whose
+        # pixels changed — so there's no per-story filtering here, and a
+        # cross-cutting change (styles.css, tailwind, a theme token) is
+        # handled for free: every affected baseline simply diffs.
         run: |
           set -euo pipefail
+          # Loop guard: if the head commit is our own auto-committed baseline
+          # update, don't re-render. With the push token re-triggering CI,
+          # a determinism wobble could otherwise commit-and-retrigger
+          # forever. The follow-up run's only job was to land required
+          # checks on the new head, which it still does.
+          if [ "$(git log -1 --format='%an')" = "github-actions[bot]" ] && \
+             [[ "$(git log -1 --format='%s')" == "chore: update story screenshots"* ]]; then
+            echo "head is an auto baseline commit — skipping render"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           changed=$(git diff --name-only --diff-filter=ACMRD "$BASE_REF"...HEAD -- \
             "src/**" \
             "tailwind*" \
@@ -510,16 +526,19 @@ jobs:
 
       - name: Build Storybook
         if: steps.diff.outputs.has_changes == 'true'
-        # Static build gives us a reproducible `index.json` (mapping
-        # story id -> importPath) for the changed-stories filter, and
-        # lets test-storybook run against a plain file server instead
-        # of `storybook dev` (no compile-on-demand variance).
+        # Static build gives a reproducible `index.json` (story id -> title
+        # / name, used to label the sticky comment) and lets test-storybook
+        # run against a plain file server instead of `storybook dev` (no
+        # compile-on-demand variance — important for stable baselines).
         run: pnpm build-storybook --quiet
 
-      - name: Screenshot every story
+      - name: Render baselines (every story)
         if: steps.diff.outputs.has_changes == 'true'
         env:
-          STORYBOOK_SCREENSHOT_DIR: ${{ github.workspace }}/pr-screenshots
+          # Render straight into the tracked baseline dir, overwriting in
+          # place. `git diff screenshots/` then surfaces exactly the stories
+          # whose pixels changed.
+          STORYBOOK_SCREENSHOT_DIR: ${{ github.workspace }}/screenshots
         # `python3 -m http.server` ships with ubuntu-latest — avoids a
         # cold `pnpm dlx http-server` install on every run. We background
         # it, `wait-on` blocks until the port is live, then test-storybook
@@ -533,72 +552,62 @@ jobs:
           pnpm exec wait-on -l tcp:6006 -t 60000
           pnpm exec test-storybook --url http://localhost:6006 || {
             status=$?
-            echo "test-storybook exited with $status; continuing so we still publish whatever rendered"
+            echo "test-storybook exited with $status; continuing so we still commit whatever rendered"
           }
           kill "$(cat /tmp/sb-http.pid)" 2>/dev/null || true
 
-      - name: Filter screenshots to affected stories
+      - name: Build story label lookup
         if: steps.diff.outputs.has_changes == 'true'
-        id: match
-        env:
-          BASE_REF: origin/${{ github.base_ref }}
+        # Map every story id -> { title, name } so the sticky comment can
+        # show readable labels for whatever the diff turns up.
         run: |
           set -euo pipefail
-          node scripts/changed-stories.mjs "$BASE_REF" storybook-static/index.json > changed-stories.json
-          jq '.stories[] | .id + " (" + .title + " / " + .name + ")"' changed-stories.json
-          mkdir -p pr-staging
-          for id in $(jq -r '.stories[].id' changed-stories.json); do
-            src="pr-screenshots/${id}.png"
-            if [ -f "$src" ]; then
-              cp "$src" "pr-staging/${id}.png"
-            else
-              echo "::warning::no screenshot rendered for story id $id"
-            fi
-          done
-          ls -la pr-staging/
-          count=$(jq '.stories | length' changed-stories.json)
-          echo "matched=$count" >> "$GITHUB_OUTPUT"
+          jq '{stories: [.entries[] | select(.type == "story") | {id, title, name}]}' \
+            storybook-static/index.json > all-stories.json
 
-      - name: Publish to screenshots branch
-        if: steps.match.outputs.matched != '' && steps.match.outputs.matched != '0'
+      - name: Commit & push changed baselines
+        if: steps.diff.outputs.has_changes == 'true'
+        id: publish
         env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: bash scripts/publish-pr-screenshots.sh pr-staging
+          NAME_STATUS_OUT: ${{ github.workspace }}/screenshot-changes.txt
+        # Stages screenshots/, and ONLY if a baseline changed: commits,
+        # pushes to the PR branch, and emits `screenshot_changed` /
+        # `screenshot_sha`. A no-op otherwise.
+        run: bash scripts/publish-pr-screenshots.sh
 
       - name: Build sticky-comment body
-        if: steps.match.outputs.matched != '' && steps.match.outputs.matched != '0'
+        if: steps.publish.outputs.screenshot_changed == 'true'
         env:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: node scripts/build-pr-screenshot-comment.mjs changed-stories.json pr-staging comment.md
+          SCREENSHOT_REF: ${{ steps.publish.outputs.screenshot_sha }}
+        run: node scripts/build-pr-screenshot-comment.mjs screenshot-changes.txt all-stories.json comment.md
 
       - name: Post / update sticky PR comment
-        if: steps.match.outputs.matched != '' && steps.match.outputs.matched != '0'
+        if: steps.publish.outputs.screenshot_changed == 'true'
         uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: pr-screenshots
           path: comment.md
 
-      - name: Remove sticky comment when no stories are affected
-        # Two paths land here: (1) the quick gate skipped entirely (no
-        # UI-adjacent changes); (2) the gate ran but no story directory
-        # tree was touched. Either way, wipe any stale comment so the PR
-        # doesn't keep showing screenshots from a prior commit.
-        if: steps.diff.outputs.has_changes != 'true' || steps.match.outputs.matched == '0'
+      - name: Remove sticky comment when no baselines changed
+        # Either the quick gate skipped the render entirely, or it ran but
+        # no baseline changed. Wipe any stale comment so the PR doesn't keep
+        # showing a screenshot summary from a prior commit.
+        if: steps.diff.outputs.has_changes != 'true' || steps.publish.outputs.screenshot_changed != 'true'
         uses: marocchino/sticky-pull-request-comment@v3
         with:
           header: pr-screenshots
           delete: true
 
-      - name: Upload screenshots artifact (debug)
+      - name: Upload baselines artifact (debug)
         if: steps.diff.outputs.has_changes == 'true' && always()
         uses: actions/upload-artifact@v7
         with:
           name: pr-screenshots
-          path: pr-screenshots
+          path: screenshots
           retention-days: 7
           if-no-files-found: ignore
 

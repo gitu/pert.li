@@ -10,120 +10,138 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-// End-to-end smoke test for `scripts/publish-pr-screenshots.sh`. We run
-// the real script against a local bare repo (acting as the GitHub
-// remote) to prove two things that broke in production at least once:
+// End-to-end smoke test for `scripts/publish-pr-screenshots.sh`. The script
+// runs inside a PR-head checkout, stages the committed `screenshots/`
+// baseline dir, and — only when a baseline actually changed — commits the
+// result and pushes it to the PR head branch. We exercise the real script
+// against a local bare repo acting as `origin` to prove:
 //
-//   1. A *relative* source dir argument (the workflow passes
-//      `pr-staging`) is still resolved correctly after the script
-//      `cd`s into its work directory. The previous version of the
-//      script kept the arg as-is and `cp` errored with
-//      "cannot stat 'pr-staging/.': No such file or directory".
-//   2. The branch-bootstrap path runs only when the screenshots branch
-//      truly does not exist on the remote — not on every transient
-//      `git fetch` failure (the old `2>/dev/null` swallowed real
-//      errors).
+//   1. A changed baseline produces exactly one commit, pushed to HEAD_REF,
+//      with the commit SHA and a `screenshot_changed=true` flag emitted to
+//      $GITHUB_OUTPUT and the staged name-status written to $NAME_STATUS_OUT.
+//   2. An unchanged render is a clean no-op: no commit, no push, and
+//      `screenshot_changed=false`.
 
 const SCRIPT = path.resolve("scripts/publish-pr-screenshots.sh");
 
-function rewriteRemote(scriptPath, fakeRemoteUrl) {
-	// The shipped script hard-codes the GitHub HTTPS URL; the test
-	// reroutes it to a local `file://` bare repo so we never touch the
-	// real network.
-	const original = readFileSync(SCRIPT, { encoding: "utf8" });
-	const patched = original.replace(
-		/https:\/\/x-access-token:.*@github\.com\/.*\.git/,
-		fakeRemoteUrl,
-	);
-	writeFileSync(scriptPath, patched, { mode: 0o755 });
+function git(repo, args) {
+	return execSync(`git -C ${JSON.stringify(repo)} ${args}`, {
+		encoding: "utf8",
+		env: {
+			...process.env,
+			GIT_AUTHOR_NAME: "Test",
+			GIT_AUTHOR_EMAIL: "test@example.com",
+			GIT_COMMITTER_NAME: "Test",
+			GIT_COMMITTER_EMAIL: "test@example.com",
+		},
+	});
 }
 
-function run(scriptPath, srcDirArg, cwd, env) {
-	return execFileSync("bash", [scriptPath, srcDirArg], {
+function run(cwd, env) {
+	return execFileSync("bash", [SCRIPT], {
 		cwd,
 		env: { ...process.env, ...env },
 		encoding: "utf8",
 	});
 }
 
-function lsTree(repoPath, ref) {
-	return execSync(`git -C ${JSON.stringify(repoPath)} ls-tree -r ${ref}`, {
-		encoding: "utf8",
-	})
-		.split("\n")
-		.filter(Boolean)
-		.map((line) => line.split("\t")[1]);
-}
-
 describe("publish-pr-screenshots.sh", () => {
 	let tmp;
 	let remote;
-	let workdir;
-	let patchedScript;
-	const baseEnv = {
-		PR_NUMBER: "42",
-		HEAD_SHA: "abc1234567890def",
-		GITHUB_TOKEN: "dummy",
-		GITHUB_REPOSITORY: "fake/repo",
-	};
+	let checkout;
+	let outputFile;
+	let nameStatusFile;
+	const branch = "feature";
 
 	beforeEach(() => {
 		tmp = mkdtempSync(path.join(tmpdir(), "publish-pr-test-"));
 		remote = path.join(tmp, "remote.git");
 		mkdirSync(remote);
-		execSync(`git -C ${JSON.stringify(remote)} init --bare -q`);
-		workdir = path.join(tmp, "workdir");
-		mkdirSync(workdir);
-		patchedScript = path.join(tmp, "publish.sh");
-		rewriteRemote(patchedScript, `file://${remote}`);
+		git(remote, "init --bare -q");
+
+		// Seed a PR-head checkout: a `feature` branch carrying an existing
+		// screenshot baseline, already pushed to the bare `origin`.
+		checkout = path.join(tmp, "checkout");
+		execSync(`git clone -q ${JSON.stringify(remote)} ${JSON.stringify(checkout)}`);
+		git(checkout, "checkout -q -b feature");
+		mkdirSync(path.join(checkout, "screenshots"));
+		writeFileSync(path.join(checkout, "screenshots", "foo--default.png"), "baseline-v1");
+		git(checkout, "add screenshots");
+		git(checkout, 'commit -q -m "seed baselines"');
+		git(checkout, "push -q origin feature");
+
+		outputFile = path.join(tmp, "gh-output");
+		writeFileSync(outputFile, "");
+		nameStatusFile = path.join(tmp, "name-status.txt");
 	});
 
 	afterEach(() => {
 		rmSync(tmp, { recursive: true, force: true });
 	});
 
-	it("resolves a relative source dir and bootstraps the screenshots branch on first run", () => {
-		const src = path.join(workdir, "pr-staging");
-		mkdirSync(src);
-		writeFileSync(path.join(src, "story-a.png"), "fake png a");
-		writeFileSync(path.join(src, "story-b.png"), "fake png b");
-
-		const out = run(patchedScript, "pr-staging", workdir, baseEnv);
-		expect(out).toContain("bootstrapping");
-		expect(out).toContain("pushed pr-42/ to screenshots");
-
-		expect(lsTree(remote, "screenshots")).toEqual([
-			"README.md",
-			"pr-42/story-a.png",
-			"pr-42/story-b.png",
-		]);
+	const baseEnv = () => ({
+		HEAD_REF: branch,
+		PR_NUMBER: "42",
+		GITHUB_OUTPUT: outputFile,
+		NAME_STATUS_OUT: nameStatusFile,
 	});
 
-	it("replaces the PR directory wholesale on a subsequent push to the same PR", () => {
-		const src = path.join(workdir, "pr-staging");
-		mkdirSync(src);
-		writeFileSync(path.join(src, "old.png"), "fake old");
-		run(patchedScript, "pr-staging", workdir, baseEnv);
+	it("commits and pushes a changed baseline to the PR branch and emits the SHA", () => {
+		// New render: one modified PNG + one brand-new story.
+		writeFileSync(path.join(checkout, "screenshots", "foo--default.png"), "baseline-v2");
+		writeFileSync(path.join(checkout, "screenshots", "foo--new.png"), "fresh");
 
-		// Second run: a completely different file set under pr-staging.
-		// pr-42/ on the screenshots branch should end up reflecting the
-		// new set with the old file gone.
-		rmSync(path.join(src, "old.png"));
-		writeFileSync(path.join(src, "new.png"), "fake new");
-		writeFileSync(path.join(src, "another.png"), "another");
-		const out = run(patchedScript, "pr-staging", workdir, {
-			...baseEnv,
-			HEAD_SHA: "deadbeef000",
-		});
-		expect(out).toContain("pushed pr-42/ to screenshots");
-		// The bootstrap line MUST NOT appear on the second run — the
-		// branch already exists, and the previous swallow-error fetch
-		// could clobber it by routing through bootstrap on a flake.
-		expect(out).not.toContain("bootstrapping");
+		const out = run(checkout, baseEnv());
+		expect(out).toContain("pushed screenshot baselines to feature");
 
-		const tree = lsTree(remote, "screenshots");
-		expect(tree).toContain("pr-42/new.png");
-		expect(tree).toContain("pr-42/another.png");
-		expect(tree).not.toContain("pr-42/old.png");
+		// A single new commit landed on the bare remote's branch.
+		const remoteSha = git(remote, "rev-parse feature").trim();
+		const localSha = git(checkout, "rev-parse HEAD").trim();
+		expect(remoteSha).toBe(localSha);
+
+		const output = readFileSync(outputFile, "utf8");
+		expect(output).toContain("screenshot_changed=true");
+		expect(output).toMatch(new RegExp(`screenshot_sha=${localSha}`));
+
+		// Name-status captured for the comment builder.
+		const nameStatus = readFileSync(nameStatusFile, "utf8");
+		expect(nameStatus).toMatch(/M\s+screenshots\/foo--default\.png/);
+		expect(nameStatus).toMatch(/A\s+screenshots\/foo--new\.png/);
+
+		// The pushed tree carries both PNGs.
+		const tree = git(remote, "ls-tree -r --name-only feature")
+			.split("\n")
+			.filter(Boolean);
+		expect(tree).toContain("screenshots/foo--default.png");
+		expect(tree).toContain("screenshots/foo--new.png");
+	});
+
+	it("is a clean no-op when the render matches the committed baseline", () => {
+		const before = git(checkout, "rev-parse HEAD").trim();
+		const remoteBefore = git(remote, "rev-parse feature").trim();
+
+		const out = run(checkout, baseEnv());
+		expect(out).toContain("no screenshot baseline changes");
+
+		// No new commit locally or on the remote.
+		expect(git(checkout, "rev-parse HEAD").trim()).toBe(before);
+		expect(git(remote, "rev-parse feature").trim()).toBe(remoteBefore);
+
+		expect(readFileSync(outputFile, "utf8")).toContain("screenshot_changed=false");
+	});
+
+	it("stages a removed baseline as a deletion", () => {
+		rmSync(path.join(checkout, "screenshots", "foo--default.png"));
+		writeFileSync(path.join(checkout, "screenshots", "foo--replacement.png"), "new");
+
+		run(checkout, baseEnv());
+
+		const nameStatus = readFileSync(nameStatusFile, "utf8");
+		expect(nameStatus).toMatch(/D\s+screenshots\/foo--default\.png/);
+		const tree = git(remote, "ls-tree -r --name-only feature")
+			.split("\n")
+			.filter(Boolean);
+		expect(tree).not.toContain("screenshots/foo--default.png");
+		expect(tree).toContain("screenshots/foo--replacement.png");
 	});
 });

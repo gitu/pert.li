@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { renderComment } from "../build-pr-screenshot-comment.mjs";
+import {
+	classifyScreenshotChanges,
+	renderComment,
+} from "../build-pr-screenshot-comment.mjs";
 import { matchStoriesToFiles } from "../changed-stories.mjs";
 
 // Minimal shape mirroring storybook's `storybook-static/index.json`.
@@ -87,80 +90,114 @@ describe("matchStoriesToFiles", () => {
 	});
 });
 
+describe("classifyScreenshotChanges", () => {
+	it("splits git name-status output into added / modified / removed story ids", () => {
+		const out = classifyScreenshotChanges(
+			[
+				"A\tscreenshots/foo-bar--new.png",
+				"M\tscreenshots/foo-bar--default.png",
+				"D\tscreenshots/old--story.png",
+			].join("\n"),
+		);
+		expect(out).toEqual({
+			added: ["foo-bar--new"],
+			modified: ["foo-bar--default"],
+			removed: ["old--story"],
+		});
+	});
+
+	it("treats a rename as a removed old id plus an added new id", () => {
+		const out = classifyScreenshotChanges(
+			"R100\tscreenshots/widget--old.png\tscreenshots/widget--renamed.png",
+		);
+		expect(out.removed).toEqual(["widget--old"]);
+		expect(out.added).toEqual(["widget--renamed"]);
+	});
+
+	it("ignores blank lines, non-png paths, and dedupes/sorts", () => {
+		const out = classifyScreenshotChanges(
+			["", "M\tscreenshots/b--two.png", "M\tscreenshots/a--one.png", "M\tscreenshots/README.md", "M\tscreenshots/a--one.png"].join(
+				"\n",
+			),
+		);
+		expect(out.modified).toEqual(["a--one", "b--two"]);
+	});
+
+	it("survives empty / nullish input", () => {
+		expect(classifyScreenshotChanges("")).toEqual({ added: [], modified: [], removed: [] });
+		expect(classifyScreenshotChanges(null)).toEqual({ added: [], modified: [], removed: [] });
+	});
+});
+
 describe("renderComment", () => {
 	const baseArgs = {
 		repo: "gitu/pert.li",
 		prNumber: "42",
-		headSha: "deadbeef1234",
-		hasScreenshot: () => true,
+		ref: "deadbeef1234567",
 	};
 
-	it("groups stories by title and embeds raw.githubusercontent images linked to the full-size PNG", () => {
+	it("summarizes changes, links the Files-changed tab, and embeds thumbnails for changed/new ids", () => {
 		const out = renderComment({
 			...baseArgs,
+			changes: {
+				modified: ["foo-bar--default"],
+				added: ["foo-bar--with-icon"],
+				removed: ["gone--story"],
+			},
 			stories: [
-				{
-					id: "foo-bar--default",
-					title: "Foo/Bar",
-					name: "Default",
-					file: "src/components/foo/bar.stories.tsx",
-				},
-				{
-					id: "foo-bar--with-icon",
-					title: "Foo/Bar",
-					name: "With Icon",
-					file: "src/components/foo/bar.stories.tsx",
-				},
+				{ id: "foo-bar--default", title: "Foo/Bar", name: "Default", file: "src/components/foo/bar.stories.tsx" },
+				{ id: "foo-bar--with-icon", title: "Foo/Bar", name: "With Icon", file: "src/components/foo/bar.stories.tsx" },
 			],
 		});
-		expect(out).toContain("### Foo/Bar");
-		expect(out).toContain("`src/components/foo/bar.stories.tsx`");
-		// Images embed via raw.githubusercontent.com — the repo is public
-		// so Camo can fetch the URL anonymously and the screenshot
-		// renders inline. Each image is wrapped in a link to the same
-		// raw URL so clicking opens the full-size PNG.
+		// Summary line + deep link to the native diff.
+		expect(out).toContain("1 changed · 1 new · 1 removed");
+		expect(out).toContain("https://github.com/gitu/pert.li/pull/42/files");
+		// Sections.
+		expect(out).toContain("### Changed");
+		expect(out).toContain("### New");
+		expect(out).toContain("### Removed");
+		// Readable labels from the changed-stories lookup, bare id as code.
+		expect(out).toContain("**Foo/Bar — Default** `foo-bar--default`");
+		expect(out).toContain("**Foo/Bar — With Icon** `foo-bar--with-icon`");
+		// Thumbnails point at the committed baseline on the PR branch at the
+		// new commit SHA — no separate branch, no `pr-<n>/` path.
 		expect(out).toContain(
-			"[![Default](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--default.png)](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--default.png)",
+			"[![Foo/Bar — Default](https://raw.githubusercontent.com/gitu/pert.li/deadbeef1234567/screenshots/foo-bar--default.png)](https://raw.githubusercontent.com/gitu/pert.li/deadbeef1234567/screenshots/foo-bar--default.png)",
 		);
-		expect(out).toContain(
-			"[![With Icon](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--with-icon.png)](https://raw.githubusercontent.com/gitu/pert.li/screenshots/pr-42/foo-bar--with-icon.png)",
-		);
-		// Each story name appears as bold above its image.
-		expect(out).toContain("**Default**");
-		expect(out).toContain("**With Icon**");
-		// We no longer route through github.com/blob — that was a
-		// workaround for the private-repo era.
-		expect(out).not.toContain("github.com/gitu/pert.li/blob/");
-		// The title heading appears only once even though we have two
-		// stories under it.
-		expect(out.match(/### Foo\/Bar/g)).toHaveLength(1);
+		// Removed stories get no thumbnail (the PNG no longer exists).
+		expect(out).not.toContain("screenshots/gone--story.png");
+		// We no longer route through the old shared `screenshots` branch.
+		expect(out).not.toContain("/screenshots/pr-42/");
+		// Footer pins the baseline commit.
+		expect(out).toContain("baselines @ deadbee");
 	});
 
-	it("renders a fallback line for stories whose screenshot is missing", () => {
+	it("falls back to the bare id when the story is not in the lookup", () => {
 		const out = renderComment({
 			...baseArgs,
-			stories: [
-				{ id: "x--y", title: "X", name: "Y", file: "src/x.stories.tsx" },
-			],
-			hasScreenshot: () => false,
+			changes: { modified: ["x--y"], added: [], removed: [] },
+			stories: [],
 		});
-		expect(out).toContain("_render failed");
-		// Missing-screenshot stories must not produce a link to a 404'd
-		// image; they're rendered as bold name + "render failed" instead.
-		expect(out).not.toMatch(/!\[/);
-		expect(out).not.toMatch(/\]\(http/);
+		expect(out).toContain("**x--y** `x--y`");
 	});
 
 	it("renders the empty-state message when nothing changed", () => {
-		const out = renderComment({ ...baseArgs, stories: [] });
-		expect(out).toContain("No story directories were touched");
-	});
-
-	it("trims the head sha to 7 chars in the footer", () => {
 		const out = renderComment({
 			...baseArgs,
-			stories: [{ id: "x--y", title: "X", name: "Y", file: "src/x.stories.tsx" }],
+			changes: { added: [], modified: [], removed: [] },
 		});
-		expect(out).toContain("updated for deadbee");
+		expect(out).toContain("No story screenshots changed");
+		// No Files-changed link / thumbnails when there's nothing to show.
+		expect(out).not.toContain("/files");
+	});
+
+	it("omits thumbnails when no ref is available", () => {
+		const out = renderComment({
+			repo: "gitu/pert.li",
+			prNumber: "7",
+			changes: { modified: ["a--b"], added: [], removed: [] },
+		});
+		expect(out).not.toMatch(/!\[/);
+		expect(out).not.toContain("baselines @");
 	});
 });

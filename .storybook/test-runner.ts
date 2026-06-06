@@ -30,6 +30,26 @@ const config: TestRunnerConfig = {
 		if (!SCREENSHOT_DIR) return;
 		const file = path.join(SCREENSHOT_DIR, `${context.id}.png`);
 		try {
+			// Determinism: these PNGs are committed visual-regression
+			// baselines, so a render that wobbles by a pixel between runs
+			// would auto-commit noise to every PR. Freeze anything that
+			// animates (spinners, transitions, the text caret) and wait for
+			// web fonts to finish loading before we capture — otherwise a
+			// mid-transition frame or a fallback-font flash lands in the
+			// baseline.
+			await page.addStyleTag({
+				content: `*, *::before, *::after {
+					animation-duration: 0s !important;
+					animation-delay: 0s !important;
+					transition-duration: 0s !important;
+					transition-delay: 0s !important;
+					caret-color: transparent !important;
+				}`,
+			});
+			await page.evaluate(async () => {
+				await document.fonts?.ready;
+			});
+
 			// Clip the capture to the rendered content instead of the full
 			// viewport — small components (buttons, cards, avatars) would
 			// otherwise sit in a corner of a mostly-empty 1280×720 frame.

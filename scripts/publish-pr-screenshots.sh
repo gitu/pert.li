@@ -1,96 +1,68 @@
 #!/usr/bin/env bash
-# Publish the matched PR screenshots to the `screenshots` orphan branch
-# under `pr-<PR_NUMBER>/`. Creates the branch on first run.
+# Commit freshly-rendered Storybook screenshots back onto the PR branch.
+#
+# Screenshots are committed visual-regression baselines tracked at
+# `screenshots/<story-id>.png`. The CI render step overwrites those files
+# in place; this script stages the baseline dir, and — only when a baseline
+# actually changed — commits the result and pushes it to the PR head branch.
+# GitHub then renders the before/after natively in the PR's "Files changed"
+# tab. Identical renders stage no diff, so a no-op PR adds no commit.
+#
+# Runs INSIDE the PR-head checkout: `origin` must be the writable remote
+# (actions/checkout wires that up with the push token), and HEAD is the PR
+# branch. We deliberately push with a token that re-triggers CI so the new
+# head commit gets its required checks; the follow-up run re-renders, finds
+# the baselines already match, commits nothing, and stops.
 #
 # Required env:
-#   PR_NUMBER, HEAD_SHA, GITHUB_TOKEN, GITHUB_REPOSITORY
-# Required argv:
-#   $1 — directory containing matched PNGs (will be the contents of pr-<n>/)
+#   HEAD_REF          — PR head branch to push to
+#                       (github.event.pull_request.head.ref)
+# Optional env:
+#   SCREENSHOTS_DIR   — baseline directory (default: screenshots)
+#   PR_NUMBER         — included in the commit subject
+#   NAME_STATUS_OUT   — when set, write `git diff --name-status` of the
+#                       staged screenshot changes here (the comment builder
+#                       reads it to summarize added/changed/removed stories)
+#   GITHUB_OUTPUT     — when set, receives `screenshot_changed` and
+#                       `screenshot_sha` step outputs
 set -euo pipefail
 
-: "${PR_NUMBER:?PR_NUMBER not set}"
-: "${HEAD_SHA:?HEAD_SHA not set}"
-: "${GITHUB_TOKEN:?GITHUB_TOKEN not set}"
-: "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY not set}"
+: "${HEAD_REF:?HEAD_REF not set}"
+SCREENSHOTS_DIR="${SCREENSHOTS_DIR:-screenshots}"
 
-SRC_DIR_RAW="${1:?usage: publish-pr-screenshots.sh <src-dir>}"
-BRANCH="${SCREENSHOT_BRANCH:-screenshots}"
+# Append a `key=value` line to $GITHUB_OUTPUT when running under Actions;
+# a no-op locally and in the test harness.
+emit() {
+	if [ -n "${GITHUB_OUTPUT:-}" ]; then
+		echo "$1" >>"$GITHUB_OUTPUT"
+	fi
+}
 
-# Resolve the source directory to an absolute path BEFORE we `cd` into
-# the work directory below. The previous version of this script kept
-# `$SRC_DIR` as the relative path the workflow passed in (`pr-staging`),
-# then walked into `$WORK` and tried to read it — `cp` errored with
-# "cannot stat 'pr-staging/.': No such file or directory" because the
-# relative lookup was happening from /tmp instead of $GITHUB_WORKSPACE.
-if [ ! -d "$SRC_DIR_RAW" ]; then
-  echo "publish-pr-screenshots: source directory '$SRC_DIR_RAW' does not exist" >&2
-  exit 1
-fi
-SRC_DIR="$(cd "$SRC_DIR_RAW" && pwd)"
-
-# Use a sibling workdir so we never disturb the PR checkout. `mktemp -d`
-# is portable across the runner's Ubuntu image and macOS-style local runs.
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
-
-REMOTE="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
-
-# Set the git identity on the local worktree only. The CI runner's global
-# config stays untouched, and we use github-actions[bot] so the commit
-# author lines up with the workflow that produced it.
-cd "$WORK"
-git init -q
-git remote add origin "$REMOTE"
+# Set identity on the local repo only — the runner's global config (and a
+# developer's, if this is ever run locally) stays untouched.
 git config user.email "github-actions[bot]@users.noreply.github.com"
 git config user.name "github-actions[bot]"
 
-# Probe the remote for the screenshots branch before deciding whether to
-# fetch it or bootstrap. The previous version used
-# `git fetch ... 2>/dev/null` and treated any non-zero exit as "branch
-# missing", which would silently route a transient network blip through
-# the bootstrap path and clobber the existing branch on push. `ls-remote`
-# is cheap, exits 0 with an empty result for a missing branch, and
-# surfaces real failures (auth, DNS) on stderr.
-remote_ref="$(git ls-remote --heads origin "$BRANCH")"
-if [ -n "$remote_ref" ]; then
-  git fetch -q --depth=1 origin "$BRANCH"
-  git checkout -q -b "$BRANCH" FETCH_HEAD
-else
-  echo "screenshots branch does not exist on remote — bootstrapping"
-  git checkout -q --orphan "$BRANCH"
-  git rm -rf --quiet . 2>/dev/null || true
-  cat > README.md <<EOF
-# Screenshots branch
+# `mkdir -p` so the first-ever run (before the baseline dir is seeded)
+# still has a pathspec to stage. `-A` picks up adds, modifications, and
+# deletions (a removed story drops its PNG) within the dir.
+mkdir -p "$SCREENSHOTS_DIR"
+git add -A "$SCREENSHOTS_DIR"
 
-Auto-published storybook screenshots for open / recent pull requests.
-Each PR gets a \`pr-<number>/\` directory; the CI workflow rewrites it on
-every PR update. Safe to prune old directories — they are recreated on
-the next push to that PR's branch.
-EOF
-  git add README.md
-  git commit -q -m "init screenshots branch"
+if git diff --cached --quiet -- "$SCREENSHOTS_DIR"; then
+	echo "no screenshot baseline changes"
+	emit "screenshot_changed=false"
+	exit 0
 fi
 
-# Replace the PR's directory wholesale so deleted stories disappear.
-rm -rf "pr-${PR_NUMBER}"
-mkdir -p "pr-${PR_NUMBER}"
-# `$SRC_DIR` is now absolute; the `/.` suffix copies the directory's
-# *contents* (so an empty source still copies cleanly — nothing happens —
-# and the post-stage `git diff --cached --quiet` handles the
-# "no screenshots to publish" outcome below).
-cp -R "$SRC_DIR"/. "pr-${PR_NUMBER}/"
-git add "pr-${PR_NUMBER}"
-
-# Empty PR directory (no matching screenshots) → nothing to commit. Exit
-# clean so the workflow can still post the "no story changes" comment.
-if git diff --cached --quiet; then
-  echo "no screenshot changes to publish"
-  exit 0
+# Capture the change list for the sticky comment before committing.
+if [ -n "${NAME_STATUS_OUT:-}" ]; then
+	git diff --cached --name-status -- "$SCREENSHOTS_DIR" >"$NAME_STATUS_OUT"
 fi
 
-git commit -q -m "pr-${PR_NUMBER}: screenshots @ ${HEAD_SHA:0:7}"
-# `--force-with-lease` would be ideal but we don't have a stored ref to
-# lease against on the bootstrap path; the branch is purely a publishing
-# surface — last writer wins per PR directory.
-git push -q origin "HEAD:${BRANCH}"
-echo "pushed pr-${PR_NUMBER}/ to ${BRANCH}"
+git commit -q -m "chore: update story screenshots${PR_NUMBER:+ (pr-${PR_NUMBER})}"
+sha="$(git rev-parse HEAD)"
+git push -q origin "HEAD:${HEAD_REF}"
+echo "pushed screenshot baselines to ${HEAD_REF} @ ${sha:0:7}"
+emit "screenshot_changed=true"
+emit "screenshot_sha=${sha}"
