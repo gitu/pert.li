@@ -1,3 +1,12 @@
+# Pin kysely to 0.28.x: better-auth 1.6.14 widened its peer range to allow
+# kysely ^0.29, but @better-auth/kysely-adapter@1.6.14 still imports the
+# DEFAULT_MIGRATION_TABLE / DEFAULT_MIGRATION_LOCK_TABLE runtime exports that
+# kysely 0.29 moved to "kysely/migration", which breaks the rolldown build.
+# Upstream fix (better-auth#9811) is merged but unreleased; remove this once
+# better-auth >= 1.6.15 is published. See better-auth#9909 / #9901.
+overrides:
+  kysely: 0.28.17
+
 allowBuilds:
   '@google/genai': true
   '@swc/core': true
