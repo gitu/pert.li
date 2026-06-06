@@ -22,6 +22,8 @@ async function createProject(page: Page): Promise<string> {
 		.getByRole("banner")
 		.getByRole("button", { name: "New project" })
 		.click();
+	await page.getByTestId("create-choice-empty").click();
+	await expect(page.getByLabel("Title")).toBeVisible();
 	await page.getByLabel("Title").fill(`Collab viewport ${Date.now()}`);
 	await page.getByRole("button", { name: "Create" }).click();
 	await page.waitForURL(/\/p\/[^/]+$/, { timeout: 10_000 });
