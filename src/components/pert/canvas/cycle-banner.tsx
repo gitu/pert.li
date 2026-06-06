@@ -52,7 +52,7 @@ export function CycleBanner({
 		<div
 			role="alert"
 			data-testid="cycle-banner"
-			className="pointer-events-auto w-[min(720px,calc(100vw-32px))] space-y-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 shadow-md"
+			className="pointer-events-auto w-[min(720px,calc(100vw-32px))] space-y-2 rounded-md border border-destructive/50 bg-[color-mix(in_oklab,var(--destructive)_10%,var(--background))] px-3 py-2 shadow-md"
 		>
 			<div className="flex items-start gap-2">
 				<AlertOctagonIcon className="mt-0.5 size-4 shrink-0 text-destructive" />

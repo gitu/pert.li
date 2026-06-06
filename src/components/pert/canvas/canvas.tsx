@@ -980,7 +980,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				</div>
 			)}
 			{cycle && (
-				<div className="pointer-events-none absolute left-1/2 top-14 z-10 -translate-x-1/2">
+				<div className="pointer-events-none absolute left-1/2 top-14 z-[1100] -translate-x-1/2">
 					<CycleBanner
 						projectId={projectId}
 						doc={doc}
