@@ -114,8 +114,12 @@ test.describe("Branch & merge", () => {
 				.getByRole("link", { name: new RegExp(escapeRegex(newTitle)) })
 				.first(),
 		).toBeVisible({ timeout: 15_000 });
+		// The description now renders in two places — the sidebar project list
+		// and the home-page project card — so scope to the first match.
 		await expect(
-			page.getByText("Description added via rename dialog", { exact: false }),
+			page
+				.getByText("Description added via rename dialog", { exact: false })
+				.first(),
 		).toBeVisible();
 	});
 });
