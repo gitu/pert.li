@@ -250,7 +250,7 @@ function SignInPage() {
 					</div>
 					<Link
 						to="/signin"
-						search={{ local: true }}
+						search={{ callbackURL, local: true }}
 						className="inline-block text-sm text-foreground underline-offset-4 hover:underline"
 					>
 						Sign in another way →
