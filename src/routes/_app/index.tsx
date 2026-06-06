@@ -3,11 +3,20 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
 	ArrowRightIcon,
 	FolderPlusIcon,
+	MoreHorizontalIcon,
+	PencilIcon,
 	UploadIcon,
 	UsersIcon,
 } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { Button } from "#/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "#/components/ui/dropdown-menu";
+import { BranchProjectDialog } from "#/components/workspace/branch-project-dialog";
 import { CreateProjectDialog } from "#/components/workspace/create-project-dialog";
 import { ImportProjectDialog } from "#/components/workspace/import-project-dialog";
 import { InviteMemberDialog } from "#/components/workspace/invite-member-dialog";
@@ -24,6 +33,7 @@ import { useMergedProjects } from "#/lib/sync/merge-projects";
 import { addPending } from "#/lib/sync/pending-projects";
 import { requestReconcile } from "#/lib/sync/reconcile-pending";
 import { listMyWorkspaces, listProjects } from "#/server/workspace.ts";
+import type { ProjectSummary } from "#/types/workspace";
 
 // Beginner-friendly tutorial CTA is prominent while the workspace is sparse
 // (0-2 projects). Past that, the user has presumably found their footing and
@@ -186,24 +196,7 @@ function WorkspaceHome() {
 				) : (
 					<ul className="grid gap-3">
 						{projects.map((project) => (
-							<li
-								key={project.id}
-								className="rounded-lg border bg-card p-4 transition-colors hover:bg-accent/30"
-							>
-								<Link
-									to="/p/$projectId"
-									params={{ projectId: project.id }}
-									className="flex items-center justify-between gap-4"
-								>
-									<div className="min-w-0">
-										<div className="truncate font-medium">{project.title}</div>
-										<div className="text-xs text-muted-foreground">
-											Created {new Date(project.createdAt).toLocaleDateString()}
-										</div>
-									</div>
-									<ArrowRightIcon className="size-4 shrink-0 text-muted-foreground" />
-								</Link>
-							</li>
+							<ProjectCard key={project.id} project={project} />
 						))}
 					</ul>
 				)}
@@ -217,5 +210,77 @@ function WorkspaceHome() {
 				onOpenChange={setInviteOpen}
 			/>
 		</div>
+	);
+}
+
+function ProjectCard({ project }: { project: ProjectSummary }) {
+	const [renameOpen, setRenameOpen] = useState(false);
+	// Offline-created projects (still in the local pending queue, not yet
+	// registered server-side) surface with an empty `createdBy` — editing them
+	// would hit `updateProjectMeta` before the row exists. Real server rows
+	// always carry a creator, so that's our "safe to edit" signal. The card
+	// flips to editable on its own once the reconcile loop registers it.
+	const canEdit = project.createdBy !== "";
+
+	return (
+		<li className="flex items-center gap-2 rounded-lg border bg-card p-4 transition-colors hover:bg-accent/30">
+			<Link
+				to="/p/$projectId"
+				params={{ projectId: project.id }}
+				className="flex min-w-0 flex-1 items-center justify-between gap-4"
+			>
+				<div className="min-w-0">
+					<div className="truncate font-medium">{project.title}</div>
+					{project.description ? (
+						<div className="truncate text-xs text-muted-foreground">
+							{project.description}
+						</div>
+					) : null}
+					<div className="text-xs text-muted-foreground">
+						Created {new Date(project.createdAt).toLocaleDateString()}
+					</div>
+				</div>
+				<ArrowRightIcon className="size-4 shrink-0 text-muted-foreground" />
+			</Link>
+			{canEdit && (
+				<DropdownMenu>
+					<DropdownMenuTrigger asChild>
+						<Button
+							type="button"
+							size="icon"
+							variant="ghost"
+							className="size-8 shrink-0 text-muted-foreground"
+							data-testid="project-card-menu"
+							title="Rename / edit description"
+						>
+							<MoreHorizontalIcon className="size-4" />
+							<span className="sr-only">Project options</span>
+						</Button>
+					</DropdownMenuTrigger>
+					<DropdownMenuContent align="end">
+						<DropdownMenuItem
+							onSelect={() => setRenameOpen(true)}
+							data-testid="project-card-rename-action"
+						>
+							<PencilIcon className="size-3.5" />
+							Rename / edit description
+						</DropdownMenuItem>
+					</DropdownMenuContent>
+				</DropdownMenu>
+			)}
+			{renameOpen && (
+				<BranchProjectDialog
+					mode="edit"
+					open={renameOpen}
+					onOpenChange={setRenameOpen}
+					project={{
+						id: project.id,
+						title: project.title,
+						description: project.description,
+						isBranch: project.parentProjectId != null,
+					}}
+				/>
+			)}
+		</li>
 	);
 }
