@@ -223,7 +223,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
 	const canEdit = project.createdBy !== "";
 
 	return (
-		<li className="flex items-center gap-2 rounded-lg border bg-card p-4 transition-colors hover:bg-accent/30">
+		<li className="flex min-w-0 items-center gap-2 rounded-lg border bg-card p-4 transition-colors hover:bg-accent/30">
 			<Link
 				to="/p/$projectId"
 				params={{ projectId: project.id }}
