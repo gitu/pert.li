@@ -1,0 +1,121 @@
+name: AI prompt evals
+
+# Live LLM eval suite for the chat assistant's system prompt + tools. Real model
+# calls cost money and are non-deterministic, so this NEVER runs automatically on
+# every PR and is NOT part of the `ci-ready` merge gate. It runs only:
+#   • on demand from the Actions tab (workflow_dispatch), or
+#   • on a PR once it carries the `run-evals` label (add the label to trigger;
+#     re-runs on each push while the label stays on).
+#
+# Requires a GEMINI_API_KEY repository secret. The harness is provider-agnostic
+# (src/lib/ai/eval) — to eval a different provider, swap LLM_PROVIDER + its key
+# below, or run the Docker `eval` image locally against your own LLM service
+# (see SELF_HOSTING.md § Evals).
+on:
+  workflow_dispatch:
+    inputs:
+      repeats:
+        description: "Runs per scenario (pass ratio must clear the threshold)"
+        required: false
+        default: "5"
+      threshold:
+        description: "Required pass ratio per scenario (0–1)"
+        required: false
+        default: "0.8"
+  pull_request:
+    types: [labeled, opened, synchronize, reopened]
+
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  evals:
+    name: run eval scenarios
+    # On PRs, only when the `run-evals` label is present. workflow_dispatch has
+    # no pull_request payload, so the label check is skipped for manual runs.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'run-evals')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Provider config — Gemini by default. The adapter factories read the key
+      # from env themselves; the harness just resolves the provider.
+      LLM_PROVIDER: gemini
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # Stability knobs (workflow_dispatch inputs override; PR runs use defaults).
+      EVAL_REPEATS: ${{ github.event.inputs.repeats || '5' }}
+      EVAL_THRESHOLD: ${{ github.event.inputs.threshold || '0.8' }}
+      # Modules read at import time want these present even though the eval path
+      # never touches the DB or auth.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      BETTER_AUTH_SECRET: ci-only-not-secret
+    steps:
+      - name: Fail fast if the API key is missing
+        run: |
+          if [ -z "${GEMINI_API_KEY}" ]; then
+            echo "::error::GEMINI_API_KEY secret is not set — add it in repo Settings → Secrets → Actions."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.3.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Approve build scripts
+        run: pnpm approve-builds --all
+        continue-on-error: true
+
+      # continue-on-error so a failing scenario still produces a summary +
+      # comment; the explicit gate step below sets the job's pass/fail.
+      - name: Run evals
+        id: run
+        run: pnpm eval
+        continue-on-error: true
+
+      - name: Eval summary → job step summary
+        if: always()
+        run: node scripts/eval-summary.mjs eval-report/results.json | tee eval-comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post / update sticky PR comment
+        if: always() && github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v3
+        with:
+          header: ai-evals
+          path: eval-comment.md
+
+      - name: Upload eval report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: eval-report
+          path: eval-report
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Reflect eval result in the job status
+        if: always()
+        run: |
+          if [ "${{ steps.run.outcome }}" != "success" ]; then
+            echo "::error::One or more eval scenarios failed to clear the pass-ratio threshold."
+            exit 1
+          fi

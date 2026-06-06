@@ -220,6 +220,59 @@ The informational cookie notice (it explains the functional sign-in cookie)
 stays even when the policy is dropped — only its "Read the privacy policy"
 link is removed.
 
+## Evals — validate the AI prompt against your own LLM
+
+pert.li ships a scenario-based eval suite that exercises the chat assistant's
+real system prompt and tools end-to-end (tool-call correctness, schema/refusal
+guards, and LLM-as-judge answer quality). It's provider-agnostic, so you can
+point it at **your own LLM service** before trusting the assistant on your
+deployment — useful when you run a different model than the hosted default
+(e.g. a local Ollama / vLLM / LM Studio server, or a corporate gateway).
+
+You don't need a Node toolchain. Either pull the published eval image (built by
+the Docker workflow alongside the app image, as a sibling package
+`ghcr.io/<owner>/<repo>-evals` carrying the **same version tags** as the runner
+image), or build it yourself from the `eval` Dockerfile target. Run it with the
+same env vars you'd use for the app. Example against a local Ollama
+(OpenAI-compatible) endpoint:
+
+```bash
+# pull the published image (matches your runner image's version)…
+docker run --rm \
+  -e LLM_PROVIDER=openai \
+  -e OPENAI_BASE_URL=http://host.docker.internal:11434/v1 \
+  -e OPENAI_API_KEY=ollama \
+  -e LLM_MODEL=llama3.1 \
+  -e EVAL_REPEATS=3 \
+  -e EVAL_THRESHOLD=0.7 \
+  ghcr.io/<owner>/<repo>-evals:latest
+# On Linux, add:  --add-host=host.docker.internal:host-gateway
+
+# …or build it locally instead of pulling:
+docker build --target eval -t pert-li-evals .
+```
+
+Switch providers purely with env — `LLM_PROVIDER=gemini` + `GEMINI_API_KEY`,
+or `LLM_PROVIDER=anthropic` + `ANTHROPIC_API_KEY`, etc. (same contract as the
+app, see Optional configuration above). `EVAL_REPEATS` (default 5) runs each
+scenario N times and `EVAL_THRESHOLD` (default 0.8) is the pass ratio it must
+clear — lower the threshold or raise repeats for a noisier local model. A
+non-zero exit means one or more scenarios fell below the threshold; the report
+is written to `/app/eval-report/results.json` inside the container (mount a
+volume at `/app/eval-report` to keep it).
+
+**Scoring.** The run prints two numbers: an **objective score** (judge-free —
+the pass rate of the deterministic scenarios that check tool calls + resulting
+project state) and a **judge score** (0–5, the answer-quality scenarios). The
+objective score is the trustworthy one for comparing models. By default the
+LLM-as-judge uses the same model you're testing, which self-grades favourably;
+point it at a different, stronger judge with `EVAL_JUDGE_PROVIDER`,
+`EVAL_JUDGE_MODEL`, `EVAL_JUDGE_API_KEY`, and (for OpenAI-compatible judges)
+`EVAL_JUDGE_BASE_URL`.
+
+Contributors with the repo checked out can run the same suite directly with
+`pnpm eval` (it's a separate Vitest config; `pnpm test` never touches it).
+
 ## Operational notes
 
 ### Backups

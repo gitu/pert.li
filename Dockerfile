@@ -69,6 +69,29 @@ COPY --from=deps /app /app
 COPY package.json pnpm-lock.yaml .npmrc pnpm-workspace.yaml ./
 RUN pnpm install --offline --frozen-lockfile --prod --ignore-scripts
 
+# ---------- eval ----------
+# Bring-your-own-LLM eval runner. NOT part of the default build (that's
+# `runner`, the last stage) — build it explicitly with `--target eval`. Based
+# on `build` so it carries the full source tree + dev dependencies + Vitest +
+# the eval scenarios. The provider is chosen entirely at runtime via env
+# (LLM_PROVIDER / OPENAI_BASE_URL / *_API_KEY), so the same image validates the
+# prompt against Gemini, OpenAI, Anthropic, or any OpenAI-compatible
+# self-hosted endpoint (Ollama, vLLM, LM Studio, corporate gateway). Example:
+#
+#   docker build --target eval -t pert-li-evals .
+#   docker run --rm \
+#     -e LLM_PROVIDER=openai \
+#     -e OPENAI_BASE_URL=http://host.docker.internal:11434/v1 \
+#     -e OPENAI_API_KEY=ollama -e LLM_MODEL=llama3.1 \
+#     -e EVAL_REPEATS=3 -e EVAL_THRESHOLD=0.7 \
+#     pert-li-evals
+#
+# (On Linux add `--add-host=host.docker.internal:host-gateway`.)
+FROM build AS eval
+WORKDIR /app
+ENV NODE_ENV=test
+ENTRYPOINT ["pnpm", "eval"]
+
 # ---------- runner ----------
 FROM node:${NODE_VERSION}-alpine AS runner
 WORKDIR /app

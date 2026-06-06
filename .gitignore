@@ -26,6 +26,9 @@ blob-report/
 playwright/.cache/
 e2e/.auth/
 
+# AI eval suite output (vitest json reporter — see vitest.eval.config.ts)
+eval-report/
+
 # Local debugging artifacts
 .playwright-mcp/
 *.png
