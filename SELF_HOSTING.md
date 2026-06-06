@@ -171,11 +171,19 @@ OIDC_DISCOVERY_URL=https://login.microsoftonline.com/<tenant>/v2.0/.well-known/o
 OIDC_CLIENT_ID=...
 OIDC_CLIENT_SECRET=...
 OIDC_SCOPES=openid,email,profile   # default
+OIDC_AUTO_REDIRECT=1               # optional: skip the form, forward straight to the IdP
 ```
 
 Register `<BETTER_AUTH_URL>/api/auth/oauth2/callback/<OIDC_PROVIDER_ID>` as
 the redirect URI with your IdP. Leaving these unset hides the SSO button
 on `/signin`.
+
+Set `OIDC_AUTO_REDIRECT=1` when the IdP is the only intended way in: `/signin`
+then forwards to the provider automatically instead of showing the "Continue
+with {name}" button. The email/password form stays reachable at `/signin?local=1`
+— the escape hatch for the bootstrap admin account (the first user to sign up is
+auto-promoted to admin). Without the flag, OIDC just adds the button alongside
+the form.
 
 ### Branding (page title / app name)
 
