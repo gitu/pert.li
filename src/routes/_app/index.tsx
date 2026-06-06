@@ -19,10 +19,9 @@ import {
 	createTutorialPertDoc,
 	TUTORIAL_PROJECT_TITLE,
 } from "#/lib/pert/sample-tutorial-project";
-import { randomId } from "#/lib/random-id";
 import { useMergedProjects } from "#/lib/sync/merge-projects";
-import { addPending } from "#/lib/sync/pending-projects";
-import { requestReconcile } from "#/lib/sync/reconcile-pending";
+import { seedSampleProject } from "#/lib/sync/seed-sample-projects";
+import { useSeedSampleProjects } from "#/lib/sync/use-seed-sample-projects";
 import { listMyWorkspaces, listProjects } from "#/server/workspace.ts";
 
 // Beginner-friendly tutorial CTA is prominent while the workspace is sparse
@@ -97,19 +96,12 @@ function WorkspaceHome() {
 				}
 				startingTutorial.current = true;
 				try {
-					const handle = repo.create(
+					projectId = await seedSampleProject(
+						repo,
 						createTutorialPertDoc(TUTORIAL_PROJECT_TITLE),
+						TUTORIAL_PROJECT_TITLE,
+						activeWorkspaceId ?? undefined,
 					);
-					const localId = randomId();
-					await addPending({
-						localId,
-						title: TUTORIAL_PROJECT_TITLE,
-						automergeDocUrl: handle.url,
-						createdAt: new Date().toISOString(),
-						...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
-					});
-					projectId = localId;
-					void requestReconcile();
 				} finally {
 					startingTutorial.current = false;
 				}
@@ -122,6 +114,16 @@ function WorkspaceHome() {
 		},
 		[projects, repo, activeWorkspaceId, navigate],
 	);
+
+	// First visit to an empty workspace: silently seed the sample projects (PERT
+	// tutorial + Monte Carlo risk sample) so the user lands on something to
+	// explore instead of a blank slate.
+	useSeedSampleProjects({
+		repo,
+		projects,
+		projectsSettled: projectsQuery.isSuccess && !projectsQuery.isError,
+		workspaceId,
+	});
 
 	return (
 		<div className="mx-auto flex h-full max-w-3xl flex-col gap-8 overflow-y-auto p-10">
