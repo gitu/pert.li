@@ -148,6 +148,46 @@ describe("ViewModeProvider", () => {
 		}
 	});
 
+	// View-mode share links (`/share/$token` for a "view" share) wrap the whole
+	// project in `<ViewModeProvider forceReadOnly>`. These pin that contract:
+	// the surface reports `mobile-readonly` regardless of viewport, and the
+	// recipient cannot self-promote to editing.
+	test("forceReadOnly forces `mobile-readonly` even on a desktop viewport", () => {
+		const restore = setViewport(1280);
+		try {
+			render(
+				<ViewModeProvider forceReadOnly>
+					<Probe />
+				</ViewModeProvider>,
+			);
+			expect(screen.getByTestId("mode").textContent).toBe("mobile-readonly");
+		} finally {
+			restore();
+		}
+	});
+
+	test("forceReadOnly wins over setEditing and a persisted editing flag", () => {
+		// Seed the persisted editing flag a normal mobile editor would have set.
+		window.sessionStorage.setItem(VIEW_MODE_SESSION_KEY, "1");
+		const restore = setViewport(390);
+		try {
+			render(
+				<ViewModeProvider forceReadOnly>
+					<ToggleProbe />
+				</ViewModeProvider>,
+			);
+			// Hydration from sessionStorage doesn't unlock the surface.
+			expect(screen.getByTestId("mode").textContent).toBe("mobile-readonly");
+			// Nor does an explicit toggle — the recipient can't grant themselves edit.
+			act(() => {
+				screen.getByText("toggle").click();
+			});
+			expect(screen.getByTestId("mode").textContent).toBe("mobile-readonly");
+		} finally {
+			restore();
+		}
+	});
+
 	test("setEditing has no visible effect on desktop", () => {
 		const restore = setViewport(1280);
 		try {

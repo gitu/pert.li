@@ -138,8 +138,26 @@ export const NoDescription: Story = {
 	args: { description: null },
 };
 
+// Read-only (a view-share recipient): the presentational shell suppresses
+// every edit affordance it owns. The title's Edit button is gone, the AI
+// summary's regenerate action is disabled (the server fn is session-gated),
+// and the calendar editor is replaced by a switch-to-edit note.
 export const ReadOnly: Story = {
 	args: { readOnly: true, description: null },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// No inline description editing.
+		expect(canvas.queryByTestId("overview-description-edit-button")).toBeNull();
+		// The summary is read-only: the regenerate action is disabled, so an
+		// anonymous viewer can't trigger the session-gated server fn.
+		await expect(
+			await canvas.findByTestId("overview-ai-summarize"),
+		).toBeDisabled();
+		// Calendar editor swapped for the read-only note.
+		await expect(
+			canvas.getByText(/switch to edit mode to change the project calendar/i),
+		).toBeVisible();
+	},
 };
 
 export const CycleDetected: Story = {

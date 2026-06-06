@@ -54,3 +54,42 @@ export const Errored: Story = {
 		},
 	},
 };
+
+// Read-only (a view-share recipient): the summarize action is the read-only
+// version of the summary. `generateProjectSummary` is session-gated on the
+// server — an anonymous viewer must not be able to spend the operator's key —
+// so the button is disabled and clicking it is inert. A hint explains why.
+export const ReadOnly: Story = {
+	args: { state: { status: "idle" }, disabled: true },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// Disabled (pointer-events:none) → the session-gated regenerate can't be
+		// triggered by an anonymous viewer. The disabled attribute is the gate.
+		await expect(
+			await canvas.findByTestId("overview-ai-summarize"),
+		).toBeDisabled();
+		await expect(
+			canvas.getByText(/switch to edit mode to generate a summary/i),
+		).toBeVisible();
+	},
+};
+
+// A summary that was generated before the link was shared stays readable in a
+// read-only context — the text renders even though regenerate is disabled.
+export const ReadOnlyWithSummary: Story = {
+	args: {
+		state: {
+			status: "done",
+			text: "## Overview\n\nThis launch plan runs ~47 working days with 9 tasks on the critical path.\n\n### Top risks\n\n- A long critical path leaves little float.",
+		},
+		disabled: true,
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const card = canvas.getByTestId("overview-ai-summary");
+		await waitFor(() => expect(card.querySelector("h2")).not.toBeNull());
+		// The regenerate action is disabled, but the summary itself is visible.
+		await expect(canvas.getByTestId("overview-ai-summarize")).toBeDisabled();
+		expect(card.textContent).toContain("critical path");
+	},
+};

@@ -382,7 +382,11 @@ export function OverviewContent({
 				<OverviewMetrics overview={overview} />
 
 				{/* AI summary */}
-				<OverviewSummaryCard state={summaryState} onSummarize={onSummarize} />
+				<OverviewSummaryCard
+					state={summaryState}
+					onSummarize={onSummarize}
+					disabled={readOnly}
+				/>
 
 				{/* Project actions */}
 				{actions && (
