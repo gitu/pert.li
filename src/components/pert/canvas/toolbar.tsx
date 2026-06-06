@@ -30,6 +30,7 @@ import {
 	type EdgeStyle,
 	type LayoutSpacing,
 } from "#/lib/pert/canvas-prefs";
+import { CanvasLegend } from "./canvas-legend";
 
 export type CanvasAddToolbarProps = {
 	onAddTask: () => void;
@@ -246,6 +247,8 @@ export function CanvasViewToolbar({
 					</DropdownMenuItem>
 				</DropdownMenuContent>
 			</DropdownMenu>
+			<Separator orientation="horizontal" className="my-0.5" />
+			<CanvasLegend />
 		</div>
 	);
 }

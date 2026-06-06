@@ -15,6 +15,16 @@ import {
 	type DiffRowKind,
 } from "#/components/pert/history/diff-body";
 import { Button } from "#/components/ui/button";
+import {
+	Dialog,
+	DialogClose,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+	DialogTrigger,
+} from "#/components/ui/dialog";
 import type { EditOp } from "#/lib/ai/operations";
 import {
 	applyProposal,
@@ -93,6 +103,24 @@ export function ProposalCard({ proposalId }: ProposalCardProps) {
 	const readOnly = !changeDoc || wrongProject;
 	const fails = proposal.results.filter((r) => !r.ok);
 
+	// Size up the staged change so "Apply all" can warn before a one-click bulk
+	// mutation. We confirm when the proposal deletes anything (hard to undo) or
+	// touches more than a handful of rows at once.
+	const counts = proposal.diff.counts;
+	const deletions = counts.tasksRemoved + counts.depsRemoved;
+	const totalChanges =
+		counts.tasksAdded +
+		counts.depsAdded +
+		counts.tasksChanged +
+		counts.depsChanged +
+		deletions;
+	const APPLY_ALL_CONFIRM_THRESHOLD = 5;
+	const needsConfirm =
+		deletions > 0 || totalChanges > APPLY_ALL_CONFIRM_THRESHOLD;
+	const applyAllDisabled = readOnly || getProposal(proposalId) === null;
+	const applyAllLabel =
+		totalChanges > 0 ? `Apply all (${totalChanges})` : "Apply all";
+
 	return (
 		<div
 			className="overflow-hidden rounded-md border border-primary/30 bg-card"
@@ -156,16 +184,66 @@ export function ProposalCard({ proposalId }: ProposalCardProps) {
 				>
 					<XIcon className="size-3" /> Reject
 				</Button>
-				<Button
-					type="button"
-					size="sm"
-					className="h-7 gap-1 px-2 text-[11px]"
-					onClick={handleApplyAll}
-					disabled={readOnly || getProposal(proposalId) === null}
-					data-testid={`proposal-apply-all-${proposalId}`}
-				>
-					<CheckCheckIcon className="size-3" /> Apply all
-				</Button>
+				{needsConfirm ? (
+					<Dialog>
+						<DialogTrigger asChild>
+							<Button
+								type="button"
+								size="sm"
+								className="h-7 gap-1 px-2 text-[11px]"
+								disabled={applyAllDisabled}
+								data-testid={`proposal-apply-all-${proposalId}`}
+							>
+								<CheckCheckIcon className="size-3" /> {applyAllLabel}
+							</Button>
+						</DialogTrigger>
+						<DialogContent className="sm:max-w-md">
+							<DialogHeader>
+								<DialogTitle>Apply all changes?</DialogTitle>
+								<DialogDescription>
+									This applies {totalChanges}{" "}
+									{totalChanges === 1 ? "change" : "changes"} to your project at
+									once
+									{deletions > 0
+										? `, including ${deletions} ${
+												deletions === 1 ? "deletion" : "deletions"
+											} that can't be easily undone`
+										: ""}
+									. You can also apply rows one at a time from the list above.
+								</DialogDescription>
+							</DialogHeader>
+							<DialogFooter>
+								<DialogClose asChild>
+									<Button type="button" size="sm" variant="ghost">
+										Cancel
+									</Button>
+								</DialogClose>
+								<DialogClose asChild>
+									<Button
+										type="button"
+										size="sm"
+										className="gap-1"
+										onClick={handleApplyAll}
+										data-testid={`proposal-apply-all-confirm-${proposalId}`}
+									>
+										<CheckCheckIcon className="size-3" /> {applyAllLabel}
+									</Button>
+								</DialogClose>
+							</DialogFooter>
+						</DialogContent>
+					</Dialog>
+				) : (
+					<Button
+						type="button"
+						size="sm"
+						className="h-7 gap-1 px-2 text-[11px]"
+						onClick={handleApplyAll}
+						disabled={applyAllDisabled}
+						data-testid={`proposal-apply-all-${proposalId}`}
+					>
+						<CheckCheckIcon className="size-3" /> {applyAllLabel}
+					</Button>
+				)}
 			</footer>
 		</div>
 	);

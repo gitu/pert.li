@@ -33,11 +33,12 @@ import {
 	useState,
 } from "react";
 import { Streamdown } from "streamdown";
-import { TUTORIAL_SEEDS } from "#/components/ai/tutorial-seeds";
+import { ACTION_SEEDS, TUTORIAL_SEEDS } from "#/components/ai/tutorial-seeds";
 import { Button } from "#/components/ui/button";
 import { ScrollArea } from "#/components/ui/scroll-area";
 import { Textarea } from "#/components/ui/textarea";
 import type { ExtractedFile } from "#/lib/ai/file-extract";
+import { formatToolError } from "#/lib/ai/format-tool-error";
 import type { EditOp } from "#/lib/ai/operations";
 import { applyProposal, stageProposal } from "#/lib/ai/proposals-store";
 import { withToolLogging } from "#/lib/ai/tool-log";
@@ -1152,6 +1153,10 @@ function ChatThread({
 	// which is too surprising; the user clicks Continue once to resume.)
 	const hasStreamedRef = useRef(false);
 	const autoContinueCountRef = useRef(0);
+	// Reactive mirror of the loop counter so the status bar can show progress
+	// toward the runaway-loop cap (e.g. "Auto 3/15"). The ref stays the source
+	// of truth for the loop effect; this just makes the value renderable.
+	const [autoTurns, setAutoTurns] = useState(0);
 	useEffect(() => {
 		if (isLoading) {
 			hasStreamedRef.current = true;
@@ -1172,6 +1177,7 @@ function ChatThread({
 		if (!nextPendingStep(plan)) return;
 		if (autoContinueCountRef.current >= AUTO_CONTINUE_CAP) return;
 		autoContinueCountRef.current += 1;
+		setAutoTurns(autoContinueCountRef.current);
 		const timer = window.setTimeout(() => {
 			// Re-check at fire time — the user may have cancelled the plan or
 			// switched auto-continue off during the delay.
@@ -1392,6 +1398,9 @@ function ChatThread({
 					{(messages as unknown as ChatMessage[]).map((m) => (
 						<MessageRow key={m.id} message={m} />
 					))}
+					{isLoading &&
+						(messages as unknown as ChatMessage[]).at(-1)?.role !==
+							"assistant" && <ThinkingIndicator />}
 					{error && (
 						<div
 							data-testid="chat-error"
@@ -1416,13 +1425,19 @@ function ChatThread({
 					onContinue={(msg) => {
 						// A manual Continue resets the runaway-loop cap.
 						autoContinueCountRef.current = 0;
+						setAutoTurns(0);
 						void sendMessage(msg);
 					}}
 					autoContinue={planLoop.autoContinue}
 					onToggleAutoContinue={(next) => {
-						if (next) autoContinueCountRef.current = 0;
+						if (next) {
+							autoContinueCountRef.current = 0;
+							setAutoTurns(0);
+						}
 						planLoop.onToggleAutoContinue(next);
 					}}
+					autoTurns={autoTurns}
+					autoCap={AUTO_CONTINUE_CAP}
 					busy={isLoading}
 				/>
 			)}
@@ -1793,14 +1808,57 @@ function ChatDockControls() {
 	);
 }
 
+// Shown while the assistant is working but hasn't produced visible output yet
+// (initial latency, or running tools before any text streams). Gives a clear
+// "something is happening" signal beyond the Stop button. Once assistant text
+// starts streaming via Streamdown, the last message becomes role="assistant"
+// and this disappears.
+function ThinkingIndicator() {
+	return (
+		<div
+			className="flex items-center gap-1.5 px-1 py-1 text-xs text-muted-foreground"
+			data-testid="chat-thinking"
+			aria-live="polite"
+		>
+			<span className="flex gap-1">
+				<span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.3s]" />
+				<span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:-0.15s]" />
+				<span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/60" />
+			</span>
+			Thinking…
+		</div>
+	);
+}
+
 function EmptyState({ onSeed }: { onSeed: (text: string) => void }) {
 	return (
-		<div className="flex h-full flex-col items-center justify-center gap-4 p-4 text-center">
+		<div className="flex h-full flex-col items-center justify-center gap-5 p-4 text-center">
 			<p className="max-w-sm text-sm text-muted-foreground">
-				Ask anything about your project — or start a quick tutorial below.
+				Ask anything about your project — the assistant can answer questions and
+				make changes for you. Try one of these:
 			</p>
-			<div className="flex w-full max-w-sm flex-wrap justify-center gap-1.5">
-				{TUTORIAL_SEEDS.map((seed) => (
+			<SeedGroup label="Do something" seeds={ACTION_SEEDS} onSeed={onSeed} />
+			<SeedGroup label="Learn PERT" seeds={TUTORIAL_SEEDS} onSeed={onSeed} />
+		</div>
+	);
+}
+
+function SeedGroup({
+	label,
+	seeds,
+	onSeed,
+}: {
+	label: string;
+	seeds: ReadonlyArray<{ label: string; prompt: string }>;
+	onSeed: (text: string) => void;
+}) {
+	return (
+		<div className="w-full max-w-sm space-y-1.5">
+			<p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+				{label}
+			</p>
+			<div className="flex flex-wrap justify-center gap-1.5">
+				{seeds.map((seed) => (
 					<Button
 						key={seed.label}
 						type="button"
@@ -1970,6 +2028,14 @@ function ToolCallChip({
 				</span>
 			</button>
 			{showPlanViews && <PlanViewSwitcher />}
+			{failed && (
+				<div
+					className="border-t border-destructive/30 px-1.5 py-1 text-[10px] text-destructive"
+					data-testid={`chat-tool-error-${call.name}`}
+				>
+					{formatToolError(result?.error ?? result?.content)}
+				</div>
+			)}
 			{open && (
 				<div className="space-y-1 border-t bg-background/40 p-1.5 font-mono text-[10px]">
 					<div>

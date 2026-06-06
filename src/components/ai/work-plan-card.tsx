@@ -222,6 +222,11 @@ export type WorkPlanStatusBarProps = {
 	// panel so the loop effect and this bar share one source of truth.
 	autoContinue: boolean;
 	onToggleAutoContinue: (next: boolean) => void;
+	// Auto-continue loop progress toward the runaway-loop cap. Surfaced on the
+	// Auto button so the user can see how many turns have fired and how many
+	// remain before the loop stops on its own.
+	autoTurns?: number;
+	autoCap?: number;
 	// True while the assistant is streaming — Continue is disabled then.
 	busy: boolean;
 };
@@ -233,6 +238,8 @@ export function WorkPlanStatusBar({
 	onContinue,
 	autoContinue,
 	onToggleAutoContinue,
+	autoTurns,
+	autoCap,
 	busy,
 }: WorkPlanStatusBarProps) {
 	const doc = useStore(projectDocStore, (s) => s.doc);
@@ -303,7 +310,9 @@ export function WorkPlanStatusBar({
 							) : (
 								<RepeatIcon className="size-3" />
 							)}
-							Auto
+							{autoContinue && typeof autoTurns === "number" && autoCap
+								? `Auto ${autoTurns}/${autoCap}`
+								: "Auto"}
 						</Button>
 					</>
 				)}

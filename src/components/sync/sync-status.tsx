@@ -11,6 +11,8 @@ import {
 	TrashIcon,
 	TriangleAlertIcon,
 } from "lucide-react";
+import { useEffect, useRef } from "react";
+import { toast } from "sonner";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import {
@@ -189,10 +191,52 @@ export function SyncStatusView({
 	);
 }
 
+// Watches the pending queue and fires a toast the moment a project newly
+// transitions into the error state, so a sync failure surfaces even when the
+// user is heads-down on the canvas and never looks at the badge. We track the
+// set of already-announced error ids so a project that stays failed isn't
+// re-toasted on every render; an id that recovers and fails again will toast
+// afresh. The first run only establishes a baseline — failures already in the
+// queue at mount (e.g. carried over from a prior session) shouldn't toast on
+// load, only genuine new transitions should.
+function useSyncFailureToasts(items: PendingProject[]) {
+	const announced = useRef<Set<string>>(new Set());
+	const seeded = useRef(false);
+	useEffect(() => {
+		const erroredNow = new Set(
+			items.filter((i) => i.status === "error").map((i) => i.localId),
+		);
+		if (!seeded.current) {
+			seeded.current = true;
+			announced.current = erroredNow;
+			return;
+		}
+		const fresh = items.filter(
+			(i) => i.status === "error" && !announced.current.has(i.localId),
+		);
+		if (fresh.length === 1) {
+			const item = fresh[0];
+			toast.error(`Couldn't sync "${item.title}"`, {
+				description: reasonText(item),
+				action: {
+					label: "Retry",
+					onClick: () => void requestRetry(item.localId),
+				},
+			});
+		} else if (fresh.length > 1) {
+			toast.error(`${fresh.length} projects failed to sync`, {
+				description: "Open the sync status menu to retry or discard them.",
+			});
+		}
+		announced.current = erroredNow;
+	}, [items]);
+}
+
 // Container: wires live online status + the pending queue + retry/discard.
 export function SyncStatus() {
 	const online = useOnlineStatus();
 	const items = usePendingProjects();
+	useSyncFailureToasts(items);
 	return (
 		<SyncStatusView
 			online={online}

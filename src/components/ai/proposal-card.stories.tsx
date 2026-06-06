@@ -82,6 +82,14 @@ const placeholderOps: EditOp[] = [
 	{ op: "remove_task", taskId: "bogus" },
 ];
 
+// A batch that deletes an existing task. Deletions are hard to undo, so
+// "Apply all" must route through a confirm dialog rather than mutating on the
+// first click.
+const deleteOps: EditOp[] = [
+	{ op: "remove_task", taskId: "C" },
+	{ op: "set_title", taskId: "A", title: "Spike OIDC discovery (revised)" },
+];
+
 function Stage({
 	projectId,
 	proposalProjectId,
@@ -308,5 +316,31 @@ export const WrongProject: Story = {
 		}
 		const card = canvas.getByTestId(/^proposal-card-/);
 		await expect(card).toHaveAttribute("data-state", "open");
+	},
+};
+
+// A proposal that deletes a task must not apply on a single click. "Apply all"
+// opens a confirm dialog naming the deletion; only the dialog's confirm button
+// actually mutates the doc.
+export const ApplyAllWithDeletionConfirms: Story = {
+	args: { projectId: "story-proposal-delete-confirm", operations: deleteOps },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByTestId(/^proposal-card-/);
+		// The button is labelled with the change count.
+		const applyAll = await canvas.findByTestId(/^proposal-apply-all-/);
+		await expect(applyAll).toHaveTextContent(/Apply all \(\d+\)/);
+		await userEvent.click(applyAll);
+		// The confirm dialog (a Radix portal) appears and mentions the deletion.
+		const dialog = await within(document.body).findByRole("dialog");
+		const inDialog = within(dialog);
+		await expect(inDialog.getByText("Apply all changes?")).toBeInTheDocument();
+		await expect(inDialog.getByText(/deletion/)).toBeInTheDocument();
+		// Confirm → the proposal applies and the card collapses to the stub.
+		await userEvent.click(inDialog.getByTestId(/^proposal-apply-all-confirm-/));
+		await waitFor(() => {
+			const card = canvas.getByTestId(/^proposal-card-/);
+			expect(card).toHaveAttribute("data-state", "closed");
+		});
 	},
 };

@@ -15,17 +15,23 @@ function BarStage({
 	planStatus,
 	stepStatuses,
 	busy = false,
+	autoTurns,
+	autoCap,
+	autoOn = false,
 }: {
 	projectId: string;
 	planStatus?: "draft" | "approved" | "executing" | "completed" | "cancelled";
 	stepStatuses?: WorkPlanStepStatus[];
 	busy?: boolean;
+	autoTurns?: number;
+	autoCap?: number;
+	autoOn?: boolean;
 }) {
 	const [seeded] = useState(() =>
 		seedWorkPlanDoc({ planStatus, stepStatuses }),
 	);
 	const [doc, setDoc] = useState<PertDoc>(seeded.doc);
-	const [autoContinue, setAutoContinue] = useState(false);
+	const [autoContinue, setAutoContinue] = useState(autoOn);
 	const [lastMessage, setLastMessage] = useState("");
 
 	useEffect(() => {
@@ -46,6 +52,8 @@ function BarStage({
 				onContinue={(msg) => setLastMessage(msg)}
 				autoContinue={autoContinue}
 				onToggleAutoContinue={setAutoContinue}
+				autoTurns={autoTurns}
+				autoCap={autoCap}
 				busy={busy}
 			/>
 			{lastMessage && (
@@ -100,6 +108,26 @@ export const Executing: Story = {
 		await expect(toggle).toHaveAttribute("aria-pressed", "false");
 		await userEvent.click(toggle);
 		await expect(toggle).toHaveAttribute("aria-pressed", "true");
+	},
+};
+
+// With auto-continue on, the toggle shows how many loop turns have fired and
+// the cap they stop at, so the loop never feels like a black box.
+export const AutoContinueShowsTurnCounter: Story = {
+	args: {
+		projectId: "story-bar-auto-counter",
+		planStatus: "executing",
+		stepStatuses: ["completed", "in_progress", "pending", "pending"],
+		autoOn: true,
+		autoTurns: 3,
+		autoCap: 15,
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByTestId("work-plan-status-bar");
+		const toggle = canvas.getByTestId("work-plan-auto-toggle");
+		await expect(toggle).toHaveAttribute("aria-pressed", "true");
+		await expect(toggle).toHaveTextContent("Auto 3/15");
 	},
 };
 

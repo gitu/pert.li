@@ -84,7 +84,7 @@ function JoinBody({
 		return (
 			<InvalidState
 				title="Invitation limit reached"
-				detail="This link has hit its usage cap. Ask the workspace owner for a new one."
+				detail="This link has already been used the maximum number of times. Ask the workspace owner to send you a fresh one."
 			/>
 		);
 	}
@@ -147,10 +147,18 @@ function JoinBody({
 }
 
 function InvalidState({ title, detail }: { title: string; detail: string }) {
+	const { appName } = useAppConfig();
 	return (
-		<div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 p-4">
-			<p className="text-sm font-medium text-destructive">{title}</p>
-			<p className="text-sm text-muted-foreground">{detail}</p>
+		<div className="space-y-3 rounded-md border border-destructive/30 bg-destructive/5 p-4">
+			<div className="space-y-1">
+				<p className="text-sm font-medium text-destructive">{title}</p>
+				<p className="text-sm text-muted-foreground">{detail}</p>
+			</div>
+			<Button asChild variant="secondary" size="sm" className="w-full">
+				<Link to="/" data-testid="join-invalid-cta">
+					Go to {appName}
+				</Link>
+			</Button>
 		</div>
 	);
 }
