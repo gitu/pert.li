@@ -6,47 +6,72 @@ import { clearActiveProjectDoc, setActiveProjectDoc } from "#/lib/pert/store";
 import { createEmptyPertDoc, type PertDoc } from "#/lib/pert/types";
 import { HistoryDrawer } from "./history-drawer";
 
+// Fixed commit timestamps, pinned to specific dates well in the past. The
+// drawer's `formatTime` only renders a stable absolute date for changes older
+// than 14 days; anything newer becomes a live "Ns/Nm/Nh/Nd ago" counter
+// measured against `Date.now()`, which drifts between the baseline build and
+// the PR build and would flag this story in the screenshot diff on every run.
+// Spacing them apart keeps the three commit-groups distinct. `time` is in
+// seconds (Automerge's unit; see src/lib/pert/history.ts).
+const COMMIT_TIMES = {
+	initial: Math.floor(Date.UTC(2026, 0, 12, 9, 0, 0) / 1000),
+	reestimate: Math.floor(Date.UTC(2026, 0, 14, 14, 30, 0) / 1000),
+	progress: Math.floor(Date.UTC(2026, 0, 16, 11, 15, 0) / 1000),
+};
+
 // Build an Automerge doc with three commit-groups so the history drawer has
 // something interesting to render. Each Automerge.change call lands as its
 // own change in the history log.
 function seededHistoryDoc(): Automerge.Doc<PertDoc> {
 	let doc = Automerge.from(createEmptyPertDoc("History demo"));
-	doc = Automerge.change(doc, "Add initial tasks", (d) => {
-		d.tasksById.A = {
-			id: "A",
-			kind: "task",
-			title: "Design",
-			parentId: null,
-			estimate: { optimistic: 1, mostLikely: 2, pessimistic: 3, unit: "day" },
-		};
-		d.tasksById.B = {
-			id: "B",
-			kind: "task",
-			title: "Build",
-			parentId: null,
-			estimate: { optimistic: 2, mostLikely: 4, pessimistic: 6, unit: "day" },
-		};
-	});
-	doc = Automerge.change(doc, "Re-estimate B", (d) => {
-		const b = d.tasksById.B;
-		if (b) {
-			b.estimate = {
-				optimistic: 3,
-				mostLikely: 5,
-				pessimistic: 9,
-				unit: "day",
+	doc = Automerge.change(
+		doc,
+		{ message: "Add initial tasks", time: COMMIT_TIMES.initial },
+		(d) => {
+			d.tasksById.A = {
+				id: "A",
+				kind: "task",
+				title: "Design",
+				parentId: null,
+				estimate: { optimistic: 1, mostLikely: 2, pessimistic: 3, unit: "day" },
 			};
-			b.title = "Build (API + worker)";
-		}
-	});
-	doc = Automerge.change(doc, "Mark A in progress", (d) => {
-		const a = d.tasksById.A;
-		if (a) {
-			a.status = "in_progress";
-			a.progress = 40;
-			a.actualStart = "2026-05-20";
-		}
-	});
+			d.tasksById.B = {
+				id: "B",
+				kind: "task",
+				title: "Build",
+				parentId: null,
+				estimate: { optimistic: 2, mostLikely: 4, pessimistic: 6, unit: "day" },
+			};
+		},
+	);
+	doc = Automerge.change(
+		doc,
+		{ message: "Re-estimate B", time: COMMIT_TIMES.reestimate },
+		(d) => {
+			const b = d.tasksById.B;
+			if (b) {
+				b.estimate = {
+					optimistic: 3,
+					mostLikely: 5,
+					pessimistic: 9,
+					unit: "day",
+				};
+				b.title = "Build (API + worker)";
+			}
+		},
+	);
+	doc = Automerge.change(
+		doc,
+		{ message: "Mark A in progress", time: COMMIT_TIMES.progress },
+		(d) => {
+			const a = d.tasksById.A;
+			if (a) {
+				a.status = "in_progress";
+				a.progress = 40;
+				a.actualStart = "2026-05-20";
+			}
+		},
+	);
 	return doc;
 }
 
