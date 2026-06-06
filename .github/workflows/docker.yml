@@ -149,7 +149,7 @@ jobs:
           service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
 
       # Run the deploy-only trigger pinned to THIS commit. `--sha` sets
       # $COMMIT_SHA inside the build, which resolves the exact ghcr image tag
