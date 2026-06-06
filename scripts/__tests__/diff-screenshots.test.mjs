@@ -24,8 +24,8 @@ describe("classifyDiff (heuristic boundaries)", () => {
 		expect(classifyDiff(facts({ hasCurrent: false }), opts)).toBe("removed");
 	});
 
-	it("is `changed` when dimensions differ regardless of pixel counts", () => {
-		expect(classifyDiff(facts({ dimsDiffer: true }), opts)).toBe("changed");
+	it("is `unchanged` when only the dimensions differ (we flag pixel diffs, not resizes)", () => {
+		expect(classifyDiff(facts({ dimsDiffer: true }), opts)).toBe("unchanged");
 	});
 
 	it("is `unchanged` below the ratio floor (lots of pixels, but <0.2%)", () => {
@@ -146,16 +146,17 @@ describe("diffScreenshots (real pixelmatch pipeline)", () => {
 		expect(readdirSync(diffDir)).not.toContain("comp--flappy.diff.png");
 	});
 
-	it("classifies new, removed, and size-changed stories", () => {
+	it("classifies new and removed stories, and excludes dimension-only changes", () => {
 		// only-in-current → new
 		writeFileSync(path.join(currentDir, "comp--fresh.png"), solidPng(50, 50, [0, 255, 0]));
 		// only-in-baseline → removed
 		writeFileSync(path.join(baselineDir, "comp--old.png"), solidPng(50, 50, [0, 255, 0]));
-		// different dimensions → changed (size)
+		// different dimensions → dimension-only change, not flagged as a visual
+		// regression (we only act on actual pixel comparisons).
 		writeFileSync(path.join(baselineDir, "comp--resize.png"), solidPng(50, 50, [0, 255, 0]));
 		writeFileSync(path.join(currentDir, "comp--resize.png"), solidPng(80, 50, [0, 255, 0]));
 
-		const { stories } = diffScreenshots({
+		const { stories, sized, counts } = diffScreenshots({
 			baselineDir,
 			currentDir,
 			indexPath: undefined,
@@ -164,8 +165,10 @@ describe("diffScreenshots (real pixelmatch pipeline)", () => {
 		const byId = Object.fromEntries(stories.map((s) => [s.id, s]));
 		expect(byId["comp--fresh"].status).toBe("new");
 		expect(byId["comp--old"].status).toBe("removed");
-		expect(byId["comp--resize"].status).toBe("changed");
-		expect(byId["comp--resize"].sizeChanged).toBe(true);
+		// The resized story is reported separately, not as a changed story.
+		expect(byId["comp--resize"]).toBeUndefined();
+		expect(sized).toEqual(["comp--resize"]);
+		expect(counts.size).toBe(1);
 		// No overlay for a size change (can't pixelmatch unequal dims).
 		expect(readdirSync(diffDir)).not.toContain("comp--resize.diff.png");
 	});
