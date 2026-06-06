@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
 	ArrowRightIcon,
+	ArrowUpFromLineIcon,
 	CalendarDaysIcon,
 	CheckIcon,
 	GitBranchIcon,
@@ -26,6 +27,7 @@ import {
 import { Input } from "#/components/ui/input";
 import { Textarea } from "#/components/ui/textarea";
 import { BranchProjectDialog } from "#/components/workspace/branch-project-dialog";
+import { PromoteBranchDialog } from "#/components/workspace/promote-branch-dialog";
 import { ShareProjectDialog } from "#/components/workspace/share-project-dialog";
 import {
 	applyCalendar,
@@ -164,6 +166,7 @@ export function OverviewView({
 	const [shareOpen, setShareOpen] = useState(false);
 	const [forkOpen, setForkOpen] = useState(false);
 	const [renameOpen, setRenameOpen] = useState(false);
+	const [promoteOpen, setPromoteOpen] = useState(false);
 
 	const title = project?.title ?? doc.title ?? "Untitled project";
 	const description = project?.description ?? null;
@@ -220,6 +223,15 @@ export function OverviewView({
 								<PencilIcon className="size-3.5" />
 								Rename / edit description
 							</DropdownMenuItem>
+							{project?.parentProjectId != null && (
+								<DropdownMenuItem
+									onSelect={() => setPromoteOpen(true)}
+									data-testid="overview-promote-action"
+								>
+									<ArrowUpFromLineIcon className="size-3.5" />
+									Promote to standalone plan
+								</DropdownMenuItem>
+							)}
 						</DropdownMenuContent>
 					</DropdownMenu>
 				</>
@@ -249,6 +261,13 @@ export function OverviewView({
 						description: project.description,
 						isBranch: project.parentProjectId != null,
 					}}
+				/>
+			)}
+			{project && promoteOpen && (
+				<PromoteBranchDialog
+					open={promoteOpen}
+					onOpenChange={setPromoteOpen}
+					project={{ id: project.id, title: project.title }}
 				/>
 			)}
 		</>

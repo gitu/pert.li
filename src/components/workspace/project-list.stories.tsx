@@ -7,6 +7,7 @@ import {
 	Outlet,
 	RouterProvider,
 } from "@tanstack/react-router";
+import { expect, userEvent, within } from "storybook/test";
 import type { ProjectSummary } from "#/types/workspace";
 import { ProjectList } from "./project-list";
 
@@ -69,6 +70,45 @@ const fixtureProjectsWithBranches: ProjectSummary[] = [
 		parentProjectId: "00000000-0000-4000-8000-000000000001",
 		branchedFromHeads: ["abc"],
 		branchedAt: "2026-05-09T00:00:00.000Z",
+	}),
+];
+
+// A -> B -> C deep nesting (branch of a branch), plus a sibling branch on the
+// root, to exercise recursive indentation at more than one level.
+const fixtureNestedBranches: ProjectSummary[] = [
+	root({
+		id: "00000000-0000-4000-8000-0000000000a0",
+		title: "Roadmap (root)",
+		automergeDocUrl: "automerge:nestA" as ProjectSummary["automergeDocUrl"],
+		createdAt: "2026-05-01T00:00:00.000Z",
+	}),
+	root({
+		id: "00000000-0000-4000-8000-0000000000b0",
+		title: "Branch: aggressive timeline",
+		description: "What if we cut the buffer?",
+		automergeDocUrl: "automerge:nestB" as ProjectSummary["automergeDocUrl"],
+		createdAt: "2026-05-03T00:00:00.000Z",
+		parentProjectId: "00000000-0000-4000-8000-0000000000a0",
+		branchedFromHeads: ["a"],
+		branchedAt: "2026-05-03T00:00:00.000Z",
+	}),
+	root({
+		id: "00000000-0000-4000-8000-0000000000c0",
+		title: "Branch of branch: skip QA gate",
+		automergeDocUrl: "automerge:nestC" as ProjectSummary["automergeDocUrl"],
+		createdAt: "2026-05-05T00:00:00.000Z",
+		parentProjectId: "00000000-0000-4000-8000-0000000000b0",
+		branchedFromHeads: ["b"],
+		branchedAt: "2026-05-05T00:00:00.000Z",
+	}),
+	root({
+		id: "00000000-0000-4000-8000-0000000000d0",
+		title: "Branch: conservative timeline",
+		automergeDocUrl: "automerge:nestD" as ProjectSummary["automergeDocUrl"],
+		createdAt: "2026-05-04T00:00:00.000Z",
+		parentProjectId: "00000000-0000-4000-8000-0000000000a0",
+		branchedFromHeads: ["a"],
+		branchedAt: "2026-05-04T00:00:00.000Z",
 	}),
 ];
 
@@ -151,6 +191,62 @@ export const WithBranchesActive: Story = {
 	args: {
 		projects: fixtureProjectsWithBranches,
 		activeProjectId: fixtureProjectsWithBranches[3].id,
+	},
+};
+
+// The per-row ⋯ menu offers Rename always and Promote only for branches; a
+// root project's menu has no Promote action.
+export const RowMenu: Story = {
+	args: { projects: fixtureProjectsWithBranches },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// Portal menu content renders on document.body, not inside canvasElement.
+		const body = within(canvasElement.ownerDocument.body);
+		const rootId = "00000000-0000-4000-8000-000000000001";
+		const branchId = "00000000-0000-4000-8000-000000000011";
+
+		// A branch row exposes both Rename and Promote.
+		await userEvent.click(canvas.getByTestId(`project-row-menu-${branchId}`));
+		await expect(
+			body.getByTestId(`project-row-rename-action-${branchId}`),
+		).toBeInTheDocument();
+		await expect(
+			body.getByTestId(`project-row-promote-action-${branchId}`),
+		).toBeInTheDocument();
+		await userEvent.keyboard("{Escape}");
+
+		// A root row exposes Rename but not Promote.
+		await userEvent.click(canvas.getByTestId(`project-row-menu-${rootId}`));
+		await expect(
+			body.getByTestId(`project-row-rename-action-${rootId}`),
+		).toBeInTheDocument();
+		expect(
+			body.queryByTestId(`project-row-promote-action-${rootId}`),
+		).toBeNull();
+	},
+};
+
+// Branch-of-a-branch nests one level deeper than a direct branch, rather than
+// flattening up to the root.
+export const NestedBranches: Story = {
+	args: { projects: fixtureNestedBranches },
+	play: async ({ canvasElement }) => {
+		// The deep branch (C) must live inside B's branch container, which itself
+		// lives inside the root A's container.
+		const rootContainer = canvasElement.querySelector(
+			'[data-testid="project-branches-00000000-0000-4000-8000-0000000000a0"]',
+		);
+		const midContainer = canvasElement.querySelector(
+			'[data-testid="project-branches-00000000-0000-4000-8000-0000000000b0"]',
+		);
+		expect(rootContainer).not.toBeNull();
+		expect(midContainer).not.toBeNull();
+		// B's container is nested within A's container (true recursion).
+		expect(rootContainer?.contains(midContainer as Node)).toBe(true);
+		const deep = canvasElement.querySelector(
+			'[data-testid="project-row-00000000-0000-4000-8000-0000000000c0"]',
+		);
+		expect(midContainer?.contains(deep as Node)).toBe(true);
 	},
 };
 

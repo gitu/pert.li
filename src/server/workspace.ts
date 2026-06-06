@@ -19,6 +19,7 @@ import {
 	listProjectCommentsInput,
 	listProjectsInput,
 	listSharesInput,
+	promoteBranchInput,
 	registerProjectInput,
 	resolveShareInput,
 	revokeJoinLinkInput,
@@ -287,6 +288,34 @@ export const closeBranch = createServerFn({ method: "POST" })
 		);
 		if (!role) throw new Error("Write access to this workspace is required");
 		await closeBranchProject({ projectId: data.projectId });
+		return { ok: true } as const;
+	});
+
+// Promotes a branch into a standalone root project (clears parentProjectId +
+// fork-point heads). Only branches qualify; the project's sub-branches stay
+// attached to it. Same auth shape as closeBranch.
+export const promoteBranch = createServerFn({ method: "POST" })
+	.inputValidator(promoteBranchInput)
+	.handler(async ({ data }) => {
+		const {
+			requireSession,
+			getProjectForUser,
+			getWritableWorkspaceRole,
+			promoteBranchProject,
+		} = await helpers();
+		const session = await requireSession();
+		const proj = await getProjectForUser({
+			projectId: data.projectId,
+			userId: session.userId,
+		});
+		if (!proj) throw new Error("Project not found");
+		if (!proj.parentProjectId) throw new Error("Only branches can be promoted");
+		const role = await getWritableWorkspaceRole(
+			session.userId,
+			proj.workspaceId,
+		);
+		if (!role) throw new Error("Write access to this workspace is required");
+		await promoteBranchProject({ projectId: data.projectId });
 		return { ok: true } as const;
 	});
 

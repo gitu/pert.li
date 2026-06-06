@@ -78,6 +78,13 @@ export const closeBranchInput = z.object({
 });
 export type CloseBranchInput = z.infer<typeof closeBranchInput>;
 
+// Promotes a branch into a standalone root project (clears its lineage). Only
+// branches are valid targets; the server fn rejects roots.
+export const promoteBranchInput = z.object({
+	projectId: z.string().uuid(),
+});
+export type PromoteBranchInput = z.infer<typeof promoteBranchInput>;
+
 // --- Project comments -----------------------------------------------------
 export const listProjectCommentsInput = z.object({
 	projectId: z.string().uuid(),
