@@ -42,25 +42,31 @@ export function ChatTabs({
 		onClose(id);
 	};
 	return (
-		<div
-			data-testid="chat-tabs"
-			className={cn(
-				"flex shrink-0 items-center gap-1 overflow-x-auto border-b bg-card/30 px-2 py-1 text-xs",
-				className,
-			)}
-			role="tablist"
-			aria-label="Chat threads"
-		>
-			{threads.map((t) => (
-				<Tab
-					key={t.id}
-					thread={t}
-					active={t.id === activeThreadId}
-					onSelect={() => onSelect(t.id)}
-					onClose={() => handleClose(t.id)}
-					onRename={(next) => onRename(t.id, next)}
-				/>
-			))}
+		// The tab list scrolls horizontally when threads overflow, but the "new
+		// chat" button is pinned outside that scroll area so it stays reachable no
+		// matter how many threads are open (otherwise it gets pushed off the right
+		// edge and the only way to start a chat is to scroll the strip first).
+		<div className="flex shrink-0 items-center gap-1 border-b bg-card/30 px-2 py-1 text-xs">
+			<div
+				data-testid="chat-tabs"
+				className={cn(
+					"flex min-w-0 flex-1 items-center gap-1 overflow-x-auto",
+					className,
+				)}
+				role="tablist"
+				aria-label="Chat threads"
+			>
+				{threads.map((t) => (
+					<Tab
+						key={t.id}
+						thread={t}
+						active={t.id === activeThreadId}
+						onSelect={() => onSelect(t.id)}
+						onClose={() => handleClose(t.id)}
+						onRename={(next) => onRename(t.id, next)}
+					/>
+				))}
+			</div>
 			<Button
 				type="button"
 				size="icon"

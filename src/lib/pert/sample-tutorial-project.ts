@@ -6,6 +6,14 @@ import { createEmptyPertDoc, type PertDoc } from "#/lib/pert/types";
 // project doc to attach to, which the workspace home page otherwise lacks.
 export const TUTORIAL_PROJECT_TITLE = "PERT tutorial";
 
+// Reserved thread the home-page tutorial CTAs always land in. Every lesson is
+// routed into this single thread (inside the shared tutorial project's scope)
+// so repeated clicks continue one conversation instead of littering the tab
+// strip with a fresh thread each time. The plain-string id can't collide with
+// the UUIDs `newThreadId()` mints for user-created threads.
+export const TUTORIAL_THREAD_ID = "tutorial";
+export const TUTORIAL_THREAD_TITLE = "Tutorial";
+
 // A small, self-contained sample plan: a website-launch graph with a clear
 // critical path (research → design → frontend → integrate → launch) plus a
 // parallel backend track that carries slack. Three-point estimates are filled

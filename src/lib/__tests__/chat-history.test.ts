@@ -5,6 +5,7 @@ import {
 	createChatBroadcaster,
 	DEFAULT_THREAD_TITLE,
 	deriveThreadTitle,
+	ensureActiveThread,
 	getScopeKey,
 	moveThreadToScope,
 	readThreadIndex,
@@ -98,6 +99,63 @@ describe("readThreadIndex", () => {
 		const idx = readThreadIndex("project:a");
 		expect(idx.threads).toEqual([]);
 		expect(idx.activeThreadId).toBeNull();
+	});
+});
+
+describe("ensureActiveThread", () => {
+	it("creates the thread and marks it active when the scope is empty", () => {
+		const idx = ensureActiveThread("project:tut", {
+			id: "tutorial",
+			title: "Tutorial",
+		});
+		expect(idx.activeThreadId).toBe("tutorial");
+		expect(idx.threads).toEqual([
+			expect.objectContaining({ id: "tutorial", title: "Tutorial" }),
+		]);
+		// Persisted, so the chat panel reads it back after navigation.
+		expect(readThreadIndex("project:tut")).toEqual(idx);
+	});
+
+	it("re-activates an existing thread without touching its title or duplicating it", () => {
+		writeThreadIndex("project:tut", {
+			activeThreadId: "other",
+			threads: [
+				{
+					id: "tutorial",
+					title: "Renamed by user",
+					createdAt: 1,
+					updatedAt: 1,
+				},
+				{ id: "other", title: "Other", createdAt: 2, updatedAt: 2 },
+			],
+		});
+
+		const idx = ensureActiveThread("project:tut", {
+			id: "tutorial",
+			title: "Tutorial",
+		});
+
+		expect(idx.activeThreadId).toBe("tutorial");
+		// No duplicate, and the user's rename survives.
+		expect(idx.threads).toHaveLength(2);
+		expect(idx.threads.find((t) => t.id === "tutorial")?.title).toBe(
+			"Renamed by user",
+		);
+	});
+
+	it("appends the reserved thread alongside the user's existing threads", () => {
+		writeThreadIndex("project:tut", {
+			activeThreadId: "mine",
+			threads: [{ id: "mine", title: "My chat", createdAt: 1, updatedAt: 1 }],
+		});
+
+		const idx = ensureActiveThread("project:tut", {
+			id: "tutorial",
+			title: "Tutorial",
+		});
+
+		expect(idx.activeThreadId).toBe("tutorial");
+		expect(idx.threads.map((t) => t.id).sort()).toEqual(["mine", "tutorial"]);
 	});
 });
 

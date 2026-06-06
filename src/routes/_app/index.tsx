@@ -15,9 +15,12 @@ import { TutorialCard } from "#/components/workspace/tutorial-card";
 import { useActiveWorkspaceId } from "#/lib/active-workspace";
 import { useOptionalRepo } from "#/lib/automerge/provider";
 import { chatDock } from "#/lib/chat-dock";
+import { ensureActiveThread, getScopeKey } from "#/lib/chat-history";
 import {
 	createTutorialPertDoc,
 	TUTORIAL_PROJECT_TITLE,
+	TUTORIAL_THREAD_ID,
+	TUTORIAL_THREAD_TITLE,
 } from "#/lib/pert/sample-tutorial-project";
 import { useMergedProjects } from "#/lib/sync/merge-projects";
 import { seedSampleProject } from "#/lib/sync/seed-sample-projects";
@@ -105,6 +108,20 @@ function WorkspaceHome() {
 				} finally {
 					startingTutorial.current = false;
 				}
+			}
+
+			// Pin a single reserved "Tutorial" thread active in the project's scope
+			// before navigating. Without this the freshly-created tutorial project
+			// has no threads, so the chat panel mounts with no active thread, never
+			// renders a ChatThread to receive the queued prompt, and the lesson is
+			// lost. Reusing one thread also means repeated lessons continue the same
+			// conversation instead of spawning a new tab each time.
+			const scopeKey = getScopeKey(projectId);
+			if (scopeKey) {
+				ensureActiveThread(scopeKey, {
+					id: TUTORIAL_THREAD_ID,
+					title: TUTORIAL_THREAD_TITLE,
+				});
 			}
 
 			// Queue the seed first so the chat (which binds to the project on the
