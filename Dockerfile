@@ -50,7 +50,11 @@ ENV NODE_ENV=${NODE_ENV}
 ARG APP_VERSION=0.0.0-unknown
 ENV APP_VERSION=${APP_VERSION}
 
-RUN pnpm build
+# build:pwa = `pnpm build` + service-worker generation (scripts/generate-sw.mjs)
+# and sets VITE_PWA_ENABLED=1 so the client registers /sw.js. This gives
+# deployed tabs an "update available" reload prompt + offline asset caching;
+# a plain `pnpm build` ships neither (see src/lib/pwa/register-sw.ts).
+RUN pnpm build:pwa
 
 # ---------- prod-deps ----------
 # @automerge/* is externalized (its ESM bundle references CJS-only
