@@ -123,6 +123,41 @@ jobs:
             APP_VERSION=${{ steps.version.outputs.value }}
           cache-from: type=gha
 
+      # ---- Eval image (separate package, matching version tags) -------------
+      # Publish the bring-your-own-LLM eval runner (Dockerfile `eval` target) as
+      # its own ghcr package, `<image>-evals`, carrying the SAME tag set as the
+      # runner above so `…-evals:vX.Y.Z` lines up 1:1 with the runner `vX.Y.Z`.
+      # It's `FROM build`, so it reuses the layers the runner build just cached
+      # (cache-from: gha) — the only added cost is pushing the source + dev-deps
+      # layer. Self-hosters can then `docker run …-evals` to validate the prompt
+      # against their own LLM without a local build (see SELF_HOSTING.md § Evals).
+      - name: Extract metadata (eval image)
+        id: meta-eval
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.img.outputs.name }}-evals
+          tags: |
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+            type=sha,prefix=,format=long
+
+      - name: Build and push eval image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: eval
+          push: true
+          tags: ${{ steps.meta-eval.outputs.tags }}
+          labels: ${{ steps.meta-eval.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.version.outputs.value }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   # ---- Deploy ----------------------------------------------------------------
   # Runs only after `build` succeeds (image is on ghcr.io). We do NOT rebuild
   # on the Google side: a deploy-only Cloud Build trigger pulls THIS image

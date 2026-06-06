@@ -170,9 +170,20 @@ A feature that introduces a pure function, a new component, AND a new flow needs
 
 ## AI assistant system prompt
 
-The in-app chat assistant's system prompt lives in `src/lib/ai/chat.server.ts` (`SYSTEM_PROMPT`). It contains an **ABOUT PERT.LI** block that enumerates the visible product surfaces — views, panels, controls, chat dock chrome, sign-in flow — so the assistant's tutorials and walkthroughs match what the user actually sees.
+The in-app chat assistant's system prompt lives in `src/lib/ai/system-prompt.ts` (`SYSTEM_PROMPT`; imported by the chat handler `src/lib/ai/chat.server.ts` and re-used verbatim by the eval harness). It's its own dependency-free module so the headless evals can import the real prompt without dragging in the server/auth/db graph. It contains an **ABOUT PERT.LI** block that enumerates the visible product surfaces — views, panels, controls, chat dock chrome, sign-in flow — so the assistant's tutorials and walkthroughs match what the user actually sees.
 
 When you ship a change that renames, adds, or removes a top-level surface (a view tab, an inspector control, a sidebar entry, a tool, a major route, the chat dock chrome, a theme/account-menu option), update that block **before** declaring the feature done. If you're unsure whether a change qualifies, verify by re-reading the section against the running UI; if anything reads as stale, fix it. Tool-level changes (adding/removing a `*Tool` in `src/lib/ai/tools.ts`) also need the matching `TOOLS —` bullet updated.
+
+### Prompt & chat evals (`src/lib/ai/eval/`)
+
+A scenario-based eval harness drives the **real** `SYSTEM_PROMPT` + **real** tools through the **real** `chat()` agent loop, headless and server-side, with the tools' `.server()` executors running the actual mutators (`tool-mutators.ts`) against an in-memory `PertDoc`. Scenarios assert on three layers: tool-call correctness, schema/refusal guards (`validateAllToolArgs`, `looksRefused`), and LLM-as-judge answer quality (`judge.ts`). Each scenario runs N times with a pass-ratio threshold (`repeat()`), so non-determinism doesn't flake the suite.
+
+- **Scoring.** `repeat()` records each scenario's pass ratio to a sink (`report.ts` → `eval-report/runs.jsonl`); `scripts/eval-summary.mjs` aggregates it into an **objective score** (judge-independent — only the deterministic `kind:"objective"` scenarios) plus the **judge score** (0–5, the `kind:"judge"` scenarios) as a separate dimension. Most scenarios are objective; only answer-quality ones use the judge.
+- **Judge model.** By default the judge reuses the scenario provider (zero-config), which means a model can grade its own output — self-preference bias. Point the judge at a different/stronger model with `EVAL_JUDGE_PROVIDER` / `EVAL_JUDGE_MODEL` / `EVAL_JUDGE_API_KEY` / `EVAL_JUDGE_BASE_URL` (see `judge.ts`). Prefer the objective scores where you can.
+- Run locally: `pnpm eval` — it reads `.env` / `.env.local` like the dev server (`src/lib/ai/eval/env.ts`), so your local provider config (`LLM_PROVIDER`, `OPENAI_BASE_URL`, key) just works; with no key configured every scenario skips cleanly. Separate Vitest config — `pnpm test` never runs `*.eval.ts`. Tune with `EVAL_REPEATS` / `EVAL_THRESHOLD`.
+- CI: `.github/workflows/evals.yml` — manual dispatch or the `run-evals` PR label, against Gemini (`GEMINI_API_KEY` secret). Not part of the `ci-ready` gate.
+- Bring-your-own-LLM: build locally with `docker build --target eval -t pert-li-evals .`, or pull the published sibling image `ghcr.io/<owner>/<repo>-evals` (same version tags as the runner; built by `docker.yml`), then run with `LLM_PROVIDER`/`OPENAI_BASE_URL`/key env (see SELF_HOSTING.md § Evals).
+- When you add or meaningfully change a chat tool or a prompt rule, add or update a scenario under `src/lib/ai/eval/scenarios/`.
 
 ## Demo / scaffold files
 
