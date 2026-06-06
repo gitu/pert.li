@@ -29,7 +29,8 @@
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
     "storybook:test": "test-storybook --url http://localhost:6006",
-    "storybook:ci": "concurrently -k -s first -n SB,TEST -c magenta,blue \"storybook dev -p 6006 --ci --quiet\" \"wait-on -l tcp:6006 && test-storybook --url http://localhost:6006\""
+    "storybook:ci": "concurrently -k -s first -n SB,TEST -c magenta,blue \"storybook dev -p 6006 --ci --quiet\" \"wait-on -l tcp:6006 && test-storybook --url http://localhost:6006\"",
+    "screenshots:diff": "node scripts/diff-screenshots.mjs"
   },
   "dependencies": {
     "@automerge/automerge": "3.2.6",
@@ -117,6 +118,8 @@
     "dotenv": "17.4.2",
     "fast-check": "4.8.0",
     "jsdom": "29.1.1",
+    "pixelmatch": "7.2.0",
+    "pngjs": "7.0.0",
     "rollup": "^4.61.0",
     "tsx": "4.22.4",
     "typescript": "6.0.3",
