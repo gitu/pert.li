@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
 	createMemoryHistory,
 	createRootRoute,
@@ -124,9 +125,14 @@ const fixtureOrphanBranch: ProjectSummary[] = [
 	}),
 ];
 
-// ProjectList renders <Link to="/p/$projectId">; the stories need a router
-// context so those links don't throw.
+// ProjectList renders <Link to="/p/$projectId"> and now a per-row actions
+// menu (ProjectActionsMenu → ShareProjectDialog), so the stories need both a
+// router context (so the links don't throw) and a QueryClient (the share
+// dialog calls useQueryClient even while closed).
 function withRouter(children: React.ReactNode) {
+	const qc = new QueryClient({
+		defaultOptions: { queries: { retry: false } },
+	});
 	const rootRoute = createRootRoute({ component: () => <Outlet /> });
 	const indexRoute = createRoute({
 		getParentRoute: () => rootRoute,
@@ -142,7 +148,11 @@ function withRouter(children: React.ReactNode) {
 		routeTree: rootRoute.addChildren([indexRoute, projectRoute]),
 		history: createMemoryHistory({ initialEntries: ["/"] }),
 	});
-	return <RouterProvider router={router} />;
+	return (
+		<QueryClientProvider client={qc}>
+			<RouterProvider router={router} />
+		</QueryClientProvider>
+	);
 }
 
 const meta: Meta<typeof ProjectList> = {
@@ -194,8 +204,8 @@ export const WithBranchesActive: Story = {
 	},
 };
 
-// The per-row ⋯ menu offers Rename always and Promote only for branches; a
-// root project's menu has no Promote action.
+// The per-row ⋯ menu offers Edit / Share / Export / Delete always, plus
+// Promote only for branches; a root project's menu has no Promote action.
 export const RowMenu: Story = {
 	args: { projects: fixtureProjectsWithBranches },
 	play: async ({ canvasElement }) => {
@@ -205,24 +215,34 @@ export const RowMenu: Story = {
 		const rootId = "00000000-0000-4000-8000-000000000001";
 		const branchId = "00000000-0000-4000-8000-000000000011";
 
-		// A branch row exposes both Rename and Promote.
-		await userEvent.click(canvas.getByTestId(`project-row-menu-${branchId}`));
+		// A branch row exposes the full action set including Promote.
+		await userEvent.click(canvas.getByTestId(`project-actions-${branchId}`));
 		await expect(
-			body.getByTestId(`project-row-rename-action-${branchId}`),
+			body.getByTestId(`project-action-edit-${branchId}`),
 		).toBeInTheDocument();
 		await expect(
-			body.getByTestId(`project-row-promote-action-${branchId}`),
+			body.getByTestId(`project-action-share-${branchId}`),
+		).toBeInTheDocument();
+		await expect(
+			body.getByTestId(`project-action-export-${branchId}`),
+		).toBeInTheDocument();
+		await expect(
+			body.getByTestId(`project-action-promote-${branchId}`),
+		).toBeInTheDocument();
+		await expect(
+			body.getByTestId(`project-action-delete-${branchId}`),
 		).toBeInTheDocument();
 		await userEvent.keyboard("{Escape}");
 
-		// A root row exposes Rename but not Promote.
-		await userEvent.click(canvas.getByTestId(`project-row-menu-${rootId}`));
+		// A root row exposes everything except Promote.
+		await userEvent.click(canvas.getByTestId(`project-actions-${rootId}`));
 		await expect(
-			body.getByTestId(`project-row-rename-action-${rootId}`),
+			body.getByTestId(`project-action-edit-${rootId}`),
 		).toBeInTheDocument();
-		expect(
-			body.queryByTestId(`project-row-promote-action-${rootId}`),
-		).toBeNull();
+		await expect(
+			body.getByTestId(`project-action-delete-${rootId}`),
+		).toBeInTheDocument();
+		expect(body.queryByTestId(`project-action-promote-${rootId}`)).toBeNull();
 	},
 };
 

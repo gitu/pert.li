@@ -12,21 +12,17 @@ import {
 	PencilIcon,
 	Share2Icon,
 	TimerIcon,
+	Trash2Icon,
 	XIcon,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { ExportProjectButton } from "#/components/pert/exchange/export-button";
 import { ProjectCalendarForm } from "#/components/pert/project-calendar-form";
 import { Button } from "#/components/ui/button";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "#/components/ui/dropdown-menu";
 import { Input } from "#/components/ui/input";
 import { Textarea } from "#/components/ui/textarea";
 import { BranchProjectDialog } from "#/components/workspace/branch-project-dialog";
+import { DeleteProjectDialog } from "#/components/workspace/delete-project-dialog";
 import { PromoteBranchDialog } from "#/components/workspace/promote-branch-dialog";
 import { ShareProjectDialog } from "#/components/workspace/share-project-dialog";
 import {
@@ -167,6 +163,7 @@ export function OverviewView({
 	const [forkOpen, setForkOpen] = useState(false);
 	const [renameOpen, setRenameOpen] = useState(false);
 	const [promoteOpen, setPromoteOpen] = useState(false);
+	const [deleteOpen, setDeleteOpen] = useState(false);
 
 	const title = project?.title ?? doc.title ?? "Untitled project";
 	const description = project?.description ?? null;
@@ -192,48 +189,59 @@ export function OverviewView({
 						<Share2Icon className="size-3.5" />
 						Share
 					</Button>
-					<DropdownMenu>
-						<DropdownMenuTrigger asChild>
-							<Button
-								type="button"
-								size="sm"
-								variant="ghost"
-								className="h-8 gap-1.5 text-xs"
-								data-testid="overview-branch-menu"
-								title="Branch / rename"
-							>
-								<GitBranchIcon className="size-3.5" />
-								Branch
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end">
-							<DropdownMenuItem
-								onSelect={() => setForkOpen(true)}
-								data-testid="overview-branch-action"
-								disabled={!project}
-							>
-								<GitBranchIcon className="size-3.5" />
-								Branch this plan
-							</DropdownMenuItem>
-							<DropdownMenuItem
-								onSelect={() => setRenameOpen(true)}
-								data-testid="overview-rename-action"
-								disabled={!project}
-							>
-								<PencilIcon className="size-3.5" />
-								Rename / edit description
-							</DropdownMenuItem>
-							{project?.parentProjectId != null && (
-								<DropdownMenuItem
-									onSelect={() => setPromoteOpen(true)}
-									data-testid="overview-promote-action"
-								>
-									<ArrowUpFromLineIcon className="size-3.5" />
-									Promote to standalone plan
-								</DropdownMenuItem>
-							)}
-						</DropdownMenuContent>
-					</DropdownMenu>
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						className="h-8 gap-1.5 text-xs"
+						onClick={() => setRenameOpen(true)}
+						data-testid="overview-edit"
+						title="Edit title & description"
+						disabled={!project}
+					>
+						<PencilIcon className="size-3.5" />
+						Edit
+					</Button>
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						className="h-8 gap-1.5 text-xs"
+						onClick={() => setForkOpen(true)}
+						data-testid="overview-branch-action"
+						title="Branch this plan"
+						disabled={!project}
+					>
+						<GitBranchIcon className="size-3.5" />
+						Branch
+					</Button>
+					{project?.parentProjectId != null && (
+						<Button
+							type="button"
+							size="sm"
+							variant="ghost"
+							className="h-8 gap-1.5 text-xs"
+							onClick={() => setPromoteOpen(true)}
+							data-testid="overview-promote-action"
+							title="Promote to standalone plan"
+						>
+							<ArrowUpFromLineIcon className="size-3.5" />
+							Promote
+						</Button>
+					)}
+					<Button
+						type="button"
+						size="sm"
+						variant="ghost"
+						className="h-8 gap-1.5 text-xs text-destructive hover:text-destructive"
+						onClick={() => setDeleteOpen(true)}
+						data-testid="overview-delete"
+						title="Delete this project"
+						disabled={!project}
+					>
+						<Trash2Icon className="size-3.5" />
+						Delete
+					</Button>
 				</>
 			)}
 			<ShareProjectDialog
@@ -268,6 +276,18 @@ export function OverviewView({
 					open={promoteOpen}
 					onOpenChange={setPromoteOpen}
 					project={{ id: project.id, title: project.title }}
+				/>
+			)}
+			{project && deleteOpen && (
+				<DeleteProjectDialog
+					project={{
+						id: project.id,
+						title: project.title,
+						hasBranches: existingBranchCount > 0,
+					}}
+					open={deleteOpen}
+					onOpenChange={setDeleteOpen}
+					onDeleted={() => navigate({ to: "/" })}
 				/>
 			)}
 		</>

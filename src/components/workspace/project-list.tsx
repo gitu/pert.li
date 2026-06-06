@@ -1,27 +1,12 @@
 import { Link } from "@tanstack/react-router";
-import {
-	ArrowUpFromLineIcon,
-	FileTextIcon,
-	GitBranchIcon,
-	MoreHorizontalIcon,
-	PencilIcon,
-} from "lucide-react";
-import { useState } from "react";
-import { Button } from "#/components/ui/button";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "#/components/ui/dropdown-menu";
+import { FileTextIcon, GitBranchIcon } from "lucide-react";
 import { cn } from "#/lib/utils";
 import {
 	buildProjectTree,
 	type ProjectTreeNode,
 } from "#/lib/workspace/project-tree";
 import type { ProjectSummary } from "#/types/workspace";
-import { BranchProjectDialog } from "./branch-project-dialog";
-import { PromoteBranchDialog } from "./promote-branch-dialog";
+import { ProjectActionsMenu } from "./project-actions-menu";
 
 export type ProjectListProps = {
 	projects: ProjectSummary[];
@@ -35,8 +20,8 @@ export type ProjectListProps = {
 // level deeper, not flattened to the root). Branches whose parent isn't in the
 // same list (archived, in a different workspace, or just absent) bubble up to
 // root level — flagged as orphan branches — so they stay reachable instead of
-// disappearing. Each row carries a ⋯ menu (Rename, and Promote for branches),
-// matching the workspace-home cards.
+// disappearing. Each row carries a ⋯ menu (Edit / Share / Export / Promote for
+// branches / Delete), matching the workspace-home cards.
 
 export function ProjectList({
 	projects,
@@ -119,13 +104,7 @@ function ProjectRow({
 	onSelect?: (project: ProjectSummary) => void;
 	kind: "root" | "branch" | "orphan-branch";
 }) {
-	const [renameOpen, setRenameOpen] = useState(false);
-	const [promoteOpen, setPromoteOpen] = useState(false);
 	const isBranch = kind !== "root";
-	// Offline-created rows (still pending server registration) carry an empty
-	// creator and can't be edited yet — same "safe to edit" signal the home
-	// cards use. The menu appears on its own once the reconcile loop registers.
-	const canEdit = project.createdBy !== "";
 
 	return (
 		<div
@@ -172,63 +151,15 @@ function ProjectRow({
 					)}
 				</div>
 			</Link>
-			{canEdit && (
-				<div className="flex items-center pr-1">
-					<DropdownMenu>
-						<DropdownMenuTrigger asChild>
-							<Button
-								type="button"
-								size="icon"
-								variant="ghost"
-								className="size-6 shrink-0 text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
-								data-testid={`project-row-menu-${project.id}`}
-								title="Project options"
-							>
-								<MoreHorizontalIcon className="size-3.5" />
-								<span className="sr-only">Project options</span>
-							</Button>
-						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end">
-							<DropdownMenuItem
-								onSelect={() => setRenameOpen(true)}
-								data-testid={`project-row-rename-action-${project.id}`}
-							>
-								<PencilIcon className="size-3.5" />
-								Rename / edit description
-							</DropdownMenuItem>
-							{isBranch && (
-								<DropdownMenuItem
-									onSelect={() => setPromoteOpen(true)}
-									data-testid={`project-row-promote-action-${project.id}`}
-								>
-									<ArrowUpFromLineIcon className="size-3.5" />
-									Promote to standalone plan
-								</DropdownMenuItem>
-							)}
-						</DropdownMenuContent>
-					</DropdownMenu>
-				</div>
-			)}
-			{renameOpen && (
-				<BranchProjectDialog
-					mode="edit"
-					open={renameOpen}
-					onOpenChange={setRenameOpen}
-					project={{
-						id: project.id,
-						title: project.title,
-						description: project.description,
-						isBranch,
-					}}
+			{/* ProjectActionsMenu self-hides for offline/unregistered rows
+			    (createdBy === ""), so it's safe to always render. */}
+			<div className="flex items-center pr-1">
+				<ProjectActionsMenu
+					project={project}
+					isActive={active}
+					className="size-6 shrink-0 opacity-70 transition-opacity hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
 				/>
-			)}
-			{promoteOpen && (
-				<PromoteBranchDialog
-					open={promoteOpen}
-					onOpenChange={setPromoteOpen}
-					project={{ id: project.id, title: project.title }}
-				/>
-			)}
+			</div>
 		</div>
 	);
 }

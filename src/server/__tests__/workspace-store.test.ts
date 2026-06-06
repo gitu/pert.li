@@ -1,5 +1,8 @@
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+	projectComment as projectCommentTable,
+	projectShare as projectShareTable,
 	project as projectTable,
 	user as userTable,
 	userWorkspaceDoc as userWorkspaceDocTable,
@@ -34,6 +37,7 @@ const {
 	addMemberByEmail,
 	listProjectsForWorkspace,
 	registerProjectRow,
+	deleteProjectRow,
 	userCanWriteDoc,
 	createWorkspaceInvitation,
 	listWorkspaceInvitations,
@@ -360,6 +364,109 @@ describe("workspace store (against PGLite)", () => {
 					automergeDocUrl: url,
 				}),
 			).rejects.toThrow(/already registered to another account/i);
+		});
+	});
+
+	describe("deleteProjectRow (permanent delete)", () => {
+		const docUrl = (s: string) => `automerge:${s}`;
+
+		// Insert a project row directly (deleteProjectRow doesn't touch the repo).
+		async function seedProject(opts: {
+			workspaceId: string;
+			createdBy: string;
+			url: string;
+			parentProjectId?: string;
+		}): Promise<string> {
+			const id = `prj_${Math.random().toString(36).slice(2, 10)}`;
+			await testDb.insert(projectTable).values({
+				id,
+				workspaceId: opts.workspaceId,
+				title: "Plan",
+				automergeDocUrl: opts.url,
+				createdBy: opts.createdBy,
+				parentProjectId: opts.parentProjectId ?? null,
+			});
+			return id;
+		}
+
+		it("removes the project row and it drops out of the list", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			const projectId = await seedProject({
+				workspaceId,
+				createdBy: ownerId,
+				url: docUrl("3Kkmw7nGq9deleteA"),
+			});
+			expect(
+				(await listProjectsForWorkspace(workspaceId)).map((p) => p.id),
+			).toContain(projectId);
+
+			await deleteProjectRow({ projectId });
+
+			expect(
+				(await listProjectsForWorkspace(workspaceId)).map((p) => p.id),
+			).not.toContain(projectId);
+		});
+
+		it("cascades to the project's share links and comments", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			const projectId = await seedProject({
+				workspaceId,
+				createdBy: ownerId,
+				url: docUrl("3Kkmw7nGq9deleteB"),
+			});
+			await testDb.insert(projectShareTable).values({
+				id: `shr_${Math.random().toString(36).slice(2, 10)}`,
+				projectId,
+				token: "share-token-delete-b",
+				mode: "view",
+				createdBy: ownerId,
+			});
+			await testDb.insert(projectCommentTable).values({
+				id: `cmt_${Math.random().toString(36).slice(2, 10)}`,
+				projectId,
+				authorId: ownerId,
+				body: "a comment",
+			});
+
+			await deleteProjectRow({ projectId });
+
+			const shares = await testDb
+				.select()
+				.from(projectShareTable)
+				.where(eq(projectShareTable.projectId, projectId));
+			const comments = await testDb
+				.select()
+				.from(projectCommentTable)
+				.where(eq(projectCommentTable.projectId, projectId));
+			expect(shares).toEqual([]);
+			expect(comments).toEqual([]);
+		});
+
+		it("detaches branches of a deleted root (parentProjectId set null, row kept)", async () => {
+			const ownerId = await seedUser("owner@example.com", "Owner");
+			const workspaceId = await ensurePersonalWorkspace(ownerId, "Owner");
+			const rootId = await seedProject({
+				workspaceId,
+				createdBy: ownerId,
+				url: docUrl("3Kkmw7nGq9deleteRoot"),
+			});
+			const branchId = await seedProject({
+				workspaceId,
+				createdBy: ownerId,
+				url: docUrl("3Kkmw7nGq9deleteBranch"),
+				parentProjectId: rootId,
+			});
+
+			await deleteProjectRow({ projectId: rootId });
+
+			const [branch] = await testDb
+				.select()
+				.from(projectTable)
+				.where(eq(projectTable.id, branchId));
+			expect(branch).toBeDefined();
+			expect(branch.parentProjectId).toBeNull();
 		});
 	});
 
