@@ -17,6 +17,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as ShareTokenRouteImport } from './routes/share.$token'
 import { Route as JoinTokenRouteImport } from './routes/join.$token'
+import { Route as ApiManifestRouteImport } from './routes/api/manifest'
 import { Route as ApiChatRouteImport } from './routes/api/chat'
 import { Route as AppAdminRouteImport } from './routes/_app/admin'
 import { Route as ApiAuthSplatRouteImport } from './routes/api/auth/$'
@@ -61,6 +62,11 @@ const JoinTokenRoute = JoinTokenRouteImport.update({
   path: '/join/$token',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiManifestRoute = ApiManifestRouteImport.update({
+  id: '/api/manifest',
+  path: '/api/manifest',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiChatRoute = ApiChatRouteImport.update({
   id: '/api/chat',
   path: '/api/chat',
@@ -90,6 +96,7 @@ export interface FileRoutesByFullPath {
   '/welcome': typeof WelcomeRoute
   '/admin': typeof AppAdminRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/manifest': typeof ApiManifestRoute
   '/join/$token': typeof JoinTokenRoute
   '/share/$token': typeof ShareTokenRoute
   '/p/$projectId': typeof AppPProjectIdRoute
@@ -102,6 +109,7 @@ export interface FileRoutesByTo {
   '/welcome': typeof WelcomeRoute
   '/admin': typeof AppAdminRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/manifest': typeof ApiManifestRoute
   '/join/$token': typeof JoinTokenRoute
   '/share/$token': typeof ShareTokenRoute
   '/': typeof AppIndexRoute
@@ -117,6 +125,7 @@ export interface FileRoutesById {
   '/welcome': typeof WelcomeRoute
   '/_app/admin': typeof AppAdminRoute
   '/api/chat': typeof ApiChatRoute
+  '/api/manifest': typeof ApiManifestRoute
   '/join/$token': typeof JoinTokenRoute
   '/share/$token': typeof ShareTokenRoute
   '/_app/': typeof AppIndexRoute
@@ -133,6 +142,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/admin'
     | '/api/chat'
+    | '/api/manifest'
     | '/join/$token'
     | '/share/$token'
     | '/p/$projectId'
@@ -145,6 +155,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/admin'
     | '/api/chat'
+    | '/api/manifest'
     | '/join/$token'
     | '/share/$token'
     | '/'
@@ -159,6 +170,7 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/_app/admin'
     | '/api/chat'
+    | '/api/manifest'
     | '/join/$token'
     | '/share/$token'
     | '/_app/'
@@ -173,6 +185,7 @@ export interface RootRouteChildren {
   SigninRoute: typeof SigninRoute
   WelcomeRoute: typeof WelcomeRoute
   ApiChatRoute: typeof ApiChatRoute
+  ApiManifestRoute: typeof ApiManifestRoute
   JoinTokenRoute: typeof JoinTokenRoute
   ShareTokenRoute: typeof ShareTokenRoute
   ApiAuthSplatRoute: typeof ApiAuthSplatRoute
@@ -236,6 +249,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof JoinTokenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/manifest': {
+      id: '/api/manifest'
+      path: '/api/manifest'
+      fullPath: '/api/manifest'
+      preLoaderRoute: typeof ApiManifestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/chat': {
       id: '/api/chat'
       path: '/api/chat'
@@ -288,6 +308,7 @@ const rootRouteChildren: RootRouteChildren = {
   SigninRoute: SigninRoute,
   WelcomeRoute: WelcomeRoute,
   ApiChatRoute: ApiChatRoute,
+  ApiManifestRoute: ApiManifestRoute,
   JoinTokenRoute: JoinTokenRoute,
   ShareTokenRoute: ShareTokenRoute,
   ApiAuthSplatRoute: ApiAuthSplatRoute,
