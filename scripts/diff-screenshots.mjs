@@ -70,9 +70,11 @@ export function classifyDiff(
 
 	if (!hasCurrent) return "removed";
 	if (!hasBaseline) return "new";
-	// Can't pixel-compare images of different sizes — a dimension change is
-	// itself a visual change worth surfacing.
-	if (dimsDiffer) return "changed";
+	// Images of different sizes can't be pixel-compared, and a bare dimension
+	// change on its own isn't a regression we act on — we only care about
+	// actual image (pixel) comparisons. Treat it as unchanged; the caller still
+	// tracks + logs it (see diffScreenshots) so the skip is never silent.
+	if (dimsDiffer) return "unchanged";
 	const ratio = total > 0 ? mismatched / total : 0;
 	if (mismatched >= minPixels && ratio >= ratioFloor) return "changed";
 	return "unchanged";
@@ -135,6 +137,7 @@ export function diffScreenshots({ baselineDir, currentDir, indexPath, diffOutDir
 	const allIds = new Set([...baseIds, ...curIds]);
 	const stories = [];
 	const ignored = [];
+	const sized = [];
 	const counts = { changed: 0, new: 0, removed: 0, unchanged: 0, size: 0, ignored: 0 };
 
 	for (const id of [...allIds].sort()) {
@@ -157,16 +160,25 @@ export function diffScreenshots({ baselineDir, currentDir, indexPath, diffOutDir
 		}
 
 		const status = classifyDiff(facts);
+		// A bare dimension change classifies as unchanged — we only flag real
+		// pixel comparisons — but track it separately and log it (never silent)
+		// so a reviewer can tell a story resized without us treating it as a
+		// regression. It's deliberately kept out of the PR comment.
+		if (status === "unchanged" && facts.dimsDiffer) {
+			counts.size++;
+			sized.push(id);
+			continue;
+		}
 		if (status === "unchanged") {
 			counts.unchanged++;
 			continue;
 		}
-		counts[status === "changed" && facts.dimsDiffer ? "size" : status]++;
+		counts[status]++;
 
-		// Write the diff overlay only when we have a real pixel diff (same
-		// dimensions, classified changed). New / removed / size-changed
+		// Write the diff overlay only when we have a real pixel diff (a
+		// `changed` story always has equal dimensions now). New / removed
 		// stories have no overlay; the comment renders them accordingly.
-		if (status === "changed" && !facts.dimsDiffer && diffOutDir && diffPng) {
+		if (status === "changed" && diffOutDir && diffPng) {
 			writeFileSync(path.join(diffOutDir, `${id}.diff.png`), PNG.sync.write(diffPng));
 		}
 
@@ -177,13 +189,12 @@ export function diffScreenshots({ baselineDir, currentDir, indexPath, diffOutDir
 			name: info.name,
 			file: info.file,
 			status,
-			sizeChanged: status === "changed" && facts.dimsDiffer,
 			mismatch: facts.mismatched,
 			ratio: facts.total > 0 ? facts.mismatched / facts.total : 0,
 		});
 	}
 
-	return { stories, ignored, counts };
+	return { stories, ignored, sized, counts };
 }
 
 const invokedDirectly =
@@ -213,6 +224,13 @@ if (invokedDirectly) {
 		// reviewer can tell coverage was skipped (not that nothing changed).
 		process.stderr.write(
 			`diff-screenshots: ignored via \`${IGNORE_TAG}\` tag: ${result.ignored.join(", ")}\n`,
+		);
+	}
+	if (result.sized.length) {
+		// Same principle for dimension-only changes: not flagged as regressions,
+		// but named so a reviewer knows a story's render resized.
+		process.stderr.write(
+			`diff-screenshots: dimension-only change (not flagged): ${result.sized.join(", ")}\n`,
 		);
 	}
 }

@@ -7,6 +7,11 @@ const meta: Meta<typeof VersionFooter> = {
 	title: "Legal/VersionFooter",
 	component: VersionFooter,
 	parameters: { layout: "centered" },
+	// The footer bakes in VITE_APP_VERSION (git-describe) at build time, so its
+	// render changes on every build — pixel-diffing it against the `main`
+	// baseline would flag this story on every PR. Opt out of the visual diff
+	// (see scripts/diff-screenshots.mjs); it still runs as a functional story.
+	tags: ["no-screenshot-diff"],
 };
 export default meta;
 type Story = StoryObj<typeof VersionFooter>;
