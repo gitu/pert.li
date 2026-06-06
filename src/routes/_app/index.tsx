@@ -1,19 +1,28 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
 	ArrowRightIcon,
 	FolderPlusIcon,
 	UploadIcon,
 	UsersIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { CreateProjectDialog } from "#/components/workspace/create-project-dialog";
 import { ImportProjectDialog } from "#/components/workspace/import-project-dialog";
 import { InviteMemberDialog } from "#/components/workspace/invite-member-dialog";
 import { TutorialCard } from "#/components/workspace/tutorial-card";
 import { useActiveWorkspaceId } from "#/lib/active-workspace";
+import { useOptionalRepo } from "#/lib/automerge/provider";
+import { chatDock } from "#/lib/chat-dock";
+import {
+	createTutorialPertDoc,
+	TUTORIAL_PROJECT_TITLE,
+} from "#/lib/pert/sample-tutorial-project";
+import { randomId } from "#/lib/random-id";
 import { useMergedProjects } from "#/lib/sync/merge-projects";
+import { addPending } from "#/lib/sync/pending-projects";
+import { requestReconcile } from "#/lib/sync/reconcile-pending";
 import { listMyWorkspaces, listProjects } from "#/server/workspace.ts";
 
 // Beginner-friendly tutorial CTA is prominent while the workspace is sparse
@@ -61,6 +70,59 @@ function WorkspaceHome() {
 	const showTutorialProminent =
 		!projectsQuery.isPending && projects.length < TUTORIAL_PROMINENT_THRESHOLD;
 
+	const navigate = useNavigate();
+	const repo = useOptionalRepo();
+	// Guards against a double-click minting two tutorial projects before the
+	// first one lands in the merged list.
+	const startingTutorial = useRef(false);
+
+	// The tutorial card lives on the home page, which has no active project —
+	// so the assistant's edits would have nowhere to land. Route every lesson
+	// through a single shared "PERT tutorial" project: reuse it if it already
+	// exists, otherwise mint one seeded with a sample diagram. Then queue the
+	// seed prompt and navigate into the project so the chat binds to it and
+	// proposals render as usual.
+	const startTutorial = useCallback(
+		async (prompt: string) => {
+			const existing = projects.find((p) => p.title === TUTORIAL_PROJECT_TITLE);
+			let projectId = existing?.id;
+
+			if (!projectId) {
+				// Without the local repo we can't mint a doc — fall back to opening
+				// the chat with the prompt (it'll show the no-project state, but the
+				// prompt isn't lost).
+				if (!repo || startingTutorial.current) {
+					chatDock.startWith(prompt, { autoSend: true });
+					return;
+				}
+				startingTutorial.current = true;
+				try {
+					const handle = repo.create(
+						createTutorialPertDoc(TUTORIAL_PROJECT_TITLE),
+					);
+					const localId = randomId();
+					await addPending({
+						localId,
+						title: TUTORIAL_PROJECT_TITLE,
+						automergeDocUrl: handle.url,
+						createdAt: new Date().toISOString(),
+						...(activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {}),
+					});
+					projectId = localId;
+					void requestReconcile();
+				} finally {
+					startingTutorial.current = false;
+				}
+			}
+
+			// Queue the seed first so the chat (which binds to the project on the
+			// next route) auto-sends it once mounted.
+			chatDock.startWith(prompt, { autoSend: true });
+			navigate({ to: "/p/$projectId", params: { projectId } });
+		},
+		[projects, repo, activeWorkspaceId, navigate],
+	);
+
 	return (
 		<div className="mx-auto flex h-full max-w-3xl flex-col gap-8 overflow-y-auto p-10">
 			<header className="space-y-2">
@@ -98,7 +160,9 @@ function WorkspaceHome() {
 				</div>
 			</header>
 
-			{showTutorialProminent && <TutorialCard />}
+			{showTutorialProminent && (
+				<TutorialCard onStart={(prompt) => void startTutorial(prompt)} />
+			)}
 
 			<section className="space-y-3">
 				<h2 className="text-sm font-medium text-muted-foreground">

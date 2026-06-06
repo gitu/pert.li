@@ -101,6 +101,11 @@ export const AcceptError: Story = {
 
 export const NotFound: Story = {
 	args: { ...baseProps, preview: null },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// Invalid states aren't dead ends — they offer a clear way forward.
+		await expect(await canvas.findByTestId("join-invalid-cta")).toBeVisible();
+	},
 };
 
 export const Revoked: Story = {
@@ -126,6 +131,13 @@ export const Exhausted: Story = {
 			useCount: 5,
 			invalidReason: "exhausted",
 		},
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(
+			await canvas.findByText(/used the maximum number of times/),
+		).toBeInTheDocument();
+		await expect(canvas.getByTestId("join-invalid-cta")).toBeVisible();
 	},
 };
 

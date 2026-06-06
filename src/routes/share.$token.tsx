@@ -175,6 +175,7 @@ function ShareCanvas({
 	return (
 		<div className="flex h-full min-h-0 flex-col">
 			<ShareHeader title={title} mode={mode} expiresAt={expiresAt} />
+			{mode === "view" && <ShareReadOnlyBanner />}
 			<div className="min-h-0 flex-1">
 				<PertProjectPanel
 					projectId={projectId}
@@ -182,6 +183,34 @@ function ShareCanvas({
 					view={view}
 				/>
 			</div>
+		</div>
+	);
+}
+
+// View-only shares render the full project UI but with editing disabled
+// (forceReadOnly on ViewModeProvider). A small persistent banner makes that
+// state explicit — otherwise the toolbar/inspector controls look live but do
+// nothing — and offers the two real ways to get edit access.
+function ShareReadOnlyBanner() {
+	return (
+		<div
+			className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-amber-500/40 bg-amber-500/10 px-4 py-1.5 text-xs text-amber-800 dark:text-amber-200"
+			data-testid="share-readonly-banner"
+		>
+			<EyeIcon className="size-3.5 shrink-0" />
+			<span className="font-medium">You're viewing a shared copy.</span>
+			<span className="text-amber-700/90 dark:text-amber-300/80">
+				Changes are disabled. Sign in to use your own workspace, or ask the
+				owner for an edit link.
+			</span>
+			<Button
+				asChild
+				size="sm"
+				variant="outline"
+				className="ml-auto h-6 border-amber-500/50 px-2 text-[11px]"
+			>
+				<Link to="/signin">Sign in</Link>
+			</Button>
 		</div>
 	);
 }

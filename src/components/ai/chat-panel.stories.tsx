@@ -128,6 +128,24 @@ export const Default: Story = {
 	},
 };
 
+// An empty conversation (thread exists, no messages yet) surfaces seed
+// prompts in two groups: action-oriented ones that show the assistant can
+// change the project, and the PERT tutorials.
+export const EmptyConversationShowsSeeds: Story = {
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByTestId("chat-panel");
+		await userEvent.click(await canvas.findByTestId("chat-empty-new"));
+		await canvas.findByTestId("chat-input");
+		// Group headings.
+		expect(await canvas.findByText("Do something")).toBeInTheDocument();
+		expect(canvas.getByText("Learn PERT")).toBeInTheDocument();
+		// An action seed and a tutorial seed are both present.
+		expect(canvas.getByText("Draft tasks for me")).toBeInTheDocument();
+		expect(canvas.getByText("What is PERT?")).toBeInTheDocument();
+	},
+};
+
 // Endpoint clearly broken — stays empty, never errors at construction time.
 export const NoEndpoint: Story = {
 	args: { endpoint: "/api/__missing__" },

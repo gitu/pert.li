@@ -96,7 +96,8 @@ function TaskNodeImpl(props: NodeProps) {
 			<Handle
 				type="target"
 				position={Position.Left}
-				className="!h-3 !w-3 !rounded-full !border-2 !border-background !bg-muted-foreground"
+				title="Drag here to link a predecessor"
+				className="!h-3 !w-3 !cursor-crosshair !rounded-full !border-2 !border-background !bg-muted-foreground !transition-all hover:!h-4 hover:!w-4 hover:!bg-primary"
 			/>
 			{data.onAddPredecessor && (
 				<QuickAddCluster
@@ -213,7 +214,8 @@ function TaskNodeImpl(props: NodeProps) {
 			<Handle
 				type="source"
 				position={Position.Right}
-				className="!h-3 !w-3 !rounded-full !border-2 !border-background !bg-muted-foreground"
+				title="Drag from here to link a successor"
+				className="!h-3 !w-3 !cursor-crosshair !rounded-full !border-2 !border-background !bg-muted-foreground !transition-all hover:!h-4 hover:!w-4 hover:!bg-primary"
 			/>
 		</div>
 	);

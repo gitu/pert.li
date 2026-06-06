@@ -1000,6 +1000,10 @@ function CanvasEmptyState() {
 			<div className="max-w-sm space-y-1">
 				<p className="font-medium text-foreground">No tasks yet.</p>
 				<p>Double-click the canvas to add a task, or use the toolbar above.</p>
+				<p className="text-xs">
+					Once you have a few, drag from a node's side dot to link tasks
+					together.
+				</p>
 			</div>
 		</div>
 	);
