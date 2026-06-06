@@ -17,6 +17,8 @@ test.describe("Project creation", () => {
 			page.getByRole("heading", { name: "New project" }),
 		).toBeVisible();
 
+		// Wizard step 1: pick the blank starting point to reveal the title field.
+		await page.getByTestId("create-choice-empty").click();
 		const title = `E2E project ${Date.now()}`;
 		await page.getByLabel("Title").fill(title);
 		await page.getByRole("button", { name: "Create" }).click();
@@ -37,6 +39,8 @@ test.describe("Project creation", () => {
 			.getByRole("button", { name: "New project" })
 			.click();
 
+		// Wizard step 1: pick the blank starting point to reveal the title field.
+		await page.getByTestId("create-choice-empty").click();
 		const title = `Sidebar test ${Date.now()}`;
 		await page.getByLabel("Title").fill(title);
 		await page.getByRole("button", { name: "Create" }).click();
@@ -46,6 +50,26 @@ test.describe("Project creation", () => {
 		// in the Projects list in the sidebar.
 		await page.goto("/");
 		await expect(page.getByRole("link", { name: title }).first()).toBeVisible({
+			timeout: 10_000,
+		});
+	});
+
+	test("New project → Monte Carlo starting point seeds the sample plan", async ({
+		page,
+	}) => {
+		await page.goto("/");
+		await page
+			.getByRole("banner")
+			.getByRole("button", { name: "New project" })
+			.click();
+
+		// Pick the Monte Carlo starting point; its title pre-fills, then create.
+		await page.getByTestId("create-choice-montecarlo").click();
+		await page.getByRole("button", { name: "Create" }).click();
+		await page.waitForURL(/\/p\/[^/]+$/, { timeout: 10_000 });
+
+		// The sample doc's tasks land in the new project — assert one by title.
+		await expect(page.getByText("Integrate vendor SDK").first()).toBeVisible({
 			timeout: 10_000,
 		});
 	});

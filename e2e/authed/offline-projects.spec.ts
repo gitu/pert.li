@@ -48,6 +48,7 @@ test.describe("Offline-first project creation", () => {
 		// Warm up: one online create so the /p route chunk is loaded and the
 		// workspace exists server-side.
 		await newProjectButton.click();
+		await page.getByTestId("create-choice-empty").click();
 		await page.getByLabel("Title").fill(`Warmup ${Date.now()}`);
 		await page.getByRole("button", { name: "Create" }).click();
 		await page.waitForURL(/\/p\/[^/]+$/, { timeout: 10_000 });
@@ -59,6 +60,7 @@ test.describe("Offline-first project creation", () => {
 
 		const title = `Queued project ${Date.now()}`;
 		await newProjectButton.click();
+		await page.getByTestId("create-choice-empty").click();
 		await page.getByLabel("Title").fill(title);
 		await page.getByRole("button", { name: "Create" }).click();
 

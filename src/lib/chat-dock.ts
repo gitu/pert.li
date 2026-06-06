@@ -89,14 +89,19 @@ export const chatDock = {
 		const current = chatDockStore.state.mode;
 		setMode(current === "pinned" ? "sheet" : "pinned");
 	},
-	// Open the chat pinned and queue a starter message. Used by tutorial CTAs
-	// and any future "deep-link into the assistant" affordance.
+	// Open the chat and queue a starter message. Used by tutorial CTAs and any
+	// future "deep-link into the assistant" affordance. Pinned is the desktop
+	// "anchored beside your work" placement; a phone has no pinned column, so
+	// pinning there would teleport the chat into the hidden fallback host and
+	// the seeded prompt would auto-send with nothing on screen. Fall back to
+	// the sheet on mobile, mirroring togglePin's clamp.
 	startWith(prompt: string, opts: { autoSend?: boolean } = {}) {
+		const mode: ChatDockMode = isMobileViewport() ? "sheet" : "pinned";
 		chatDockStore.setState(() => ({
-			mode: "pinned",
+			mode,
 			pendingPrompt: { text: prompt, autoSend: opts.autoSend ?? true },
 		}));
-		persist("pinned");
+		persist(mode);
 	},
 	consumePendingPrompt(): ChatDockPendingPrompt | null {
 		const pending = chatDockStore.state.pendingPrompt;

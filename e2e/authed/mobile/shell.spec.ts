@@ -43,6 +43,7 @@ test("inside a project, the bottom tab nav switches the view search param", asyn
 	await page.goto("/");
 	await page.getByTestId("mobile-topbar-menu").click();
 	await page.getByRole("button", { name: "New project" }).click();
+	await page.getByTestId("create-choice-empty").click();
 
 	const title = `Mobile shell e2e ${Date.now()}`;
 	await page.getByLabel("Title").fill(title);

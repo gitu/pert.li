@@ -40,6 +40,7 @@ test("bottom-panel divider toggle collapses and re-expands the details panel", a
 		.getByRole("banner")
 		.getByRole("button", { name: "New project" })
 		.click();
+	await page.getByTestId("create-choice-empty").click();
 	await page.getByLabel("Title").fill(`Panel toggles ${Date.now()}`);
 	await page.getByRole("button", { name: "Create" }).click();
 	await page.waitForURL(/\/p\/[^/]+(\?|$)/, { timeout: 10_000 });
@@ -70,6 +71,7 @@ test("chat-rail divider toggle collapses and re-expands the pinned chat", async 
 		.getByRole("banner")
 		.getByRole("button", { name: "New project" })
 		.click();
+	await page.getByTestId("create-choice-empty").click();
 	await page.getByLabel("Title").fill(`Chat rail ${Date.now()}`);
 	await page.getByRole("button", { name: "Create" }).click();
 	await page.waitForURL(/\/p\/[^/]+(\?|$)/, { timeout: 10_000 });

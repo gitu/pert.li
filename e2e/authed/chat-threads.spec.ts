@@ -20,6 +20,7 @@ async function openFreshProject(page: Page): Promise<void> {
 	await expect(
 		page.getByRole("heading", { name: "New project" }),
 	).toBeVisible();
+	await page.getByTestId("create-choice-empty").click();
 	const title = `E2E chat ${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 	await page.getByLabel("Title").fill(title);
 	await page.getByRole("button", { name: "Create" }).click();

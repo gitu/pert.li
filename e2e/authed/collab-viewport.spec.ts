@@ -22,6 +22,8 @@ async function createProject(page: Page): Promise<string> {
 		.getByRole("banner")
 		.getByRole("button", { name: "New project" })
 		.click();
+	// Wizard step 1: pick the blank starting point to reveal the title field.
+	await page.getByTestId("create-choice-empty").click();
 	await page.getByLabel("Title").fill(`Collab viewport ${Date.now()}`);
 	await page.getByRole("button", { name: "Create" }).click();
 	await page.waitForURL(/\/p\/[^/]+$/, { timeout: 10_000 });

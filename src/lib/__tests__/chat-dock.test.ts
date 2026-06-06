@@ -53,6 +53,33 @@ describe("chatDock actions", () => {
 		});
 	});
 
+	it("startWith opens the sheet (not pinned) on a mobile viewport", () => {
+		// A phone has no pinned column — pinning there would teleport the chat
+		// into the hidden fallback host and auto-send the seed with nothing on
+		// screen. Stub a narrow `window` so isMobileViewport() trips.
+		const original = (globalThis as { window?: unknown }).window;
+		(globalThis as { window?: unknown }).window = {
+			innerWidth: 500,
+			localStorage: {
+				getItem: () => null,
+				setItem: () => {},
+				removeItem: () => {},
+			},
+		};
+		try {
+			chatDock.startWith("draft tasks for my app");
+			expect(chatDockStore.state.mode).toBe("sheet");
+			expect(chatDockStore.state.pendingPrompt).toEqual({
+				text: "draft tasks for my app",
+				autoSend: true,
+			});
+		} finally {
+			if (original === undefined)
+				delete (globalThis as { window?: unknown }).window;
+			else (globalThis as { window?: unknown }).window = original;
+		}
+	});
+
 	it("startWith honors autoSend: false", () => {
 		chatDock.startWith("draft a breakdown", { autoSend: false });
 		expect(chatDockStore.state.pendingPrompt).toEqual({
