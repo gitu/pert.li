@@ -51,7 +51,9 @@ export function OverviewSummaryCard({
 			<div className="mt-3 text-sm">
 				{state.status === "idle" && (
 					<p className="text-muted-foreground">
-						Generate a short executive overview and the top risks for this plan.
+						{disabled
+							? "Switch to edit mode to generate a summary."
+							: "Generate a short executive overview and the top risks for this plan."}
 					</p>
 				)}
 				{state.status === "loading" && (

@@ -264,3 +264,36 @@ export const WithRadialQuickAdd: Story = {
 		);
 	},
 };
+
+// Read-only (a view-share recipient): the canvas omits the mutating callbacks
+// (`onDelete` / `onAddPredecessor` / `onAddSuccessor`) when `changeDoc` is
+// withheld, so the node renders without any delete or quick-add affordance —
+// even while selected. This is the canvas-side proof that a read-only viewer
+// cannot delete or add tasks.
+export const ReadOnly: Story = {
+	args: {
+		selected: true,
+		data: {
+			title: "Design API surface",
+			kind: "task",
+			durationDays: 3.5,
+			slackDays: 1.5,
+			critical: false,
+			hasEstimate: true,
+			status: "not_started",
+			progress: 0,
+			// No onDelete / onAddPredecessor / onAddSuccessor.
+		},
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// The node itself still renders so the plan is viewable…
+		await expect(
+			await canvas.findByText("Design API surface"),
+		).toBeInTheDocument();
+		// …but none of the mutating affordances exist.
+		expect(canvas.queryByTestId("task-delete-demo")).toBeNull();
+		expect(canvas.queryByTestId("task-add-predecessor-task-demo")).toBeNull();
+		expect(canvas.queryByTestId("task-add-successor-task-demo")).toBeNull();
+	},
+};
