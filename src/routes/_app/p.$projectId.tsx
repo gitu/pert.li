@@ -12,21 +12,18 @@ import {
 	ChevronLeftIcon,
 	ChevronRightIcon,
 	ChevronUpIcon,
-	GitBranchIcon,
 	GridIcon,
+	LayoutDashboardIcon,
 	ListIcon,
 	MaximizeIcon,
 	MinimizeIcon,
 	NetworkIcon,
-	PencilIcon,
-	Share2Icon,
 	TimerIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import { CanvasLoading } from "#/components/canvas/canvas-loading";
 import { PertCanvas } from "#/components/pert/canvas/canvas";
-import { ExportProjectButton } from "#/components/pert/exchange/export-button";
 import { FullscreenInspectorDock } from "#/components/pert/inspector/fullscreen-inspector-dock";
 import { MobileInspectorSheet } from "#/components/pert/inspector/mobile-inspector-sheet";
 import { TaskCardList } from "#/components/pert/list/task-card-list";
@@ -35,25 +32,17 @@ import { MatrixMobile } from "#/components/pert/matrix/matrix-mobile";
 import { MatrixView } from "#/components/pert/matrix/matrix-view";
 import { BranchBanner } from "#/components/pert/merge/branch-banner";
 import { MergeDrawer } from "#/components/pert/merge/merge-drawer";
-import { ProjectCalendarSheet } from "#/components/pert/project-calendar-sheet";
+import { OverviewView } from "#/components/pert/overview/overview-view";
 import { TimelineMobile } from "#/components/pert/timeline/timeline-mobile";
 import { TimelineView } from "#/components/pert/timeline/timeline-view";
 import { Button } from "#/components/ui/button";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "#/components/ui/dropdown-menu";
 import {
 	ResizableHandle,
 	ResizablePanel,
 	ResizablePanelGroup,
 } from "#/components/ui/resizable";
 import { Sheet, SheetContent } from "#/components/ui/sheet";
-import { BranchProjectDialog } from "#/components/workspace/branch-project-dialog";
 import { ProjectCommentsPanel } from "#/components/workspace/project-comments-panel";
-import { ShareProjectDialog } from "#/components/workspace/share-project-dialog";
 import { authClient } from "#/lib/auth-client";
 import { useOptionalRepo } from "#/lib/automerge/provider";
 import { usePresenceSelection } from "#/lib/automerge/use-presence-selection";
@@ -69,7 +58,6 @@ import { ensureContainerInterfaces } from "#/lib/pert/interfaces";
 import {
 	clearActiveProjectDoc,
 	clearLocallyCreated,
-	projectDocStore,
 	selectionStore,
 	selectTask,
 	setActiveProjectDoc,
@@ -80,24 +68,32 @@ import { useFullscreen } from "#/lib/use-fullscreen";
 import { useIsMobile, useMediaQuery } from "#/lib/use-media-query";
 import { cn } from "#/lib/utils";
 import { useViewMode } from "#/lib/view-mode";
-import { getProjectById, listProjects } from "#/server/workspace";
+import { getProjectById } from "#/server/workspace";
 
-export type ProjectView = "network" | "timeline" | "table" | "matrix";
+export type ProjectView =
+	| "overview"
+	| "network"
+	| "timeline"
+	| "table"
+	| "matrix";
 
 type ProjectSearch = { view?: ProjectView };
 
 // Plain validator (no Zod) so any unexpected query strings degrade to the
-// default Network view instead of throwing a router notFound. Returns only
+// default Overview view instead of throwing a router notFound. Returns only
 // the keys we care about; TanStack Router treats the result as canonical.
+//
+// `overview` is the default, so it's encoded as the *absence* of the param —
+// the validator returns {} for it. `network` is now explicit.
 //
 // Accepts the legacy `list` alias for backwards compatibility with any
 // shared links from Phase 5 — it maps to the new `table` view.
 function validateProjectSearch(raw: Record<string, unknown>): ProjectSearch {
 	const v = raw?.view;
+	if (v === "network") return { view: "network" };
 	if (v === "timeline") return { view: "timeline" };
 	if (v === "table" || v === "list") return { view: "table" };
 	if (v === "matrix") return { view: "matrix" };
-	if (v === "network") return { view: "network" };
 	return {};
 }
 
@@ -109,7 +105,7 @@ export const Route = createFileRoute("/_app/p/$projectId")({
 function ProjectCanvas() {
 	const { projectId } = Route.useParams();
 	const search = useSearch({ from: "/_app/p/$projectId" });
-	const view: ProjectView = search.view ?? "network";
+	const view: ProjectView = search.view ?? "overview";
 	const repo = useOptionalRepo();
 	const isMobile = useIsMobile();
 
@@ -228,6 +224,7 @@ const VIEW_TABS: Array<{
 	label: string;
 	Icon: typeof NetworkIcon;
 }> = [
+	{ id: "overview", label: "Overview", Icon: LayoutDashboardIcon },
 	{ id: "network", label: "Network", Icon: NetworkIcon },
 	{ id: "timeline", label: "Timeline", Icon: TimerIcon },
 	{ id: "table", label: "Table", Icon: ListIcon },
@@ -250,7 +247,7 @@ function ProjectViewHeader({
 		navigate({
 			to: "/p/$projectId",
 			params: { projectId },
-			search: { view: next === "network" ? undefined : next },
+			search: { view: next === "overview" ? undefined : next },
 			replace: true,
 		});
 	return (
@@ -282,10 +279,6 @@ function ProjectViewHeader({
 					/>
 				))}
 			</div>
-			<HeaderCalendarSheet projectId={projectId} />
-			<HeaderExportButton projectId={projectId} />
-			<HeaderShareButton projectId={projectId} />
-			<HeaderBranchMenu projectId={projectId} />
 			<Button
 				type="button"
 				size="sm"
@@ -304,132 +297,6 @@ function ProjectViewHeader({
 				{fullscreen ? "Exit" : "Fullscreen"}
 			</Button>
 		</header>
-	);
-}
-
-function HeaderCalendarSheet({ projectId }: { projectId: string }) {
-	const { doc, changeDoc, projectId: activeId } = useStore(projectDocStore);
-	if (!doc || !changeDoc || activeId !== projectId) return null;
-	return <ProjectCalendarSheet doc={doc} changeDoc={changeDoc} />;
-}
-
-function HeaderExportButton({ projectId }: { projectId: string }) {
-	const { doc, projectId: activeId } = useStore(projectDocStore);
-	if (!doc || activeId !== projectId) return null;
-	return <ExportProjectButton doc={doc} />;
-}
-
-function HeaderShareButton({ projectId }: { projectId: string }) {
-	const [open, setOpen] = useState(false);
-	return (
-		<>
-			<Button
-				type="button"
-				size="sm"
-				variant="ghost"
-				className="h-8 gap-1.5 text-xs"
-				onClick={() => setOpen(true)}
-				data-testid="project-share"
-				title="Share this project"
-			>
-				<Share2Icon className="size-3.5" />
-				Share
-			</Button>
-			<ShareProjectDialog
-				projectId={projectId}
-				open={open}
-				onOpenChange={setOpen}
-			/>
-		</>
-	);
-}
-
-// Branch / rename menu, plus the dialog state. The fork action needs the
-// project's title to seed a default branch name; we already load the
-// ProjectSummary down inside PertProjectPanel for the banner, but the menu
-// lives in the *header* (sibling of the panel), so we run our own thin query
-// here. Cheap and cached — both queries share the same key.
-function HeaderBranchMenu({ projectId }: { projectId: string }) {
-	const [forkOpen, setForkOpen] = useState(false);
-	const [renameOpen, setRenameOpen] = useState(false);
-	const { data: project } = useQuery({
-		queryKey: ["project", projectId],
-		queryFn: () => getProjectById({ data: { projectId } }),
-	});
-	// Count existing branches of *this* project in the workspace so the fork
-	// dialog can suggest a non-colliding default (Parent — branch 3 when 2
-	// siblings already exist). Reuses the same projects query the sidebar
-	// hydrates, so this is free.
-	const { data: workspaceProjects } = useQuery({
-		queryKey: ["projects", project?.workspaceId],
-		queryFn: () =>
-			listProjects({
-				data: project?.workspaceId ? { workspaceId: project.workspaceId } : {},
-			}),
-		enabled: !!project?.workspaceId,
-	});
-	const existingBranchCount =
-		workspaceProjects?.filter((p) => p.parentProjectId === projectId).length ??
-		0;
-
-	return (
-		<>
-			<DropdownMenu>
-				<DropdownMenuTrigger asChild>
-					<Button
-						type="button"
-						size="sm"
-						variant="ghost"
-						className="h-8 gap-1.5 text-xs"
-						data-testid="project-branch-menu"
-						title="Branch / rename"
-					>
-						<GitBranchIcon className="size-3.5" />
-						Branch
-					</Button>
-				</DropdownMenuTrigger>
-				<DropdownMenuContent align="end">
-					<DropdownMenuItem
-						onSelect={() => setForkOpen(true)}
-						data-testid="project-branch-action"
-						disabled={!project}
-					>
-						<GitBranchIcon className="size-3.5" />
-						Branch this plan
-					</DropdownMenuItem>
-					<DropdownMenuItem
-						onSelect={() => setRenameOpen(true)}
-						data-testid="project-rename-action"
-						disabled={!project}
-					>
-						<PencilIcon className="size-3.5" />
-						Rename / edit description
-					</DropdownMenuItem>
-				</DropdownMenuContent>
-			</DropdownMenu>
-			{project && forkOpen && (
-				<BranchProjectDialog
-					mode="fork"
-					open={forkOpen}
-					onOpenChange={setForkOpen}
-					parent={{ id: project.id, title: project.title }}
-					existingBranchCount={existingBranchCount}
-				/>
-			)}
-			{project && renameOpen && (
-				<BranchProjectDialog
-					mode="edit"
-					open={renameOpen}
-					onOpenChange={setRenameOpen}
-					project={{
-						id: project.id,
-						title: project.title,
-						description: project.description,
-						isBranch: project.parentProjectId != null,
-					}}
-				/>
-			)}
-		</>
 	);
 }
 
@@ -767,6 +634,11 @@ function MobileOrDesktopViews({
 	view: ProjectView;
 }) {
 	const isMobile = useIsMobile();
+	// Overview is a single responsive component — same on mobile and desktop.
+	if (view === "overview")
+		return (
+			<OverviewView projectId={projectId} doc={doc} changeDoc={changeDoc} />
+		);
 	if (isMobile) {
 		if (view === "table")
 			return <TaskCardList projectId={projectId} doc={doc} />;

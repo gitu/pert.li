@@ -1,19 +1,26 @@
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { GridIcon, ListIcon, NetworkIcon, TimerIcon } from "lucide-react";
+import {
+	GridIcon,
+	LayoutDashboardIcon,
+	ListIcon,
+	NetworkIcon,
+	TimerIcon,
+} from "lucide-react";
 import { cn } from "#/lib/utils";
 import type { ProjectView } from "#/routes/_app/p.$projectId";
 
-// Mobile bottom navigation — the phone-shell equivalent of the four
-// Network / Timeline / Table / Matrix view tabs in the project header.
-// Only renders when the active route is a project (no view tabs make sense
-// on the workspace home). Mirrors the desktop ViewTab logic: writing
-// `view=network` is encoded as the absence of the search param.
+// Mobile bottom navigation — the phone-shell equivalent of the
+// Overview / Network / Timeline / Table / Matrix view tabs in the project
+// header. Only renders when the active route is a project (no view tabs make
+// sense on the workspace home). Mirrors the desktop ViewTab logic: the default
+// `view=overview` is encoded as the absence of the search param.
 
 const VIEW_TABS: Array<{
 	id: ProjectView;
 	label: string;
 	Icon: typeof NetworkIcon;
 }> = [
+	{ id: "overview", label: "Overview", Icon: LayoutDashboardIcon },
 	{ id: "network", label: "Network", Icon: NetworkIcon },
 	{ id: "timeline", label: "Timeline", Icon: TimerIcon },
 	{ id: "table", label: "Table", Icon: ListIcon },
@@ -27,7 +34,7 @@ export function MobileBottomNav() {
 	const projectId = params.projectId;
 	if (!projectId) return null;
 
-	const active: ProjectView = search.view ?? "network";
+	const active: ProjectView = search.view ?? "overview";
 
 	return (
 		<nav
@@ -48,7 +55,7 @@ export function MobileBottomNav() {
 							navigate({
 								to: "/p/$projectId",
 								params: { projectId },
-								search: { view: tab.id === "network" ? undefined : tab.id },
+								search: { view: tab.id === "overview" ? undefined : tab.id },
 								replace: true,
 							})
 						}

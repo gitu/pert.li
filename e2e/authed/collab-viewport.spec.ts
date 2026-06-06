@@ -27,6 +27,12 @@ async function createProject(page: Page): Promise<string> {
 	await page.getByLabel("Title").fill(`Collab viewport ${Date.now()}`);
 	await page.getByRole("button", { name: "Create" }).click();
 	await page.waitForURL(/\/p\/[^/]+$/, { timeout: 10_000 });
+	// Overview is the default landing view; these tests exercise the canvas, so
+	// switch to the network view via the in-app tab (client-side nav keeps the
+	// just-created doc in memory — a full reload wouldn't re-materialize it
+	// under VITE_E2E_DISABLE_SYNC). Return the ?view=network URL for tab B.
+	await page.getByTestId("view-tab-network").click();
+	await page.locator(".react-flow__pane").waitFor({ timeout: 10_000 });
 	return page.url();
 }
 

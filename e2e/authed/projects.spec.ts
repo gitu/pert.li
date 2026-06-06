@@ -68,6 +68,11 @@ test.describe("Project creation", () => {
 		await page.getByRole("button", { name: "Create" }).click();
 		await page.waitForURL(/\/p\/[^/]+$/, { timeout: 10_000 });
 
+		// Overview is the default landing view (shows counts, not task titles);
+		// switch to the network canvas via the in-app tab (client-side nav keeps
+		// the freshly-seeded doc in memory) to assert a seeded task by title.
+		await page.getByTestId("view-tab-network").click();
+
 		// The sample doc's tasks land in the new project — assert one by title.
 		await expect(page.getByText("Integrate vendor SDK").first()).toBeVisible({
 			timeout: 10_000,
