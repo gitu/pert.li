@@ -97,6 +97,7 @@ import {
 	summarizeWorkPlan,
 	updateWorkPlanMutation,
 } from "#/lib/ai/work-plan-mutators";
+import type { ChatDockPendingPrompt } from "#/lib/chat-dock";
 import {
 	chatDock,
 	useChatDockMode,
@@ -269,6 +270,49 @@ type ChatThreadAPI = {
 	setInput(text: string): void;
 };
 
+// Routes a queued dock prompt (tutorial CTAs, "ask the assistant" shortcuts)
+// into the active ChatThread. The tricky case is a freshly-created scope — e.g.
+// navigating into a brand-new tutorial project — which arrives with no active
+// thread, hence no ChatThread mounted and no API to send through. We must NOT
+// consume (clear) the prompt until we actually have an API, or it's lost: create
+// a thread first and let the effect re-run once `activeThreadId` fills in (by
+// which point ChatThread has mounted and registered its API, since child mount
+// effects run before this parent effect). Extracted from the panel so the
+// empty-scope path is unit-testable without mounting the whole panel.
+export function usePendingPromptDispatch(params: {
+	pending: ChatDockPendingPrompt | null;
+	activeThreadId: string | null;
+	apiRef: { readonly current: ChatThreadAPI | null };
+	onCreateThread: () => void;
+}): void {
+	const { pending, activeThreadId, apiRef, onCreateThread } = params;
+	useEffect(() => {
+		if (!pending) return;
+		if (!activeThreadId) {
+			onCreateThread();
+			return; // don't consume yet — re-runs when activeThreadId fills in
+		}
+		const api = apiRef.current;
+		// API not yet registered. This is effectively unreachable while
+		// `activeThreadId` is truthy — ChatThread mounts in the same commit that
+		// sets it, and React runs child effects (its `registerAPI`) before this
+		// parent effect — but bail defensively rather than dereference null. The
+		// effect re-runs whenever `activeThreadId`/`pending` change.
+		if (!api) return;
+		// Consume only once we have an API, and act on the store's returned value
+		// rather than the closed-over `pending`. That makes this idempotent: a
+		// repeat invocation for the same commit (e.g. a StrictMode double-mount)
+		// gets null back and no-ops instead of sending the prompt twice.
+		const prompt = chatDock.consumePendingPrompt();
+		if (!prompt) return;
+		if (prompt.autoSend) {
+			api.sendMessage(prompt.text);
+		} else {
+			api.setInput(prompt.text);
+		}
+	}, [pending, activeThreadId, apiRef, onCreateThread]);
+}
+
 export function ChatPanel({
 	className,
 	endpoint = "/api/chat",
@@ -361,9 +405,11 @@ function BoundChatPanel({
 	scopeKey,
 	projectId,
 }: BoundChatPanelProps) {
-	// Thread index for the current scope. Seeded from localStorage on first
+	// Thread index for the current scope. Read from localStorage on first
 	// access; re-read whenever the scope changes (e.g. user opens a different
-	// project). The seed call guarantees `threads.length >= 1`.
+	// project). An empty scope is legitimate — `readThreadIndex` never auto-seeds
+	// a thread, so a brand-new project yields `activeThreadId: null` and the
+	// panel renders its empty state until a thread is created.
 	const [index, setIndex] = useState<ThreadIndex>(() =>
 		readThreadIndex(scopeKey),
 	);
@@ -945,17 +991,12 @@ function BoundChatPanel({
 	}, []);
 
 	const dockPending = useChatDockPendingPrompt();
-	useEffect(() => {
-		if (!dockPending) return;
-		chatDock.consumePendingPrompt();
-		const api = threadApiRef.current;
-		if (!api) return;
-		if (dockPending.autoSend) {
-			api.sendMessage(dockPending.text);
-		} else {
-			api.setInput(dockPending.text);
-		}
-	}, [dockPending]);
+	usePendingPromptDispatch({
+		pending: dockPending,
+		activeThreadId,
+		apiRef: threadApiRef,
+		onCreateThread,
+	});
 
 	return (
 		<div
