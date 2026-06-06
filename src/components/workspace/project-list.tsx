@@ -1,7 +1,27 @@
 import { Link } from "@tanstack/react-router";
-import { FileTextIcon, GitBranchIcon } from "lucide-react";
+import {
+	ArrowUpFromLineIcon,
+	FileTextIcon,
+	GitBranchIcon,
+	MoreHorizontalIcon,
+	PencilIcon,
+} from "lucide-react";
+import { useState } from "react";
+import { Button } from "#/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "#/components/ui/dropdown-menu";
 import { cn } from "#/lib/utils";
+import {
+	buildProjectTree,
+	type ProjectTreeNode,
+} from "#/lib/workspace/project-tree";
 import type { ProjectSummary } from "#/types/workspace";
+import { BranchProjectDialog } from "./branch-project-dialog";
+import { PromoteBranchDialog } from "./promote-branch-dialog";
 
 export type ProjectListProps = {
 	projects: ProjectSummary[];
@@ -10,70 +30,13 @@ export type ProjectListProps = {
 	onSelect?: (project: ProjectSummary) => void;
 };
 
-// Renders the workspace's project list with branches grouped under their
-// parent project. Branches whose parent isn't in the same list (archived,
-// in a different workspace, or just absent) bubble up to root level so they
-// stay reachable instead of disappearing.
-
-type Group = {
-	root: ProjectSummary;
-	branches: ProjectSummary[];
-};
-
-function groupByParent(projects: ProjectSummary[]): Group[] {
-	const byId = new Map<string, ProjectSummary>();
-	for (const p of projects) byId.set(p.id, p);
-	// Walk parent links up to the ultimate root in the list (handles
-	// "branch of a branch": p2 → p1 → p0 collapses to p0). Stops if the
-	// chain leaves the list (parent archived / different workspace), in
-	// which case the deepest still-visible ancestor becomes the bucket and
-	// the original keeps its branch glyph via the "orphan-branch" path.
-	const rootIdFor = (p: ProjectSummary): string => {
-		const seen = new Set<string>();
-		let current: ProjectSummary | undefined = p;
-		while (current?.parentProjectId && byId.has(current.parentProjectId)) {
-			if (seen.has(current.id)) break; // pathological cycle guard
-			seen.add(current.id);
-			current = byId.get(current.parentProjectId);
-		}
-		return current?.id ?? p.id;
-	};
-
-	const groups = new Map<string, Group>();
-	for (const p of projects) {
-		if (!p.parentProjectId || !byId.has(p.parentProjectId)) {
-			if (!groups.has(p.id)) groups.set(p.id, { root: p, branches: [] });
-		}
-	}
-	for (const p of projects) {
-		if (!p.parentProjectId) continue;
-		const rootId = rootIdFor(p);
-		if (rootId === p.id) continue;
-		const g = groups.get(rootId);
-		if (g) g.branches.push(p);
-	}
-	// Sort branches deterministically — oldest fork first so the order doesn't
-	// shuffle when a new branch lands.
-	for (const g of groups.values()) {
-		g.branches.sort((a, b) => {
-			const ba = a.branchedAt ?? a.createdAt;
-			const bb = b.branchedAt ?? b.createdAt;
-			return ba.localeCompare(bb);
-		});
-	}
-	// Preserve the input ordering of roots (the caller sorts by createdAt
-	// already; respect that).
-	const seen = new Set<string>();
-	const out: Group[] = [];
-	for (const p of projects) {
-		const g = groups.get(p.id);
-		if (g && !seen.has(p.id)) {
-			seen.add(p.id);
-			out.push(g);
-		}
-	}
-	return out;
-}
+// Renders the workspace's project list as a recursive branch tree. Branches
+// nest under their parent to arbitrary depth (a branch of a branch sits one
+// level deeper, not flattened to the root). Branches whose parent isn't in the
+// same list (archived, in a different workspace, or just absent) bubble up to
+// root level — flagged as orphan branches — so they stay reachable instead of
+// disappearing. Each row carries a ⋯ menu (Rename, and Promote for branches),
+// matching the workspace-home cards.
 
 export function ProjectList({
 	projects,
@@ -88,37 +51,60 @@ export function ProjectList({
 			</div>
 		);
 	}
-	const groups = groupByParent(projects);
+	const tree = buildProjectTree(projects);
 	return (
 		<ul className="flex flex-col gap-0.5 px-1.5 py-1 text-sm">
-			{groups.map((g) => (
-				<li key={g.root.id} className="flex flex-col">
-					<ProjectRow
-						project={g.root}
-						active={g.root.id === activeProjectId}
-						onSelect={onSelect}
-						kind={g.root.parentProjectId ? "orphan-branch" : "root"}
-					/>
-					{g.branches.length > 0 && (
-						<ul
-							className="ml-2 mt-0.5 border-l border-border pl-1"
-							data-testid={`project-branches-${g.root.id}`}
-						>
-							{g.branches.map((b) => (
-								<li key={b.id}>
-									<ProjectRow
-										project={b}
-										active={b.id === activeProjectId}
-										onSelect={onSelect}
-										kind="branch"
-									/>
-								</li>
-							))}
-						</ul>
-					)}
-				</li>
+			{tree.map((node) => (
+				<ProjectNode
+					key={node.project.id}
+					node={node}
+					activeProjectId={activeProjectId}
+					onSelect={onSelect}
+				/>
 			))}
 		</ul>
+	);
+}
+
+function ProjectNode({
+	node,
+	activeProjectId,
+	onSelect,
+}: {
+	node: ProjectTreeNode;
+	activeProjectId?: string;
+	onSelect?: (project: ProjectSummary) => void;
+}) {
+	const { project, children, isOrphanBranch } = node;
+	const kind = !project.parentProjectId
+		? "root"
+		: isOrphanBranch
+			? "orphan-branch"
+			: "branch";
+	return (
+		<li className="flex flex-col">
+			<ProjectRow
+				project={project}
+				active={project.id === activeProjectId}
+				onSelect={onSelect}
+				kind={kind}
+			/>
+			{children.length > 0 && (
+				<ul
+					className="ml-2 mt-0.5 border-l border-border pl-1"
+					data-testid={`project-branches-${project.id}`}
+				>
+					{children.map((child) => (
+						<ProjectNode
+							key={child.project.id}
+							node={child}
+							activeProjectId={activeProjectId}
+							onSelect={onSelect}
+						/>
+					))}
+				</ul>
+			)}
+		</li>
 	);
 }
 
@@ -133,48 +119,116 @@ function ProjectRow({
 	onSelect?: (project: ProjectSummary) => void;
 	kind: "root" | "branch" | "orphan-branch";
 }) {
+	const [renameOpen, setRenameOpen] = useState(false);
+	const [promoteOpen, setPromoteOpen] = useState(false);
 	const isBranch = kind !== "root";
+	// Offline-created rows (still pending server registration) carry an empty
+	// creator and can't be edited yet — same "safe to edit" signal the home
+	// cards use. The menu appears on its own once the reconcile loop registers.
+	const canEdit = project.createdBy !== "";
+
 	return (
-		<Link
-			to="/p/$projectId"
-			params={{ projectId: project.id }}
-			onClick={() => onSelect?.(project)}
-			data-testid={`project-row-${project.id}`}
-			data-kind={kind}
+		<div
 			className={cn(
-				"flex items-start gap-2 rounded-md px-2 py-1.5 transition-colors",
+				"group flex items-stretch rounded-md transition-colors",
 				active
 					? "bg-accent text-accent-foreground"
 					: "hover:bg-accent/60 hover:text-accent-foreground",
 			)}
 		>
-			{isBranch ? (
-				<GitBranchIcon
-					className="mt-0.5 size-3.5 shrink-0 text-primary"
-					aria-hidden
-				/>
-			) : (
-				<FileTextIcon
-					className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
-					aria-hidden
+			<Link
+				to="/p/$projectId"
+				params={{ projectId: project.id }}
+				onClick={() => onSelect?.(project)}
+				data-testid={`project-row-${project.id}`}
+				data-kind={kind}
+				className="flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-1.5"
+			>
+				{isBranch ? (
+					<GitBranchIcon
+						className="mt-0.5 size-3.5 shrink-0 text-primary"
+						aria-hidden
+					/>
+				) : (
+					<FileTextIcon
+						className="mt-0.5 size-3.5 shrink-0 text-muted-foreground"
+						aria-hidden
+					/>
+				)}
+				<div className="min-w-0 flex-1">
+					<div className="truncate">{project.title}</div>
+					{project.description && (
+						<div
+							className="truncate text-[10px] text-muted-foreground"
+							title={project.description}
+						>
+							{project.description}
+						</div>
+					)}
+					{kind === "orphan-branch" && (
+						<div className="text-[10px] italic text-muted-foreground">
+							branch · parent unavailable
+						</div>
+					)}
+				</div>
+			</Link>
+			{canEdit && (
+				<div className="flex items-center pr-1">
+					<DropdownMenu>
+						<DropdownMenuTrigger asChild>
+							<Button
+								type="button"
+								size="icon"
+								variant="ghost"
+								className="size-6 shrink-0 text-muted-foreground opacity-70 transition-opacity hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+								data-testid={`project-row-menu-${project.id}`}
+								title="Project options"
+							>
+								<MoreHorizontalIcon className="size-3.5" />
+								<span className="sr-only">Project options</span>
+							</Button>
+						</DropdownMenuTrigger>
+						<DropdownMenuContent align="end">
+							<DropdownMenuItem
+								onSelect={() => setRenameOpen(true)}
+								data-testid={`project-row-rename-action-${project.id}`}
+							>
+								<PencilIcon className="size-3.5" />
+								Rename / edit description
+							</DropdownMenuItem>
+							{isBranch && (
+								<DropdownMenuItem
+									onSelect={() => setPromoteOpen(true)}
+									data-testid={`project-row-promote-action-${project.id}`}
+								>
+									<ArrowUpFromLineIcon className="size-3.5" />
+									Promote to standalone plan
+								</DropdownMenuItem>
+							)}
+						</DropdownMenuContent>
+					</DropdownMenu>
+				</div>
+			)}
+			{renameOpen && (
+				<BranchProjectDialog
+					mode="edit"
+					open={renameOpen}
+					onOpenChange={setRenameOpen}
+					project={{
+						id: project.id,
+						title: project.title,
+						description: project.description,
+						isBranch,
+					}}
 				/>
 			)}
-			<div className="min-w-0 flex-1">
-				<div className="truncate">{project.title}</div>
-				{project.description && (
-					<div
-						className="truncate text-[10px] text-muted-foreground"
-						title={project.description}
-					>
-						{project.description}
-					</div>
-				)}
-				{kind === "orphan-branch" && (
-					<div className="text-[10px] italic text-muted-foreground">
-						branch · parent unavailable
-					</div>
-				)}
-			</div>
-		</Link>
+			{promoteOpen && (
+				<PromoteBranchDialog
+					open={promoteOpen}
+					onOpenChange={setPromoteOpen}
+					project={{ id: project.id, title: project.title }}
+				/>
+			)}
+		</div>
 	);
 }

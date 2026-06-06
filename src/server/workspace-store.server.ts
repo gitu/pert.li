@@ -517,6 +517,64 @@ export async function closeBranchProject(opts: {
 		.where(eq(project.id, opts.projectId));
 }
 
+// Promote a branch into a standalone root project: clear its lineage so it no
+// longer nests under (or merges into) a parent. Any sub-branches of this
+// project keep pointing at it, so they ride along under the now-root project.
+// Stamps a "promoted" system marker in the doc history for parity with the
+// branch-created / branched-out / merge-applied markers.
+export async function promoteBranchProject(opts: {
+	projectId: string;
+}): Promise<void> {
+	const rows = await db
+		.select({
+			url: project.automergeDocUrl,
+			parentProjectId: project.parentProjectId,
+		})
+		.from(project)
+		.where(eq(project.id, opts.projectId))
+		.limit(1);
+	if (rows.length === 0) throw new Error("Project not found");
+	const formerParentId = rows[0].parentProjectId;
+	// Defense-in-depth: the promoteBranch server fn already rejects roots, but
+	// guard here too so a direct call can't null an already-root row or stamp a
+	// misleading "promoted" marker.
+	if (!formerParentId) throw new Error("Only branches can be promoted");
+
+	await db
+		.update(project)
+		.set({
+			parentProjectId: null,
+			branchedFromHeads: null,
+			branchedAt: null,
+		})
+		.where(eq(project.id, opts.projectId));
+
+	// History marker so the timeline records the detach. Mutate something inside
+	// the callback — Automerge skips no-op changes — by appending to a
+	// `meta.promotedAt` log keyed by the former parent id.
+	const repo = getServerRepo();
+	const handle = await repo.find<PertDoc>(rows[0].url as AutomergeUrl);
+	changeWith(
+		handle,
+		"system",
+		(d) => {
+			if (!d.meta) d.meta = {};
+			const meta = d.meta as Record<string, unknown>;
+			let log = meta.promotedAt as Record<string, number> | undefined;
+			if (!log) {
+				log = {};
+				meta.promotedAt = log;
+			}
+			log[formerParentId] = Date.now();
+		},
+		{
+			kind: "promoted",
+			payload: { formerParentId },
+		},
+	);
+	await repo.flush();
+}
+
 export async function getProjectForUser(opts: {
 	projectId: string;
 	userId: string;

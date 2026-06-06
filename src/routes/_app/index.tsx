@@ -2,7 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
 	ArrowRightIcon,
+	ArrowUpFromLineIcon,
 	FolderPlusIcon,
+	GitBranchIcon,
 	MoreHorizontalIcon,
 	PencilIcon,
 	UploadIcon,
@@ -20,6 +22,7 @@ import { BranchProjectDialog } from "#/components/workspace/branch-project-dialo
 import { CreateProjectDialog } from "#/components/workspace/create-project-dialog";
 import { ImportProjectDialog } from "#/components/workspace/import-project-dialog";
 import { InviteMemberDialog } from "#/components/workspace/invite-member-dialog";
+import { PromoteBranchDialog } from "#/components/workspace/promote-branch-dialog";
 import { TutorialCard } from "#/components/workspace/tutorial-card";
 import { useActiveWorkspaceId } from "#/lib/active-workspace";
 import { useOptionalRepo } from "#/lib/automerge/provider";
@@ -34,6 +37,11 @@ import {
 import { useMergedProjects } from "#/lib/sync/merge-projects";
 import { seedSampleProject } from "#/lib/sync/seed-sample-projects";
 import { useSeedSampleProjects } from "#/lib/sync/use-seed-sample-projects";
+import { cn } from "#/lib/utils";
+import {
+	buildProjectTree,
+	type ProjectTreeNode,
+} from "#/lib/workspace/project-tree";
 import { listMyWorkspaces, listProjects } from "#/server/workspace.ts";
 import type { ProjectSummary } from "#/types/workspace";
 
@@ -213,11 +221,7 @@ function WorkspaceHome() {
 						No projects yet — create your first one to get going.
 					</div>
 				) : (
-					<ul className="grid gap-3">
-						{projects.map((project) => (
-							<ProjectCard key={project.id} project={project} />
-						))}
-					</ul>
+					<ProjectCardTree nodes={buildProjectTree(projects)} />
 				)}
 			</section>
 
@@ -232,8 +236,50 @@ function WorkspaceHome() {
 	);
 }
 
-function ProjectCard({ project }: { project: ProjectSummary }) {
+// Renders the branch tree as nested cards: each branch indents under its parent
+// with a left border, recursively for branch-of-branch. Mirrors the sidebar's
+// nesting while keeping the home page's richer card layout.
+function ProjectCardTree({
+	nodes,
+	depth = 0,
+}: {
+	nodes: ProjectTreeNode[];
+	depth?: number;
+}) {
+	return (
+		<ul
+			className={cn(
+				"grid gap-3",
+				depth > 0 && "ml-3 border-l border-border pl-3",
+			)}
+			data-testid={depth === 0 ? "home-project-list" : undefined}
+		>
+			{nodes.map((node) => (
+				<li key={node.project.id} className="grid gap-3">
+					<ProjectCard
+						project={node.project}
+						isBranch={node.project.parentProjectId != null}
+					/>
+					{node.children.length > 0 && (
+						<div data-testid={`home-project-branches-${node.project.id}`}>
+							<ProjectCardTree nodes={node.children} depth={depth + 1} />
+						</div>
+					)}
+				</li>
+			))}
+		</ul>
+	);
+}
+
+function ProjectCard({
+	project,
+	isBranch,
+}: {
+	project: ProjectSummary;
+	isBranch: boolean;
+}) {
 	const [renameOpen, setRenameOpen] = useState(false);
+	const [promoteOpen, setPromoteOpen] = useState(false);
 	// Offline-created projects (still in the local pending queue, not yet
 	// registered server-side) surface with an empty `createdBy` — editing them
 	// would hit `updateProjectMeta` before the row exists. Real server rows
@@ -242,21 +288,32 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
 	const canEdit = project.createdBy !== "";
 
 	return (
-		<li className="flex min-w-0 items-center gap-2 rounded-lg border bg-card p-4 transition-colors hover:bg-accent/30">
+		<div
+			className="flex min-w-0 items-center gap-2 rounded-lg border bg-card p-4 transition-colors hover:bg-accent/30"
+			data-testid={`project-card-${project.id}`}
+		>
 			<Link
 				to="/p/$projectId"
 				params={{ projectId: project.id }}
 				className="flex min-w-0 flex-1 items-center justify-between gap-4"
 			>
-				<div className="min-w-0">
-					<div className="truncate font-medium">{project.title}</div>
-					{project.description ? (
-						<div className="truncate text-xs text-muted-foreground">
-							{project.description}
+				<div className="flex min-w-0 items-start gap-2">
+					{isBranch && (
+						<GitBranchIcon
+							className="mt-0.5 size-4 shrink-0 text-primary"
+							aria-hidden
+						/>
+					)}
+					<div className="min-w-0">
+						<div className="truncate font-medium">{project.title}</div>
+						{project.description ? (
+							<div className="truncate text-xs text-muted-foreground">
+								{project.description}
+							</div>
+						) : null}
+						<div className="text-xs text-muted-foreground">
+							Created {new Date(project.createdAt).toLocaleDateString()}
 						</div>
-					) : null}
-					<div className="text-xs text-muted-foreground">
-						Created {new Date(project.createdAt).toLocaleDateString()}
 					</div>
 				</div>
 				<ArrowRightIcon className="size-4 shrink-0 text-muted-foreground" />
@@ -269,8 +326,8 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
 							size="icon"
 							variant="ghost"
 							className="size-8 shrink-0 text-muted-foreground"
-							data-testid="project-card-menu"
-							title="Rename / edit description"
+							data-testid={`project-card-menu-${project.id}`}
+							title="Project options"
 						>
 							<MoreHorizontalIcon className="size-4" />
 							<span className="sr-only">Project options</span>
@@ -279,11 +336,20 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
 					<DropdownMenuContent align="end">
 						<DropdownMenuItem
 							onSelect={() => setRenameOpen(true)}
-							data-testid="project-card-rename-action"
+							data-testid={`project-card-rename-action-${project.id}`}
 						>
 							<PencilIcon className="size-3.5" />
 							Rename / edit description
 						</DropdownMenuItem>
+						{isBranch && (
+							<DropdownMenuItem
+								onSelect={() => setPromoteOpen(true)}
+								data-testid={`project-card-promote-action-${project.id}`}
+							>
+								<ArrowUpFromLineIcon className="size-3.5" />
+								Promote to standalone plan
+							</DropdownMenuItem>
+						)}
 					</DropdownMenuContent>
 				</DropdownMenu>
 			)}
@@ -296,10 +362,17 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
 						id: project.id,
 						title: project.title,
 						description: project.description,
-						isBranch: project.parentProjectId != null,
+						isBranch,
 					}}
 				/>
 			)}
-		</li>
+			{promoteOpen && (
+				<PromoteBranchDialog
+					open={promoteOpen}
+					onOpenChange={setPromoteOpen}
+					project={{ id: project.id, title: project.title }}
+				/>
+			)}
+		</div>
 	);
 }
