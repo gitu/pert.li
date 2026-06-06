@@ -64,8 +64,12 @@ test("inside a project, the bottom tab nav switches the view search param", asyn
 	await page.getByTestId("mobile-view-tab-matrix").click();
 	await expect(page).toHaveURL(/[?&]view=matrix/);
 
-	// Switching back to "network" drops the search param entirely (default).
+	// Network is now an explicit param (Overview is the default view).
 	await page.getByTestId("mobile-view-tab-network").click();
+	await expect(page).toHaveURL(/[?&]view=network/);
+
+	// Switching to "overview" drops the search param entirely (the default).
+	await page.getByTestId("mobile-view-tab-overview").click();
 	await expect(page).not.toHaveURL(/[?&]view=/);
 
 	// No horizontal scroll on the project shell either.

@@ -35,7 +35,9 @@ async function createProject(
 async function openBranchMenu(
 	page: import("@playwright/test").Page,
 ): Promise<void> {
-	await page.getByTestId("project-branch-menu").click();
+	// Branch / rename live in the Overview tab's project actions (the default
+	// landing view), not the header toolbar anymore.
+	await page.getByTestId("overview-branch-menu").click();
 }
 
 function escapeRegex(s: string): string {
@@ -52,7 +54,7 @@ test.describe("Branch & merge", () => {
 
 		// Open the branch menu and trigger the fork dialog.
 		await openBranchMenu(page);
-		await page.getByTestId("project-branch-action").click();
+		await page.getByTestId("overview-branch-action").click();
 		const dialog = page.getByTestId("branch-project-dialog");
 		await expect(dialog).toBeVisible();
 		const branchTitle = `What-if Phase 2 ${Date.now()}`;
@@ -96,7 +98,7 @@ test.describe("Branch & merge", () => {
 		await createProject(page, title);
 
 		await openBranchMenu(page);
-		await page.getByTestId("project-rename-action").click();
+		await page.getByTestId("overview-rename-action").click();
 		const renameDialog = page.getByTestId("branch-project-dialog");
 		await expect(renameDialog).toBeVisible();
 		const newTitle = `${title} (renamed)`;
