@@ -1,4 +1,5 @@
 import { AlertCircleIcon, Loader2Icon, SparklesIcon } from "lucide-react";
+import { Streamdown } from "streamdown";
 import { Button } from "#/components/ui/button";
 
 // Discriminated state for the on-demand AI summary. The container owns the
@@ -66,8 +67,13 @@ export function OverviewSummaryCard({
 					</p>
 				)}
 				{state.status === "done" && (
-					<div className="whitespace-pre-wrap leading-relaxed text-foreground">
-						{state.text}
+					<div className="prose prose-sm prose-zinc dark:prose-invert max-w-none leading-relaxed text-foreground [&_ol]:my-2 [&_p]:my-2 [&_ul]:my-2">
+						{/* Render the summary as markdown, but strip links: the AI
+						summary describes the in-app plan, so any anchor would be
+						noise — unwrapDisallowed keeps the link text as plain text. */}
+						<Streamdown disallowedElements={["a"]} unwrapDisallowed>
+							{state.text}
+						</Streamdown>
 					</div>
 				)}
 			</div>
