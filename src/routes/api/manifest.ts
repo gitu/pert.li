@@ -13,9 +13,12 @@ export const Route = createFileRoute("/api/manifest")({
 				new Response(
 					JSON.stringify(buildManifest(resolveAppConfig(process.env))),
 					{
+					{
 						headers: {
 							"content-type": "application/manifest+json; charset=utf-8",
+							"cache-control": "no-store",
 						},
+					},
 					},
 				),
 		},
