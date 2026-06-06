@@ -25,6 +25,8 @@ async function createProject(
 		.getByRole("banner")
 		.getByRole("button", { name: "New project" })
 		.click();
+	// Wizard step 1: pick the blank starting point to reveal the title field.
+	await page.getByTestId("create-choice-empty").click();
 	await page.getByLabel("Title").fill(title);
 	await page.getByRole("button", { name: "Create" }).click();
 	await page.waitForURL(/\/p\/[^/]+$/, { timeout: 10_000 });

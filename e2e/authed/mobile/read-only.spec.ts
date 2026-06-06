@@ -10,6 +10,7 @@ test("mobile shell starts in read-only mode and the pencil toggles it", async ({
 	await page.goto("/");
 	await page.getByTestId("mobile-topbar-menu").click();
 	await page.getByRole("button", { name: "New project" }).click();
+	await page.getByTestId("create-choice-empty").click();
 	await page.getByLabel("Title").fill(`Read-only e2e ${Date.now()}`);
 	await page.getByRole("button", { name: "Create" }).click();
 	await page.waitForURL(/\/p\/[^/]+(\?|$)/, { timeout: 10_000 });

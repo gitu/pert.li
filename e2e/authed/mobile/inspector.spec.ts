@@ -14,6 +14,7 @@ test("project on mobile shows bottom nav and not the desktop fullscreen header",
 	await page.goto("/");
 	await page.getByTestId("mobile-topbar-menu").click();
 	await page.getByRole("button", { name: "New project" }).click();
+	await page.getByTestId("create-choice-empty").click();
 
 	const title = `Inspector wiring e2e ${Date.now()}`;
 	await page.getByLabel("Title").fill(title);

@@ -23,6 +23,7 @@ test("project page keeps the desktop view tabs and fullscreen button", async ({
 		.getByRole("banner")
 		.getByRole("button", { name: "New project" })
 		.click();
+	await page.getByTestId("create-choice-empty").click();
 	await page.getByLabel("Title").fill(`Desktop unchanged ${Date.now()}`);
 	await page.getByRole("button", { name: "Create" }).click();
 	await page.waitForURL(/\/p\/[^/]+(\?|$)/, { timeout: 10_000 });

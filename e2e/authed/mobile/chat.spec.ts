@@ -20,6 +20,7 @@ test("topbar chat icon opens the chat sheet without a pin control", async ({
 	await expect(
 		page.getByRole("heading", { name: "New project" }),
 	).toBeVisible();
+	await page.getByTestId("create-choice-empty").click();
 	const title = `E2E mobile chat ${Date.now()}`;
 	await page.getByLabel("Title").fill(title);
 	await page.getByRole("button", { name: "Create" }).click();
