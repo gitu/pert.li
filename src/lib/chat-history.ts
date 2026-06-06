@@ -126,6 +126,36 @@ export function writeThreadIndex(scopeKey: string, index: ThreadIndex): void {
 	safeSet(indexStorageKey(scopeKey), JSON.stringify(index));
 }
 
+// Ensures a thread with the given id/title exists in the scope and makes it the
+// active one, persisting the result. Used to route a deep-link into a *single*
+// stable thread (e.g. the tutorial CTAs, which must always land in one shared
+// "Tutorial" chat rather than spawning a fresh thread on every click). An
+// existing thread with the same id is kept as-is (title and transcript
+// untouched) and simply re-activated. Returns the updated index. No-op on the
+// server, where there's no localStorage to read.
+export function ensureActiveThread(
+	scopeKey: string,
+	thread: { id: string; title: string },
+): ThreadIndex {
+	const index = readThreadIndex(scopeKey);
+	const exists = index.threads.some((t) => t.id === thread.id);
+	const now = Date.now();
+	const threads = exists
+		? index.threads
+		: [
+				...index.threads,
+				{
+					id: thread.id,
+					title: thread.title,
+					createdAt: now,
+					updatedAt: now,
+				},
+			];
+	const next: ThreadIndex = { activeThreadId: thread.id, threads };
+	writeThreadIndex(scopeKey, next);
+	return next;
+}
+
 export function readThreadMessages(
 	threadId: string,
 ): ChatMessagesSnapshot | null {

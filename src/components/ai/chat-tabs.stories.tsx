@@ -79,6 +79,22 @@ export const SeveralThreads: Story = {
 
 export const ManyThreadsScroll: Story = {
 	args: { threads: manyThreads, activeThreadId: "t1" },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// Regression: with many threads the tab strip scrolls horizontally, but the
+		// "new chat" button must stay pinned outside the scroll area and remain
+		// clickable — it used to get pushed off the right edge.
+		const newButton = await canvas.findByTestId("chat-tab-new");
+		expect(newButton).toBeVisible();
+		const tabStrip = await canvas.findByTestId("chat-tabs");
+		// The button lives outside the scrolling tab list, not within it.
+		expect(tabStrip.contains(newButton)).toBe(false);
+		// Its right edge sits inside the panel rather than clipped past it.
+		const stage = tabStrip.closest("div.rounded-md") ?? canvasElement;
+		expect(newButton.getBoundingClientRect().right).toBeLessThanOrEqual(
+			stage.getBoundingClientRect().right + 1,
+		);
+	},
 };
 
 export const CreateFiresOnPlusClick: Story = {
