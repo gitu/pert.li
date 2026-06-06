@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Manrope:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
 @import 'tailwindcss';
 @plugin '@tailwindcss/typography';
 
@@ -7,26 +7,6 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --sea-ink: #173a40;
-  --sea-ink-soft: #416166;
-  --lagoon: #4fb8b2;
-  --lagoon-deep: #328f97;
-  --palm: #2f6a4a;
-  --sand: #e7f0e8;
-  --foam: #f3faf5;
-  --surface: rgba(255, 255, 255, 0.74);
-  --surface-strong: rgba(255, 255, 255, 0.9);
-  --line: rgba(23, 58, 64, 0.14);
-  --inset-glint: rgba(255, 255, 255, 0.82);
-  --kicker: rgba(47, 106, 74, 0.9);
-  --bg-base: #e7f3ec;
-  --header-bg: rgba(251, 255, 248, 0.84);
-  --chip-bg: rgba(255, 255, 255, 0.8);
-  --chip-line: rgba(47, 106, 74, 0.18);
-  --link-bg-hover: rgba(255, 255, 255, 0.9);
-  --hero-a: rgba(79, 184, 178, 0.36);
-  --hero-b: rgba(47, 106, 74, 0.2);
-
   --background: oklch(1 0 0);
   --foreground: oklch(0.141 0.005 285.823);
   --card: oklch(1 0 0);
@@ -45,7 +25,14 @@
   --destructive-foreground: oklch(0.577 0.245 27.325);
   --border: oklch(0.92 0.004 286.32);
   --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.871 0.006 286.286);
+
+  /* Brand accent — a single, restrained muted teal (~#2f8f8a). The only
+   * chromatic color in an otherwise neutral zinc system: links, focus
+   * rings, and selected/active states. Primary stays near-black. */
+  --brand: oklch(0.58 0.072 192);
+  --brand-foreground: oklch(0.985 0 0);
+  --ring: var(--brand);
+
   --chart-1: oklch(0.646 0.222 41.116);
   --chart-2: oklch(0.6 0.118 184.704);
   --chart-3: oklch(0.398 0.07 227.392);
@@ -59,30 +46,10 @@
   --sidebar-accent: oklch(0.967 0.001 286.375);
   --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
   --sidebar-border: oklch(0.92 0.004 286.32);
-  --sidebar-ring: oklch(0.871 0.006 286.286);
+  --sidebar-ring: var(--brand);
 }
 
 .dark {
-  --sea-ink: #d7ece8;
-  --sea-ink-soft: #afcdc8;
-  --lagoon: #60d7cf;
-  --lagoon-deep: #8de5db;
-  --palm: #6ec89a;
-  --sand: #0f1a1e;
-  --foam: #101d22;
-  --surface: rgba(16, 30, 34, 0.8);
-  --surface-strong: rgba(15, 27, 31, 0.92);
-  --line: rgba(141, 229, 219, 0.18);
-  --inset-glint: rgba(194, 247, 238, 0.14);
-  --kicker: #b8efe5;
-  --bg-base: #0a1418;
-  --header-bg: rgba(10, 20, 24, 0.8);
-  --chip-bg: rgba(13, 28, 32, 0.9);
-  --chip-line: rgba(141, 229, 219, 0.24);
-  --link-bg-hover: rgba(24, 44, 49, 0.8);
-  --hero-a: rgba(96, 215, 207, 0.18);
-  --hero-b: rgba(110, 200, 154, 0.12);
-
   --background: oklch(0.141 0.005 285.823);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.141 0.005 285.823);
@@ -101,7 +68,12 @@
   --destructive-foreground: oklch(0.637 0.237 25.331);
   --border: oklch(0.274 0.006 286.033);
   --input: oklch(0.274 0.006 286.033);
-  --ring: oklch(0.442 0.017 285.786);
+
+  /* Brand reads a touch brighter on dark surfaces so it keeps contrast. */
+  --brand: oklch(0.72 0.09 192);
+  --brand-foreground: oklch(0.21 0.006 285.885);
+  --ring: var(--brand);
+
   --chart-1: oklch(0.488 0.243 264.376);
   --chart-2: oklch(0.696 0.17 162.48);
   --chart-3: oklch(0.769 0.188 70.08);
@@ -114,7 +86,7 @@
   --sidebar-accent: oklch(0.274 0.006 286.033);
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.274 0.006 286.033);
-  --sidebar-ring: oklch(0.442 0.017 285.786);
+  --sidebar-ring: var(--brand);
 }
 
 @theme inline {
@@ -133,6 +105,8 @@
   --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
@@ -165,61 +139,15 @@ body,
 
 body {
   margin: 0;
-  color: var(--sea-ink);
   font-family: var(--font-sans);
-  background-color: var(--bg-base);
-  background:
-    radial-gradient(1100px 620px at -8% -10%, var(--hero-a), transparent 58%),
-    radial-gradient(1050px 620px at 112% -12%, var(--hero-b), transparent 62%),
-    radial-gradient(720px 380px at 50% 115%, rgba(79, 184, 178, 0.1), transparent 68%),
-    linear-gradient(180deg, color-mix(in oklab, var(--sand) 68%, white) 0%, var(--foam) 44%, var(--bg-base) 100%);
-  overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: -1;
-  opacity: 0.28;
-  background:
-    radial-gradient(circle at 20% 15%, rgba(255, 255, 255, 0.8), transparent 34%),
-    radial-gradient(circle at 78% 26%, rgba(79, 184, 178, 0.2), transparent 42%),
-    radial-gradient(circle at 42% 82%, rgba(47, 106, 74, 0.14), transparent 36%);
-}
-
-body::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: -1;
-  opacity: 0.14;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
-  background-size: 28px 28px;
-  mask-image: radial-gradient(circle at 50% 30%, black, transparent 78%);
-}
-
-a {
-  color: var(--lagoon-deep);
-  text-decoration-color: rgba(50, 143, 151, 0.4);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
-}
-
-a:hover {
-  color: #246f76;
-}
-
 code {
   font-size: 0.9em;
-  border: 1px solid var(--line);
-  background: color-mix(in oklab, var(--surface-strong) 82%, white 18%);
+  border: 1px solid var(--border);
+  background: var(--muted);
   border-radius: 7px;
   padding: 2px 7px;
 }
@@ -233,107 +161,15 @@ pre code {
   color: inherit;
 }
 
-.prose pre {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: #1d2e45;
-  color: #e8efff;
-}
-
 .page-wrap {
   width: min(1080px, calc(100% - 2rem));
   margin-inline: auto;
 }
 
-.display-title {
-  font-family: 'Fraunces', Georgia, serif;
-}
-
-.island-shell {
-  border: 1px solid var(--line);
-  background: linear-gradient(165deg, var(--surface-strong), var(--surface));
-  box-shadow:
-    0 1px 0 var(--inset-glint) inset,
-    0 22px 44px rgba(30, 90, 72, 0.1),
-    0 6px 18px rgba(23, 58, 64, 0.08);
-  backdrop-filter: blur(4px);
-}
-
-.feature-card {
-  background: linear-gradient(165deg, color-mix(in oklab, var(--surface-strong) 93%, white 7%), var(--surface));
-  box-shadow:
-    0 1px 0 var(--inset-glint) inset,
-    0 18px 34px rgba(30, 90, 72, 0.1),
-    0 4px 14px rgba(23, 58, 64, 0.06);
-}
-
-.feature-card:hover {
-  transform: translateY(-2px);
-  border-color: color-mix(in oklab, var(--lagoon-deep) 35%, var(--line));
-}
-
 button,
-.island-shell,
 a {
   transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease,
     transform 180ms ease;
-}
-
-.island-kicker {
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  font-weight: 700;
-  font-size: 0.69rem;
-  color: var(--kicker);
-}
-
-.nav-link {
-  position: relative;
-  text-decoration: none;
-  color: var(--sea-ink-soft);
-}
-
-.nav-link::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  bottom: -8px;
-  width: 100%;
-  height: 2px;
-  transform: scaleX(0);
-  transform-origin: left;
-  background: linear-gradient(90deg, var(--lagoon), #7ed3bf);
-  transition: transform 170ms ease;
-}
-
-.nav-link:hover,
-.nav-link.is-active {
-  color: var(--sea-ink);
-}
-
-.nav-link:hover::after,
-.nav-link.is-active::after {
-  transform: scaleX(1);
-}
-
-.rise-in {
-  animation: rise-in 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-@keyframes rise-in {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.site-footer {
-  border-top: 1px solid var(--line);
-  background: color-mix(in oklab, var(--header-bg) 84%, transparent 16%);
 }
 
 @layer base {
@@ -343,6 +179,24 @@ a {
   body {
     background-color: var(--background);
     color: var(--foreground);
+  }
+  /* Bare anchors (inline content links) carry the brand accent. This lives
+   * in @layer base so any `text-*` utility on a link — nav, footer, and
+   * button chrome — still wins and stays neutral. */
+  a {
+    color: var(--color-brand);
+    text-decoration-color: color-mix(in oklab, var(--color-brand) 40%, transparent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+  a:hover {
+    color: color-mix(in oklab, var(--color-brand) 82%, black);
+  }
+  /* Prose (about / privacy) link color, both themes, themed to the brand
+   * accent rather than the default zinc the typography plugin ships. */
+  .prose {
+    --tw-prose-links: var(--color-brand);
+    --tw-prose-invert-links: var(--color-brand);
   }
 }
 
@@ -362,11 +216,11 @@ a {
  * arrowhead so the highlighted dependency is unmistakable. Critical /
  * cycle / rerouted colors set on the edge's inline style still win
  * (we only override width + filter), so a selected critical edge stays
- * red while picking up the glow. */
+ * red while picking up the brand-teal glow. */
 .react-flow__edge.selected .react-flow__edge-path {
   stroke-width: 3.5 !important;
   filter: drop-shadow(
-    0 0 6px color-mix(in oklab, var(--primary) 70%, transparent)
+    0 0 6px color-mix(in oklab, var(--ring) 70%, transparent)
   );
 }
 .react-flow__edge.selected .react-flow__edge-interaction {
@@ -390,12 +244,12 @@ a {
 @keyframes pertli-edge-selected-pulse {
   0%, 100% {
     filter: drop-shadow(
-      0 0 6px color-mix(in oklab, var(--primary) 60%, transparent)
+      0 0 6px color-mix(in oklab, var(--ring) 60%, transparent)
     );
   }
   50% {
     filter: drop-shadow(
-      0 0 10px color-mix(in oklab, var(--primary) 85%, transparent)
+      0 0 10px color-mix(in oklab, var(--ring) 85%, transparent)
     );
   }
 }
@@ -407,19 +261,19 @@ a {
   .pert-just-created {
     animation: pertli-just-created 1.2s ease-out 2;
     box-shadow:
-      0 0 0 0 color-mix(in oklab, var(--primary) 70%, transparent);
+      0 0 0 0 color-mix(in oklab, var(--ring) 70%, transparent);
   }
 }
 @keyframes pertli-just-created {
   0% {
     box-shadow:
-      0 0 0 0 color-mix(in oklab, var(--primary) 80%, transparent),
-      0 0 0 0 color-mix(in oklab, var(--primary) 60%, transparent);
+      0 0 0 0 color-mix(in oklab, var(--ring) 80%, transparent),
+      0 0 0 0 color-mix(in oklab, var(--ring) 60%, transparent);
   }
   60% {
     box-shadow:
-      0 0 0 6px color-mix(in oklab, var(--primary) 0%, transparent),
-      0 0 18px 6px color-mix(in oklab, var(--primary) 35%, transparent);
+      0 0 0 6px color-mix(in oklab, var(--ring) 0%, transparent),
+      0 0 18px 6px color-mix(in oklab, var(--ring) 35%, transparent);
   }
   100% {
     box-shadow:

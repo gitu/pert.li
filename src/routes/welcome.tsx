@@ -8,6 +8,8 @@ import {
 	SparklesIcon,
 	UsersIcon,
 } from "lucide-react";
+import { MarketingFooter } from "#/components/marketing/marketing-footer";
+import { MarketingHeader } from "#/components/marketing/marketing-header";
 import { Button } from "#/components/ui/button";
 import { useAppConfig } from "#/lib/app-config";
 import { markWelcomeSeen } from "#/lib/welcome";
@@ -22,58 +24,18 @@ export const Route = createFileRoute("/welcome")({
 // re-reading the pitch.
 
 function WelcomePage() {
-	const { appName, privacy } = useAppConfig();
 	return (
-		<div className="min-h-svh bg-background">
-			<header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
-				<Link to="/" className="flex items-center gap-2">
-					<div className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground">
-						<LayersIcon className="size-4" />
-					</div>
-					<span className="text-base font-semibold tracking-tight">
-						{appName}
-					</span>
-				</Link>
-				<div className="flex items-center gap-2">
-					<Button asChild variant="ghost" size="sm">
-						<Link to="/signin" onClick={() => markWelcomeSeen()}>
-							Sign in
-						</Link>
-					</Button>
-					<Button asChild size="sm">
-						<Link to="/signin" onClick={() => markWelcomeSeen()}>
-							Get started
-							<ArrowRightIcon className="size-4" />
-						</Link>
-					</Button>
-				</div>
-			</header>
+		<div className="flex min-h-svh flex-col bg-background">
+			<MarketingHeader width="wide" />
 
-			<main className="mx-auto max-w-6xl px-6 pb-24 pt-12">
+			<main className="mx-auto w-full max-w-6xl flex-1 px-6 pb-4 pt-14">
 				<Hero />
 				<FeatureGrid />
 				<HowItWorks />
 				<CallToAction />
 			</main>
 
-			<footer className="border-t">
-				<div className="mx-auto flex max-w-6xl flex-col gap-2 px-6 py-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-					<div>{appName} — collaborative PERT planning.</div>
-					<div className="flex items-center gap-4">
-						<Link to="/about" className="hover:text-foreground">
-							About
-						</Link>
-						{privacy.mode !== "disabled" && (
-							<Link to="/privacy" className="hover:text-foreground">
-								Privacy
-							</Link>
-						)}
-						<Link to="/signin" className="hover:text-foreground">
-							Sign in
-						</Link>
-					</div>
-				</div>
-			</footer>
+			<MarketingFooter width="wide" />
 		</div>
 	);
 }
@@ -81,37 +43,34 @@ function WelcomePage() {
 function Hero() {
 	const { appName } = useAppConfig();
 	return (
-		<section className="relative overflow-hidden rounded-3xl border bg-gradient-to-br from-primary/[0.08] via-card to-card p-10 sm:p-14">
-			<div
-				aria-hidden
-				className="pointer-events-none absolute -right-24 -top-24 size-80 rounded-full bg-primary/10 blur-3xl"
-			/>
-			<div
-				aria-hidden
-				className="pointer-events-none absolute -bottom-32 -left-16 size-72 rounded-full bg-primary/5 blur-3xl"
-			/>
-			<div className="relative max-w-2xl">
-				<span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium uppercase tracking-wide text-primary">
+		<section className="rounded-2xl border bg-card p-10 shadow-sm sm:p-16">
+			<div className="max-w-2xl">
+				<span className="inline-flex items-center gap-1.5 rounded-full bg-brand/10 px-3 py-1 text-xs font-medium uppercase tracking-wide text-brand">
 					<SparklesIcon className="size-3.5" />
 					Collaborative PERT, with an AI co-planner
 				</span>
-				<h1 className="mt-5 text-4xl font-semibold tracking-tight sm:text-5xl">
+				<h1 className="mt-6 text-4xl font-semibold tracking-tight text-balance sm:text-5xl">
 					Plan something nested.
 				</h1>
-				<p className="mt-4 max-w-prose text-base text-muted-foreground sm:text-lg">
+				<p className="mt-5 max-w-prose text-base leading-relaxed text-muted-foreground sm:text-lg">
 					{appName} turns rough scopes into PERT charts you can actually steer:
 					three-point estimates, a deterministic critical path, nested
 					sub-projects, and a chat assistant that creates the tasks for you.
 					Every edit syncs live — no save button, no merge conflicts.
 				</p>
-				<div className="mt-7 flex flex-wrap gap-3">
+				<div className="mt-8 flex flex-wrap gap-3">
 					<Button asChild size="lg">
 						<Link to="/signin" onClick={() => markWelcomeSeen()}>
 							Create your first project
 							<ArrowRightIcon className="size-4" />
 						</Link>
 					</Button>
-					<Button asChild size="lg" variant="secondary">
+					<Button
+						asChild
+						size="lg"
+						variant="outline"
+						className="text-foreground"
+					>
 						<Link to="/signin" onClick={() => markWelcomeSeen()}>
 							I already have an account
 						</Link>
@@ -151,25 +110,27 @@ const FEATURES: ReadonlyArray<{
 
 function FeatureGrid() {
 	return (
-		<section className="mt-20">
-			<h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+		<section className="mt-24">
+			<h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
 				What's in the box
 			</h2>
-			<div className="mt-4 grid gap-4 sm:grid-cols-2">
+			<div className="mt-5 grid gap-4 sm:grid-cols-2">
 				{FEATURES.map(({ icon: Icon, title, body }) => (
 					<div
 						key={title}
-						className="rounded-xl border bg-card p-5 transition-colors hover:bg-accent/20"
+						className="rounded-xl border bg-card p-6 transition-colors hover:bg-accent/40"
 					>
-						<div className="flex items-center gap-2.5">
-							<div className="grid size-9 place-items-center rounded-lg bg-primary/10 text-primary">
+						<div className="flex items-center gap-3">
+							<div className="grid size-9 place-items-center rounded-lg bg-brand/10 text-brand">
 								<Icon className="size-4.5" />
 							</div>
 							<h3 className="text-base font-semibold tracking-tight">
 								{title}
 							</h3>
 						</div>
-						<p className="mt-3 text-sm text-muted-foreground">{body}</p>
+						<p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+							{body}
+						</p>
 					</div>
 				))}
 			</div>
@@ -197,20 +158,22 @@ const STEPS: ReadonlyArray<{ n: string; title: string; body: string }> = [
 
 function HowItWorks() {
 	return (
-		<section className="mt-20">
-			<h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
+		<section className="mt-24">
+			<h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
 				How it works
 			</h2>
-			<div className="mt-4 grid gap-4 sm:grid-cols-3">
+			<div className="mt-5 grid gap-4 sm:grid-cols-3">
 				{STEPS.map(({ n, title, body }) => (
-					<div key={n} className="rounded-xl border bg-card p-5">
-						<div className="text-2xl font-semibold tracking-tight text-primary/70">
+					<div key={n} className="rounded-xl border bg-card p-6">
+						<div className="font-mono text-sm font-semibold tracking-tight text-brand">
 							{n}
 						</div>
-						<h3 className="mt-2 text-base font-semibold tracking-tight">
+						<h3 className="mt-3 text-base font-semibold tracking-tight">
 							{title}
 						</h3>
-						<p className="mt-2 text-sm text-muted-foreground">{body}</p>
+						<p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+							{body}
+						</p>
 					</div>
 				))}
 			</div>
@@ -220,15 +183,18 @@ function HowItWorks() {
 
 function CallToAction() {
 	return (
-		<section className="mt-20 rounded-2xl border bg-card p-8 text-center sm:p-12">
-			<h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+		<section className="mt-24 rounded-2xl border bg-card p-10 text-center shadow-sm sm:p-14">
+			<div className="mx-auto grid size-11 place-items-center rounded-xl bg-brand/10 text-brand">
+				<LayersIcon className="size-5" />
+			</div>
+			<h2 className="mt-5 text-2xl font-semibold tracking-tight sm:text-3xl">
 				Ready to plan something nested?
 			</h2>
-			<p className="mx-auto mt-2 max-w-prose text-sm text-muted-foreground sm:text-base">
+			<p className="mx-auto mt-3 max-w-prose text-sm leading-relaxed text-muted-foreground sm:text-base">
 				Sign up takes 30 seconds. A starter project, a tutorial assistant, and a
 				dev database are waiting on the other side.
 			</p>
-			<div className="mt-6 flex flex-wrap justify-center gap-3">
+			<div className="mt-7 flex flex-wrap justify-center gap-3">
 				<Button asChild size="lg">
 					<Link to="/signin" onClick={() => markWelcomeSeen()}>
 						Get started — it's free

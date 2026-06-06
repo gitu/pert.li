@@ -456,7 +456,7 @@ function ViewTab({
 			className={cn(
 				"inline-flex h-7 items-center gap-1.5 rounded px-2 text-xs",
 				active
-					? "bg-accent text-accent-foreground"
+					? "bg-brand/10 text-brand"
 					: "text-muted-foreground hover:text-foreground",
 			)}
 		>
