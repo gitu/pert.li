@@ -85,6 +85,11 @@ export const promoteBranchInput = z.object({
 });
 export type PromoteBranchInput = z.infer<typeof promoteBranchInput>;
 
+export const deleteProjectInput = z.object({
+	projectId: z.string().uuid(),
+});
+export type DeleteProjectInput = z.infer<typeof deleteProjectInput>;
+
 // --- Project comments -----------------------------------------------------
 export const listProjectCommentsInput = z.object({
 	projectId: z.string().uuid(),

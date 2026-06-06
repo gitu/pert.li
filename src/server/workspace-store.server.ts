@@ -575,6 +575,17 @@ export async function promoteBranchProject(opts: {
 	await repo.flush();
 }
 
+// Permanently delete a project row. FK cascades remove its share links
+// (projectShare) and comments (projectComment); branches of a deleted root
+// have their parentProjectId set null (kept, re-rooted) per the schema's
+// onDelete rules. The Automerge doc bytes stay in server storage but become
+// inaccessible — no project row means userCanWriteDoc returns false for it.
+export async function deleteProjectRow(opts: {
+	projectId: string;
+}): Promise<void> {
+	await db.delete(project).where(eq(project.id, opts.projectId));
+}
+
 export async function getProjectForUser(opts: {
 	projectId: string;
 	userId: string;

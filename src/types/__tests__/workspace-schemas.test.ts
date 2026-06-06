@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	createProjectInput,
+	deleteProjectInput,
 	getProjectInput,
 	inviteMemberInput,
 } from "../workspace-schemas";
@@ -44,6 +45,17 @@ describe("getProjectInput", () => {
 		expect(() => getProjectInput.parse({ projectId: "abc" })).toThrow();
 		expect(() =>
 			getProjectInput.parse({
+				projectId: "00000000-0000-4000-8000-000000000000",
+			}),
+		).not.toThrow();
+	});
+});
+
+describe("deleteProjectInput", () => {
+	it("requires a uuid projectId", () => {
+		expect(() => deleteProjectInput.parse({ projectId: "abc" })).toThrow();
+		expect(() =>
+			deleteProjectInput.parse({
 				projectId: "00000000-0000-4000-8000-000000000000",
 			}),
 		).not.toThrow();

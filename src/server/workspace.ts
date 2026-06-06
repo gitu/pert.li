@@ -8,6 +8,7 @@ import {
 	createShareInput,
 	createWorkspaceInput,
 	deleteProjectCommentInput,
+	deleteProjectInput,
 	editProjectCommentInput,
 	extendShareInput,
 	forkProjectInput,
@@ -316,6 +317,32 @@ export const promoteBranch = createServerFn({ method: "POST" })
 		);
 		if (!role) throw new Error("Write access to this workspace is required");
 		await promoteBranchProject({ projectId: data.projectId });
+		return { ok: true } as const;
+	});
+
+// Permanently delete a project (root or branch). Owner-only — stricter than
+// the owner/editor gate the other mutations use, because the delete is a hard
+// delete (FK cascades drop shares + comments; branches re-root via set-null).
+export const deleteProject = createServerFn({ method: "POST" })
+	.inputValidator(deleteProjectInput)
+	.handler(async ({ data }) => {
+		const {
+			requireSession,
+			getProjectForUser,
+			getWorkspaceRole,
+			deleteProjectRow,
+		} = await helpers();
+		const session = await requireSession();
+		const proj = await getProjectForUser({
+			projectId: data.projectId,
+			userId: session.userId,
+		});
+		if (!proj) throw new Error("Project not found");
+		const role = await getWorkspaceRole(session.userId, proj.workspaceId);
+		if (role !== "owner") {
+			throw new Error("Only the workspace owner can delete a project");
+		}
+		await deleteProjectRow({ projectId: data.projectId });
 		return { ok: true } as const;
 	});
 

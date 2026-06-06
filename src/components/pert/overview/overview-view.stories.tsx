@@ -90,7 +90,7 @@ const meta: Meta<typeof OverviewContent> = {
 		onNavigate: fn(),
 		actions: (
 			<span className="text-xs text-muted-foreground">
-				[export / share / branch]
+				[export / share / edit / branch / delete]
 			</span>
 		),
 	},
