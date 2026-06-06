@@ -85,12 +85,6 @@ export function CanvasAddToolbar({
 				<FolderPlusIcon className="size-3.5" />
 				Container
 			</Button>
-			<Separator orientation="vertical" className="mx-1 h-5" />
-			<KeyboardShortcutsHelp
-				groups={CANVAS_SHORTCUTS}
-				testId="canvas-keyboard-help"
-				tooltip="Canvas keyboard shortcuts"
-			/>
 		</div>
 	);
 }
@@ -248,6 +242,13 @@ export function CanvasViewToolbar({
 				</DropdownMenuContent>
 			</DropdownMenu>
 			<Separator orientation="horizontal" className="my-0.5" />
+			<KeyboardShortcutsHelp
+				groups={CANVAS_SHORTCUTS}
+				testId="canvas-keyboard-help"
+				tooltip="Canvas keyboard shortcuts"
+				side="right"
+				align="start"
+			/>
 			<CanvasLegend />
 		</div>
 	);

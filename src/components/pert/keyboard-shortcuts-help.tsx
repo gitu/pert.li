@@ -25,10 +25,17 @@ export function KeyboardShortcutsHelp({
 	groups,
 	testId = "keyboard-help",
 	tooltip = "Keyboard shortcuts (?)",
+	align = "end",
+	side,
 }: {
 	groups: ShortcutGroup[];
 	testId?: string;
 	tooltip?: string;
+	// Popover placement. Defaults suit the horizontal table toolbar; the canvas
+	// view toolbar is a vertical bar on the left, so it passes side="right" /
+	// align="start" to mirror the adjacent legend popover.
+	align?: "start" | "center" | "end";
+	side?: "top" | "right" | "bottom" | "left";
 }) {
 	return (
 		<Popover>
@@ -46,7 +53,8 @@ export function KeyboardShortcutsHelp({
 				</Button>
 			</PopoverTrigger>
 			<PopoverContent
-				align="end"
+				align={align}
+				side={side}
 				className="w-80 p-0"
 				data-testid={`${testId}-content`}
 			>
