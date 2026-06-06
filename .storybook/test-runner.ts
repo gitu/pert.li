@@ -3,15 +3,65 @@ import path from "node:path";
 import type { TestRunnerConfig } from "@storybook/test-runner";
 
 // When `STORYBOOK_SCREENSHOT_DIR` is set (only the `pr-screenshots` CI job
-// does this), drop a PNG per story into that directory keyed by story id.
-// The PR workflow then filters by storybook's index.json -> changed-files
-// list and publishes only the matched images. Filename uses the story id
-// directly (e.g. `pert-canvas--default.png`) — storybook IDs are kebab-case
-// with `--` separating component and variant, both filesystem-safe.
+// does this), drop a PNG per story into that directory keyed by story id
+// (e.g. `pert-canvas--default.png` — storybook IDs are kebab-case with `--`
+// separating component and variant, both filesystem-safe). The PR workflow
+// reconciles those renders against the committed `screenshots/<id>.png`
+// visual-regression baselines and auto-commits any real changes.
 const SCREENSHOT_DIR = process.env.STORYBOOK_SCREENSHOT_DIR;
 if (SCREENSHOT_DIR) {
 	mkdirSync(SCREENSHOT_DIR, { recursive: true });
 }
+
+// Browser-side determinism shim, injected before each story renders during
+// the screenshot run. Committed baselines only work if a story renders the
+// same bytes every time, so we neutralize the two wall-clock/entropy sources
+// that otherwise drift between back-to-back renders:
+//   • the clock — relative "Xs ago" timestamps and any bare `new Date()`;
+//   • crypto.getRandomValues — generated ids (e.g. proposal id remaps).
+// Serialized and run via page.addInitScript, so it must be self-contained.
+function deterministicShim() {
+	const FIXED = 1735732800000; // 2025-01-01T12:00:00.000Z
+	const RealDate = Date;
+	class FrozenDate extends RealDate {
+		constructor(...args: unknown[]) {
+			if (args.length === 0) {
+				super(FIXED);
+			} else {
+				// @ts-expect-error forward whatever Date args were passed
+				super(...args);
+			}
+		}
+		static now() {
+			return FIXED;
+		}
+	}
+	// @ts-expect-error replace the global Date with the frozen variant
+	globalThis.Date = FrozenDate;
+
+	// xorshift32 PRNG — deterministic, no external state.
+	let seed = 0x2545f491;
+	const next = () => {
+		seed ^= seed << 13;
+		seed ^= seed >>> 17;
+		seed ^= seed << 5;
+		return seed >>> 0;
+	};
+	const cryptoObj = globalThis.crypto;
+	if (cryptoObj?.getRandomValues) {
+		cryptoObj.getRandomValues = (arr: ArrayBufferView) => {
+			const view = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+			for (let i = 0; i < view.length; i++) view[i] = next() & 0xff;
+			return arr as never;
+		};
+	}
+}
+
+// Track which pages already have the shim installed. `addInitScript`
+// persists across the test-runner's per-story navigations, so we only need
+// to inject + reload once per worker page; the first story on a page was
+// loaded before we got a hook, so it needs the reload to pick the shim up.
+const shimmedPages = new WeakSet<object>();
 
 // Breathing room around the content bounding box so clipped screenshots
 // don't sit flush against the image edge.
@@ -26,6 +76,15 @@ const MIN_CLIP_SIZE = 24;
 type Box = { left: number; top: number; right: number; bottom: number };
 
 const config: TestRunnerConfig = {
+	async preVisit(page) {
+		if (!SCREENSHOT_DIR) return;
+		if (shimmedPages.has(page)) return;
+		shimmedPages.add(page);
+		// Applies to every subsequent navigation; reload so it also takes
+		// effect for the story already on screen.
+		await page.addInitScript(deterministicShim);
+		await page.reload({ waitUntil: "load" });
+	},
 	async postVisit(page, context) {
 		if (!SCREENSHOT_DIR) return;
 		const file = path.join(SCREENSHOT_DIR, `${context.id}.png`);

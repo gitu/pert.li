@@ -532,13 +532,13 @@ jobs:
         # compile-on-demand variance — important for stable baselines).
         run: pnpm build-storybook --quiet
 
-      - name: Render baselines (every story)
+      - name: Render every story
         if: steps.diff.outputs.has_changes == 'true'
         env:
-          # Render straight into the tracked baseline dir, overwriting in
-          # place. `git diff screenshots/` then surfaces exactly the stories
-          # whose pixels changed.
-          STORYBOOK_SCREENSHOT_DIR: ${{ github.workspace }}/screenshots
+          # Render into a scratch dir; the reconcile step then diffs these
+          # against the committed baselines with an antialiasing-aware pixel
+          # threshold and only updates the ones that really changed.
+          STORYBOOK_SCREENSHOT_DIR: ${{ github.workspace }}/rendered
         # `python3 -m http.server` ships with ubuntu-latest — avoids a
         # cold `pnpm dlx http-server` install on every run. We background
         # it, `wait-on` blocks until the port is live, then test-storybook
@@ -552,9 +552,22 @@ jobs:
           pnpm exec wait-on -l tcp:6006 -t 60000
           pnpm exec test-storybook --url http://localhost:6006 || {
             status=$?
-            echo "test-storybook exited with $status; continuing so we still commit whatever rendered"
+            echo "test-storybook exited with $status; continuing so we still reconcile whatever rendered"
           }
           kill "$(cat /tmp/sb-http.pid)" 2>/dev/null || true
+
+      - name: Reconcile against committed baselines
+        if: steps.diff.outputs.has_changes == 'true'
+        env:
+          # `STORYBOOK_INDEX` lets the reconciler tell a deleted story (drop
+          # its baseline) apart from one that just failed to render this run
+          # (keep its baseline). Threshold absorbs headless-Chromium
+          # antialiasing wobble; override with SCREENSHOT_MAX_DIFF_PIXELS.
+          STORYBOOK_INDEX: storybook-static/index.json
+        # Updates `screenshots/` in place: overwrites changed PNGs, adds new
+        # ones, removes deleted stories. Leaves visually-identical renders
+        # untouched so `git diff` only ever surfaces real changes.
+        run: node scripts/compare-screenshots.mjs rendered screenshots
 
       - name: Build story label lookup
         if: steps.diff.outputs.has_changes == 'true'
