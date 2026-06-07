@@ -31,13 +31,19 @@ FROM node:${NODE_VERSION}-alpine AS build
 WORKDIR /app
 RUN npm install -g pnpm@11.3.0
 COPY --from=deps /app /app
-COPY . .
-# Postinstall scripts of `onlyBuiltDependencies` (esbuild, lightningcss,
+# Install BEFORE copying source so this layer caches across source-only commits.
+# Its cache key is the `deps` stage above, which copies + fetches from the
+# dependency manifests (package.json / pnpm-lock.yaml / .npmrc /
+# pnpm-workspace.yaml) — so only a change to one of THOSE invalidates the
+# install; ordinary source edits don't. `COPY --from=deps` already carries
+# those manifests + the fetched store, so install needs no source tree.
+# Postinstall builds of the `allowBuilds` packages (esbuild, lightningcss,
 # @swc/core, @google/genai, protobufjs, ...) need to actually run, otherwise
 # native bindings end up missing. `pnpm install --frozen-lockfile` honors
-# the package.json `pnpm.onlyBuiltDependencies` allow-list without
-# prompting in non-interactive contexts.
+# the pnpm-workspace.yaml `allowBuilds` list without prompting in
+# non-interactive contexts.
 RUN pnpm install --offline --frozen-lockfile
+COPY . .
 
 ARG NODE_ENV=production
 ENV NODE_ENV=${NODE_ENV}
