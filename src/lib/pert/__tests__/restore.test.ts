@@ -32,14 +32,12 @@ describe("restoreTaskFieldMutation", () => {
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 			estimate: est(1, 2, 3),
 		});
 		const current = build({
 			id: "A",
 			kind: "task",
 			title: "A renamed",
-			parentId: null,
 			estimate: est(5, 7, 10),
 			layout: { position: { x: 200, y: 100 } },
 		});
@@ -62,7 +60,6 @@ describe("restoreTaskFieldMutation", () => {
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 		});
 		const current = build();
 		const mut = restoreTaskFieldMutation(snapshot, "A", "title");
@@ -75,13 +72,11 @@ describe("restoreTaskFieldMutation", () => {
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 		});
 		const current = build({
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 			estimate: est(1, 2, 3),
 			notes: "scratch",
 		});
@@ -96,8 +91,7 @@ describe("restoreTaskFieldMutation", () => {
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
-			key: "M1.A",
+			numberOverride: "M1.A",
 			status: "in_progress",
 			progress: 40,
 			actualStart: "2026-05-20",
@@ -106,18 +100,17 @@ describe("restoreTaskFieldMutation", () => {
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 			status: "completed",
 			progress: 100,
 			actualStart: "2026-05-25",
 			actualFinish: "2026-06-01",
 		});
-		restoreTaskFieldMutation(snapshot, "A", "key")?.(current);
+		restoreTaskFieldMutation(snapshot, "A", "numberOverride")?.(current);
 		restoreTaskFieldMutation(snapshot, "A", "status")?.(current);
 		restoreTaskFieldMutation(snapshot, "A", "progress")?.(current);
 		restoreTaskFieldMutation(snapshot, "A", "actualStart")?.(current);
 		restoreTaskFieldMutation(snapshot, "A", "actualFinish")?.(current);
-		expect(current.tasksById.A.key).toBe("M1.A");
+		expect(current.tasksById.A.numberOverride).toBe("M1.A");
 		expect(current.tasksById.A.status).toBe("in_progress");
 		expect(current.tasksById.A.progress).toBe(40);
 		expect(current.tasksById.A.actualStart).toBe("2026-05-20");
@@ -130,25 +123,23 @@ describe("restoreTaskFieldMutation", () => {
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 		});
 		const current = build({
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
-			key: "M1.A",
+			numberOverride: "M1.A",
 			status: "in_progress",
 			progress: 40,
 			actualStart: "2026-05-20",
 			actualFinish: "2026-06-01",
 		});
-		restoreTaskFieldMutation(snapshot, "A", "key")?.(current);
+		restoreTaskFieldMutation(snapshot, "A", "numberOverride")?.(current);
 		restoreTaskFieldMutation(snapshot, "A", "status")?.(current);
 		restoreTaskFieldMutation(snapshot, "A", "progress")?.(current);
 		restoreTaskFieldMutation(snapshot, "A", "actualStart")?.(current);
 		restoreTaskFieldMutation(snapshot, "A", "actualFinish")?.(current);
-		expect(current.tasksById.A.key).toBeUndefined();
+		expect(current.tasksById.A.numberOverride).toBeUndefined();
 		expect(current.tasksById.A.status).toBeUndefined();
 		expect(current.tasksById.A.progress).toBeUndefined();
 		expect(current.tasksById.A.actualStart).toBeUndefined();
@@ -160,18 +151,16 @@ describe("restoreTaskFieldMutation", () => {
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
-			key: "   ",
+			numberOverride: "   ",
 		});
 		const current = build({
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
-			key: "M1",
+			numberOverride: "M1",
 		});
-		restoreTaskFieldMutation(snapshot, "A", "key")?.(current);
-		expect(current.tasksById.A.key).toBeUndefined();
+		restoreTaskFieldMutation(snapshot, "A", "numberOverride")?.(current);
+		expect(current.tasksById.A.numberOverride).toBeUndefined();
 	});
 
 	it("trims padded keys on restore", () => {
@@ -179,17 +168,15 @@ describe("restoreTaskFieldMutation", () => {
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
-			key: "  M1.A  ",
+			numberOverride: "  M1.A  ",
 		});
 		const current = build({
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 		});
-		restoreTaskFieldMutation(snapshot, "A", "key")?.(current);
-		expect(current.tasksById.A.key).toBe("M1.A");
+		restoreTaskFieldMutation(snapshot, "A", "numberOverride")?.(current);
+		expect(current.tasksById.A.numberOverride).toBe("M1.A");
 	});
 
 	it("restores progress=0 (falsy but valid)", () => {
@@ -197,14 +184,12 @@ describe("restoreTaskFieldMutation", () => {
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 			progress: 0,
 		});
 		const current = build({
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 			progress: 50,
 		});
 		restoreTaskFieldMutation(snapshot, "A", "progress")?.(current);
@@ -218,25 +203,24 @@ describe("restoreAllTaskFieldsMutation", () => {
 			id: "A",
 			kind: "task",
 			title: "Alpha",
-			parentId: null,
 			estimate: est(1, 2, 3),
 		});
 		const current = build({
 			id: "A",
 			kind: "milestone",
 			title: "Renamed",
-			parentId: "P",
+			groupId: "P",
 		});
 		const mut = restoreAllTaskFieldsMutation(snapshot, "A", [
 			"title",
 			"kind",
-			"parentId",
+			"groupId",
 			"estimate",
 		]);
 		mut?.(current);
 		expect(current.tasksById.A.title).toBe("Alpha");
 		expect(current.tasksById.A.kind).toBe("task");
-		expect(current.tasksById.A.parentId).toBeNull();
+		expect(current.tasksById.A.groupId).toBeNull();
 		expect(current.tasksById.A.estimate).toEqual(est(1, 2, 3));
 	});
 
@@ -245,7 +229,6 @@ describe("restoreAllTaskFieldsMutation", () => {
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 		});
 		expect(restoreAllTaskFieldsMutation(snapshot, "A", [])).toBeNull();
 	});
@@ -257,7 +240,6 @@ describe("reAddTaskMutation / dropTaskMutation", () => {
 			id: "A",
 			kind: "task",
 			title: "Recover",
-			parentId: null,
 			estimate: est(1, 2, 3),
 		});
 		const current = build();
@@ -275,8 +257,8 @@ describe("reAddTaskMutation / dropTaskMutation", () => {
 
 	it("dropTaskMutation removes the task and any deps touching it", () => {
 		const current = build(
-			{ id: "A", kind: "task", title: "A", parentId: null },
-			{ id: "B", kind: "task", title: "B", parentId: null },
+			{ id: "A", kind: "task", title: "A" },
+			{ id: "B", kind: "task", title: "B" },
 		);
 		current.dependenciesById.ab = {
 			id: "ab",

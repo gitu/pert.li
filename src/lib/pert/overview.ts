@@ -33,14 +33,12 @@ export type ProjectScheduleSummary =
 export type ProjectOverview = {
 	taskCount: number;
 	milestoneCount: number;
-	containerCount: number;
+	groupCount: number;
 	dependencyCount: number;
-	interfaceCount: number;
-	// Status + progress roll up over leaf entities (tasks + milestones), the
-	// same population rollupContainer uses (kind !== "container").
+	// Status + progress roll up over every task (tasks + milestones).
 	status: ProjectStatusBreakdown;
 	// 0..100, weighted by expected duration so a half-done long task counts more
-	// than a half-done short one. Mirrors rollupContainer's progress weighting.
+	// than a half-done short one. Mirrors rollupGroup's progress weighting.
 	progressPct: number;
 	schedule: ProjectScheduleSummary;
 };
@@ -48,7 +46,6 @@ export type ProjectOverview = {
 export function computeProjectOverview(doc: PertDoc): ProjectOverview {
 	let taskCount = 0;
 	let milestoneCount = 0;
-	let containerCount = 0;
 	const status: ProjectStatusBreakdown = {
 		notStarted: 0,
 		inProgress: 0,
@@ -58,10 +55,6 @@ export function computeProjectOverview(doc: PertDoc): ProjectOverview {
 	let progressWeight = 0;
 
 	for (const task of Object.values(doc.tasksById)) {
-		if (task.kind === "container") {
-			containerCount += 1;
-			continue;
-		}
 		if (task.kind === "milestone") milestoneCount += 1;
 		else taskCount += 1;
 
@@ -80,10 +73,7 @@ export function computeProjectOverview(doc: PertDoc): ProjectOverview {
 	}
 
 	const dependencyCount = Object.keys(doc.dependenciesById).length;
-	let interfaceCount = 0;
-	for (const bucket of Object.values(doc.interfacesByContainerId)) {
-		interfaceCount += Object.keys(bucket).length;
-	}
+	const groupCount = Object.keys(doc.groupsById).length;
 
 	const progressPct =
 		progressWeight > 0 ? weightedProgress / progressWeight : 0;
@@ -102,9 +92,8 @@ export function computeProjectOverview(doc: PertDoc): ProjectOverview {
 	return {
 		taskCount,
 		milestoneCount,
-		containerCount,
+		groupCount,
 		dependencyCount,
-		interfaceCount,
 		status,
 		progressPct,
 		schedule,

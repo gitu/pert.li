@@ -180,7 +180,6 @@ function buildGraph(doc: PertDoc): SimGraph | null {
 	const tasks: Record<TaskId, Task> = {};
 	const taskIds: TaskId[] = [];
 	for (const [id, t] of Object.entries(doc.tasksById)) {
-		if (t.kind === "container") continue;
 		tasks[id] = t;
 		taskIds.push(id);
 	}

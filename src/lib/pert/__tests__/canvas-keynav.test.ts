@@ -12,7 +12,6 @@ function leaf(
 		id,
 		kind,
 		title: id,
-		parentId: null,
 		layout: { position: { x, y } },
 	};
 	if (kind === "task") {
@@ -73,17 +72,6 @@ describe("findNeighborTaskId", () => {
 		doc.dependenciesById.d2 = dep("d2", "a", "near");
 		doc.dependenciesById.d3 = dep("d3", "a", "far");
 		expect(findNeighborTaskId(doc, "a", "right")).toBe("near");
-	});
-
-	it("treats containers as invalid landing targets", () => {
-		const doc = build(
-			leaf("a", 0, 0),
-			leaf("c", 300, 0, "container"),
-			leaf("b", 300, 50),
-		);
-		doc.dependenciesById.d1 = dep("d1", "a", "c");
-		doc.dependenciesById.d2 = dep("d2", "a", "b");
-		expect(findNeighborTaskId(doc, "a", "right")).toBe("b");
 	});
 
 	it("Down finds a sibling that shares a predecessor and sits below", () => {

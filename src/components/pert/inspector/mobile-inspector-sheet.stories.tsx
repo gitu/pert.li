@@ -27,7 +27,6 @@ function StoryHarness({ selectedTaskId }: { selectedTaskId: string | null }) {
 			id: "T1",
 			kind: "task",
 			title: "Mobile inspector demo task",
-			parentId: null,
 			estimate: { optimistic: 1, mostLikely: 3, pessimistic: 7, unit: "day" },
 		};
 		// biome-ignore lint/suspicious/noExplicitAny: story-only mock for changeDoc; the real type is a ChangeFn from Automerge.

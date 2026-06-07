@@ -10,7 +10,7 @@
 
 export type TaskId = string;
 export type DependencyId = string;
-export type InterfaceId = string;
+export type GroupId = string;
 export type ViewId = string;
 
 export type EstimateUnit = "hour" | "day" | "week";
@@ -22,26 +22,41 @@ export type Estimate = {
 	unit: EstimateUnit;
 };
 
-// A "container" is a task that owns three orthogonal concerns:
-//   1. HIERARCHY — it can have children (other tasks point to it via parentId).
-//   2. BOUNDARY  — it exposes named interface ports (see ContainerInterface),
-//                  which cross-boundary edges may route through when the
-//                  container is collapsed.
-//   3. COLLAPSE  — its visual projection can be folded into a single card.
-// The model keeps all three under one `kind` because they almost always
-// travel together; the inspector surfaces each concern as a separate section.
-export type TaskKind = "task" | "milestone" | "container";
+// Tasks are the schedulable leaves of a project. A `milestone` is a zero-
+// duration marker; a `task` carries an estimate. Organisation (nesting,
+// rollups, the collapsible boxes on the canvas) is owned by Groups — see
+// `Group` below — which tasks join via `groupId`.
+export type TaskKind = "task" | "milestone";
 
 export type Layout = {
 	position?: { x: number; y: number };
-	collapsed?: boolean;
-	// Manual size override. When unset, container nodes auto-fit to their
-	// descendants' bounding box (expanded) or to the port rail height
-	// (collapsed). When set, the stored value becomes the minimum the
-	// container is rendered at — descendants can still grow it if they
-	// overflow.
+	// Manual size override. When set, the stored value becomes the minimum the
+	// node/group is rendered at — members can still grow a group if they
+	// overflow its bounding box.
 	width?: number;
 	height?: number;
+};
+
+// A "group" is a first-class organising container. Groups give structure that
+// tasks themselves don't carry:
+//   1. NAME      — a human label ("Milestone 1", "Backend").
+//   2. HIERARCHY — groups nest via `parentGroupId`; tasks join via `groupId`.
+//   3. NUMBERING — a group seeds the WBS number of its members ("1" → "1.1").
+//   4. CANVAS    — it renders as a collapsible box that rolls up its members'
+//                  schedule stats when collapsed.
+// Groups may be empty. Collapse state is per-user (client-local), NOT stored
+// here. The auto WBS number is DERIVED (see numbering.ts), never written back.
+export type Group = {
+	id: GroupId;
+	name: string;
+	// null/absent = a root (top-level) group.
+	parentGroupId: GroupId | null;
+	// Sibling ordering. Automerge keyed maps don't preserve insertion order
+	// across merges, so numbering/layout sort by `(order, id)`.
+	order: number;
+	// Canvas box geometry. The anchor for empty/collapsed groups that have no
+	// members to derive a bounding box from.
+	layout?: Layout;
 };
 
 // "not_started" is the default for any task without an explicit status. We do
@@ -57,11 +72,18 @@ export type Task = {
 	id: TaskId;
 	kind: TaskKind;
 	title: string;
-	parentId: TaskId | null;
-	// Semantic grouping key, dotted-segment ("M1.A", "T.foo.bar"). Purely
-	// for grouping in views — NOT a dependency or hierarchy in the scheduler.
-	// Empty / unset = ungrouped.
-	key?: string;
+	// The group this task belongs to, or null/unset = ungrouped. Drives the
+	// task's WBS number, its canvas box membership, and view grouping.
+	groupId?: GroupId | null;
+	// Ordering among siblings within a group. Drives the WBS member index
+	// ("1.1" vs "1.2"). Sorted by `(order, id)`; absent = 0. Optional so the
+	// many task-creation paths don't all have to set it (id breaks ties).
+	order?: number;
+	// Manual WBS-number override. When set, it wins over the derived number
+	// (see numbering.ts) and "sticks" across group moves. Absence = use the
+	// auto number. This is the ONLY number-related field stored on the doc —
+	// the auto value is always derived, never written back.
+	numberOverride?: string;
 	estimate?: Estimate;
 	notes?: string;
 	layout?: Layout;
@@ -86,15 +108,11 @@ export type Task = {
 
 export type DependencyPort = "start" | "finish";
 
-// A dependency endpoint always identifies a canonical descendant task by
-// `taskId`. `interfaceId` is an *optional hint* used by the projection layer
-// when the endpoint sits inside a collapsed container — it pins the edge to
-// the named interface handle on the container card instead of routing to the
-// container as a whole. Hint-only means the graph stays sound if an interface
-// is renamed or removed: the canonical `taskId` is still the truth.
+// A dependency endpoint identifies a canonical task by `taskId`. When that
+// task sits inside a collapsed group, the projection layer reroutes the edge
+// to the group's box — the canonical `taskId` stays the truth.
 export type DependencyEndpoint = {
 	taskId?: TaskId;
-	interfaceId?: InterfaceId;
 	port?: DependencyPort;
 };
 
@@ -111,25 +129,6 @@ export type Dependency = {
 	type: DependencyType;
 	// Optional lag in `Estimate.unit`-agnostic days. Negative = lead.
 	lagDays?: number;
-};
-
-export type InterfaceKind = "entry" | "exit";
-
-// A named port on a container's boundary. `taskRef` optionally pins the
-// interface to a specific descendant — when set, the projection can use the
-// (interface, taskRef) pairing to disambiguate which descendant a collapsed
-// edge represents. When `taskRef` is unset, the interface is a generic port
-// the user has authored but not bound yet.
-//
-// Every container gets a default Entry and a default Exit at creation; these
-// have no `taskRef` and serve as the fall-through routing target for
-// cross-boundary edges that don't pin an interface explicitly.
-export type ContainerInterface = {
-	id: InterfaceId;
-	containerId: TaskId;
-	kind: InterfaceKind;
-	label: string;
-	taskRef?: TaskId;
 };
 
 export type ViewKind = "network" | "timeline" | "table" | "matrix";
@@ -264,11 +263,8 @@ export type PertDoc = {
 	schemaVersion: 1;
 	title: string;
 	tasksById: Record<TaskId, Task>;
+	groupsById: Record<GroupId, Group>;
 	dependenciesById: Record<DependencyId, Dependency>;
-	interfacesByContainerId: Record<
-		TaskId,
-		Record<InterfaceId, ContainerInterface>
-	>;
 	viewsById: Record<ViewId, ViewState>;
 	calendar?: ProjectCalendar;
 	meta?: DocMeta;
@@ -286,8 +282,8 @@ export function createEmptyPertDoc(title: string): PertDoc {
 		schemaVersion: 1,
 		title,
 		tasksById: {},
+		groupsById: {},
 		dependenciesById: {},
-		interfacesByContainerId: {},
 		viewsById: {},
 	};
 }

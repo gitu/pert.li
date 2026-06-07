@@ -15,8 +15,6 @@ function seedDoc(taskCount: number): PertDoc {
 			id,
 			kind: "task",
 			title: `Task ${i + 1}`,
-			parentId: null,
-			key: `${i + 1}`,
 			estimate: {
 				optimistic: 1,
 				mostLikely: 2 + i,

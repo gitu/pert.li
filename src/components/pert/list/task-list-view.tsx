@@ -19,7 +19,6 @@ import {
 	ChevronDownIcon,
 	ChevronRightIcon,
 	CircleDotIcon,
-	FolderIcon,
 	LayersIcon,
 	PencilIcon,
 	PlusIcon,
@@ -51,15 +50,20 @@ import {
 	TableHeader,
 	TableRow,
 } from "#/components/ui/table";
-import { addDependencyMutation, addTaskMutation } from "#/lib/ai/tool-mutators";
+import {
+	addDependencyMutation,
+	addTaskMutation,
+	assignTaskToGroupMutation,
+} from "#/lib/ai/tool-mutators";
 import { todayIsoDate } from "#/lib/pert/calendar";
+import {
+	buildGroupTree,
+	countRowsInGroup,
+	type KeyGroupNode,
+} from "#/lib/pert/group-tree";
+import { computeNumbering } from "#/lib/pert/numbering";
 import { computeSchedule, type ScheduleResult } from "#/lib/pert/schedule";
 import { projectDocStore, selectionStore, selectTask } from "#/lib/pert/store";
-import {
-	countRowsInGroup,
-	groupTasksByKey,
-	type KeyGroupNode,
-} from "#/lib/pert/task-key";
 import type {
 	Estimate,
 	PertDoc,
@@ -78,7 +82,11 @@ export type TaskListRow = {
 	id: TaskId;
 	title: string;
 	kind: TaskKind;
-	key: string | undefined;
+	// The group this task belongs to (drives view grouping), its display WBS
+	// number (override ?? derived), and the raw override (for inline editing).
+	groupId: string | null;
+	number: string;
+	numberOverride: string | undefined;
 	estimate: Estimate | undefined;
 	duration: number;
 	es: number | null;
@@ -98,22 +106,24 @@ export type TaskListRow = {
 };
 
 // Pure derivation of list rows from a doc + already-computed schedule. Lives
-// alongside the component so unit tests can exercise sorting and the
-// container-exclusion rule without mounting React.
+// alongside the component so unit tests can exercise sorting and grouping
+// without mounting React.
 export function buildTaskListRows(
 	doc: PertDoc,
 	scheduleResult: ScheduleResult,
 ): TaskListRow[] {
 	const sched = scheduleResult.ok ? scheduleResult.schedule : null;
+	const numbers = computeNumbering(doc);
 	return Object.values(doc.tasksById)
-		.filter((t) => t.kind !== "container")
 		.map((t): TaskListRow => {
 			const s = sched?.tasks[t.id];
 			return {
 				id: t.id,
 				title: t.title,
 				kind: t.kind,
-				key: t.key,
+				groupId: t.groupId ?? null,
+				number: numbers.tasks[t.id] ?? "",
+				numberOverride: t.numberOverride,
 				estimate: t.estimate,
 				duration: s?.duration ?? 0,
 				es: s?.earliestStart ?? null,
@@ -188,7 +198,7 @@ function writePersistedColumnVisibility(key: string, value: VisibilityState) {
 
 // Tabular view of the same task graph the canvas renders. Selection is the
 // shared store, so clicks here light the canvas + the inspector and vice
-// versa. Container tasks are hidden — they belong to the canvas in Phase 5.
+// versa. A "Group" toggle nests rows under the group each task belongs to.
 //
 // Phase 6 upgrade: TanStack Table powers sorting, column visibility, and
 // global filter. Double-click on the title cell starts an inline edit that
@@ -289,7 +299,7 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 	const [editingProgressId, setEditingProgressId] = useState<TaskId | null>(
 		null,
 	);
-	// Group rows by their dotted `key`. Collapsed group paths live in a
+	// Group rows by the group each task belongs to. Collapsed group paths live in a
 	// separate set so flipping the toggle off and back on keeps the user's
 	// open/closed state instead of resetting.
 	const [grouped, setGrouped] = useState(false);
@@ -353,7 +363,7 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 	);
 
 	// Insert a fresh task adjacent to a seed row. The new task inherits the
-	// seed's parent, and we wire a dependency so it sorts where the user
+	// seed's group, and we wire a dependency so it sorts where the user
 	// expects: below = `seed → new` (new becomes a successor), above =
 	// `new → seed` (new becomes a predecessor). Selecting + flipping into
 	// inline-edit mirrors the canvas Tab-spawn experience.
@@ -362,15 +372,13 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 			if (!changeDoc) return;
 			const seed = doc.tasksById[seedId];
 			if (!seed) return;
-			const parentId = seed.parentId ?? null;
+			const groupId = seed.groupId ?? null;
 			let newTaskId: TaskId | null = null;
 			changeDoc((d) => {
-				// Generated id + the seed row's existing parent — the error arm is
-				// unreachable here.
 				const created = addTaskMutation(d, {
 					title: "",
 					kind: "task",
-					parentId,
+					groupId,
 				});
 				if (!("id" in created)) return;
 				newTaskId = created.id;
@@ -386,26 +394,24 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 		[changeDoc, doc.tasksById, projectId],
 	);
 
-	// Indent / outdent the selected row. Indent copies the parentId of the
-	// previous visible row (so the row drops into the same container as the
-	// one above it). Outdent walks up: if the row is already nested, set its
-	// parent to its current parent's parent. No-op when there's no parent to
-	// inherit / promote from, matching outliner intuition.
+	// Indent / outdent the selected row by GROUP membership. Indent moves the
+	// row into the group of the previous visible row (so it joins the same
+	// group as the one above it). Outdent moves it to its current group's
+	// parent group (or ungrouped). No-op when there's nothing to inherit /
+	// promote from, matching outliner intuition.
 	const indentRow = useCallback(
 		(rowId: TaskId, prevRowId: TaskId | null) => {
 			if (!changeDoc) return;
 			if (!prevRowId) return;
 			const prev = doc.tasksById[prevRowId];
 			if (!prev) return;
-			const targetParent = prev.parentId ?? null;
+			const targetGroup = prev.groupId ?? null;
 			const row = doc.tasksById[rowId];
 			if (!row) return;
-			if ((row.parentId ?? null) === targetParent) return;
-			if (!targetParent) return; // nothing to indent into
+			if ((row.groupId ?? null) === targetGroup) return;
+			if (!targetGroup) return; // nothing to indent into
 			changeDoc((d) => {
-				const t = d.tasksById[rowId];
-				if (!t) return;
-				t.parentId = targetParent;
+				assignTaskToGroupMutation(d, { taskId: rowId, groupId: targetGroup });
 			});
 		},
 		[changeDoc, doc.tasksById],
@@ -414,16 +420,14 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 		(rowId: TaskId) => {
 			if (!changeDoc) return;
 			const row = doc.tasksById[rowId];
-			if (!row?.parentId) return;
-			const parent = doc.tasksById[row.parentId];
-			const grandparent = parent?.parentId ?? null;
+			const groupId = row?.groupId ?? null;
+			if (!groupId) return;
+			const parentGroup = doc.groupsById[groupId]?.parentGroupId ?? null;
 			changeDoc((d) => {
-				const t = d.tasksById[rowId];
-				if (!t) return;
-				t.parentId = grandparent;
+				assignTaskToGroupMutation(d, { taskId: rowId, groupId: parentGroup });
 			});
 		},
-		[changeDoc, doc.tasksById],
+		[changeDoc, doc.tasksById, doc.groupsById],
 	);
 
 	// The full set of keyboard shortcuts for the table view. Stays consistent
@@ -550,24 +554,24 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 	const columns = useMemo<ColumnDef<TaskListRow>[]>(
 		() => [
 			{
-				accessorKey: "key",
-				header: "Key",
-				size: 120,
+				accessorKey: "number",
+				header: "#",
+				size: 90,
 				cell: ({ row }) => {
 					const r = row.original;
 					const editing = editAll || editingKeyId === r.id;
 					if (editing && changeDoc) {
 						return (
 							<KeyEdit
-								initial={r.key ?? ""}
+								initial={r.numberOverride ?? ""}
 								autoFocus={!editAll}
 								onCommit={(value) => {
 									const trimmed = value.trim();
 									changeDoc((d) => {
 										const t = d.tasksById[r.id];
 										if (!t) return;
-										if (trimmed.length === 0) delete t.key;
-										else t.key = trimmed;
+										if (trimmed.length === 0) delete t.numberOverride;
+										else t.numberOverride = trimmed;
 									});
 									if (!editAll) setEditingKeyId(null);
 								}}
@@ -586,9 +590,13 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 								ev.stopPropagation();
 								if (changeDoc) setEditingKeyId(r.id);
 							}}
-							title={changeDoc ? "Double-click to edit the key" : undefined}
+							title={
+								changeDoc
+									? "Double-click to override the WBS number"
+									: undefined
+							}
 						>
-							{r.key ?? <span className="text-muted-foreground/60">—</span>}
+							{r.number || <span className="text-muted-foreground/60">—</span>}
 						</button>
 					);
 				},
@@ -894,7 +902,7 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 				enableSorting: false,
 				cell: ({ row }) => {
 					const r = row.original;
-					// Editable for tasks (not milestones / containers) regardless of
+					// Editable for tasks (not milestones) regardless of
 					// status — bumping progress from 0 implicitly flips the status to
 					// "in_progress", matching the inspector's logic.
 					const editable = r.kind !== "milestone" && !!changeDoc;
@@ -1021,9 +1029,11 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 	// task row inside a group.
 	const groupedTree = useMemo(() => {
 		if (!grouped) return null;
-		const tree = groupTasksByKey(visibleRows.map((r) => r.original));
-		return tree;
-	}, [grouped, visibleRows]);
+		return buildGroupTree(
+			doc,
+			visibleRows.map((r) => r.original),
+		);
+	}, [grouped, visibleRows, doc]);
 	const visibleRowById = useMemo(
 		() => new Map(visibleRows.map((r) => [r.original.id, r])),
 		[visibleRows],
@@ -1063,7 +1073,7 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 						title={
 							grouped
 								? "Flatten the table"
-								: "Group tasks by their dotted key (e.g. M1.A)"
+								: "Group rows by the group each task belongs to"
 						}
 					>
 						<LayersIcon className="size-3.5" />
@@ -1528,7 +1538,12 @@ function renderGroupedRows({
 						) : (
 							<ChevronDownIcon className="size-3.5 text-muted-foreground" />
 						)}
-						<span className="font-mono text-[11px] text-foreground">
+						{group.number && (
+							<span className="font-mono text-[11px] text-muted-foreground">
+								{group.number}
+							</span>
+						)}
+						<span className="text-[11px] font-medium text-foreground">
 							{group.label}
 						</span>
 						<span className="text-muted-foreground">·</span>
@@ -1859,8 +1874,6 @@ function NoMatches({ onClear }: { onClear: () => void }) {
 }
 
 function KindIcon({ kind, critical }: { kind: TaskKind; critical: boolean }) {
-	if (kind === "container")
-		return <FolderIcon className="size-3.5 text-muted-foreground" />;
 	if (kind === "milestone")
 		return <CircleDotIcon className="size-3.5 text-muted-foreground" />;
 	if (critical) return <ZapIcon className="size-3.5 text-destructive" />;

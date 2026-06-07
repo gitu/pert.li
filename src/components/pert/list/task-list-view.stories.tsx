@@ -26,35 +26,30 @@ const diamondDoc: PertDoc = (() => {
 		id: "A",
 		kind: "task",
 		title: "Design",
-		parentId: null,
 		estimate: est(1, 2, 3),
 	};
 	d.tasksById.B = {
 		id: "B",
 		kind: "task",
 		title: "Build API",
-		parentId: null,
 		estimate: est(2, 4, 6),
 	};
 	d.tasksById.C = {
 		id: "C",
 		kind: "task",
 		title: "Build UI",
-		parentId: null,
 		estimate: est(1, 6, 11),
 	};
 	d.tasksById.D = {
 		id: "D",
 		kind: "task",
 		title: "Ship",
-		parentId: null,
 		estimate: est(1, 2, 3),
 	};
 	d.tasksById.M = {
 		id: "M",
 		kind: "milestone",
 		title: "Beta cutoff",
-		parentId: null,
 	};
 	d.dependenciesById.ab = {
 		id: "ab",
@@ -228,7 +223,9 @@ export const KeyboardHelpPopover: Story = {
 		await userEvent.click(helpButton);
 		await waitFor(() => {
 			const body = within(document.body);
-			expect(body.getByText("Reparent")).toBeInTheDocument();
+			expect(
+				body.getByText("Join the previous row's group"),
+			).toBeInTheDocument();
 			expect(
 				body.getByText(/Insert a task below the selected row/i),
 			).toBeInTheDocument();

@@ -7,7 +7,7 @@ import { createEmptyPertDoc } from "../types";
 const EPS = 1e-9;
 
 function task(id: string, estimate?: Estimate, kind: TaskKind = "task"): Task {
-	return { id, kind, title: id, parentId: null, estimate };
+	return { id, kind, title: id, estimate };
 }
 
 function ftsDep(id: string, from: string, to: string, lag = 0): Dependency {
@@ -163,25 +163,6 @@ describe("computeSchedule — hand-built fixtures", () => {
 		expect(result.schedule.tasks.kickoff.duration).toBe(0);
 		expect(result.schedule.tasks.work.earliestStart).toBe(0);
 		expect(result.schedule.projectDuration).toBe(2);
-	});
-
-	it("ignores edges whose endpoints reference containers (Phase 5 territory)", () => {
-		const doc = buildDoc(
-			[
-				task("box", undefined, "container"),
-				task("solo", {
-					optimistic: 1,
-					mostLikely: 1,
-					pessimistic: 1,
-					unit: "day",
-				}),
-			],
-			[ftsDep("e", "box", "solo")],
-		);
-		const result = computeSchedule(doc);
-		if (!result.ok) throw new Error("expected schedule");
-		expect(Object.keys(result.schedule.tasks)).toEqual(["solo"]);
-		expect(result.schedule.tasks.solo.earliestStart).toBe(0);
 	});
 
 	it("reports a cycle for A→B→A and returns the path", () => {

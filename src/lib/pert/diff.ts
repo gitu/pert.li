@@ -2,6 +2,7 @@ import type {
 	Dependency,
 	DependencyId,
 	Estimate,
+	GroupId,
 	PertDoc,
 	Task,
 	TaskId,
@@ -9,16 +10,16 @@ import type {
 } from "./types";
 
 // Pure structural diff between two PertDoc snapshots. We compare the
-// content-bearing fields the user cares about (title / kind / parentId /
-// key / estimate / notes / status / progress / actualStart / actualFinish
-// for tasks; type + lagDays + endpoints for deps) and ignore layout
-// positions (those drift constantly).
+// content-bearing fields the user cares about (title / kind / groupId /
+// numberOverride / estimate / notes / status / progress / actualStart /
+// actualFinish for tasks; type + lagDays + endpoints for deps) and ignore
+// layout positions (those drift constantly).
 
 export type TaskFieldChange =
 	| { field: "title"; before: string; after: string }
 	| { field: "kind"; before: Task["kind"]; after: Task["kind"] }
-	| { field: "parentId"; before: TaskId | null; after: TaskId | null }
-	| { field: "key"; before: string | null; after: string | null }
+	| { field: "groupId"; before: GroupId | null; after: GroupId | null }
+	| { field: "numberOverride"; before: string | null; after: string | null }
 	| {
 			field: "estimate";
 			before: Estimate | undefined;
@@ -54,13 +55,7 @@ export type DependencyFieldChange =
 			before: TaskId | null;
 			after: TaskId | null;
 	  }
-	| { field: "toTaskId"; before: TaskId | null; after: TaskId | null }
-	| {
-			field: "fromInterfaceId";
-			before: string | null;
-			after: string | null;
-	  }
-	| { field: "toInterfaceId"; before: string | null; after: string | null };
+	| { field: "toTaskId"; before: TaskId | null; after: TaskId | null };
 
 export type DependencyChange = {
 	id: DependencyId;
@@ -142,20 +137,18 @@ function compareTaskFields(b: Task, a: Task): TaskFieldChange[] {
 	if (b.kind !== a.kind) {
 		out.push({ field: "kind", before: b.kind, after: a.kind });
 	}
-	const bp = b.parentId ?? null;
-	const ap = a.parentId ?? null;
+	const bp = b.groupId ?? null;
+	const ap = a.groupId ?? null;
 	if (bp !== ap) {
-		out.push({ field: "parentId", before: bp, after: ap });
+		out.push({ field: "groupId", before: bp, after: ap });
 	}
-	// Normalise the key the same way setKeyMutation does: trim + treat
-	// empty/whitespace as a missing value. Without this, older docs that
-	// stored `key: ""` (or `"  "`) before the trim-on-write rule landed
-	// would show up as a spurious "key" delta against a doc with the key
-	// cleared via the inspector.
-	const bk = normaliseKey(b.key);
-	const ak = normaliseKey(a.key);
+	// Normalise the override the same way setTaskNumberMutation does: trim +
+	// treat empty/whitespace as a missing value, so a cleared override doesn't
+	// show up as a spurious delta against an empty string.
+	const bk = normaliseOverride(b.numberOverride);
+	const ak = normaliseOverride(a.numberOverride);
 	if (bk !== ak) {
-		out.push({ field: "key", before: bk, after: ak });
+		out.push({ field: "numberOverride", before: bk, after: ak });
 	}
 	if (!estimateEqual(b.estimate, a.estimate)) {
 		out.push({ field: "estimate", before: b.estimate, after: a.estimate });
@@ -235,22 +228,12 @@ function compareDependencyFields(
 	if (bt !== at) {
 		out.push({ field: "toTaskId", before: bt, after: at });
 	}
-	const bfi = b.from.interfaceId ?? null;
-	const afi = a.from.interfaceId ?? null;
-	if (bfi !== afi) {
-		out.push({ field: "fromInterfaceId", before: bfi, after: afi });
-	}
-	const bti = b.to.interfaceId ?? null;
-	const ati = a.to.interfaceId ?? null;
-	if (bti !== ati) {
-		out.push({ field: "toInterfaceId", before: bti, after: ati });
-	}
 	return out;
 }
 
-function normaliseKey(key: string | undefined | null): string | null {
-	if (key === undefined || key === null) return null;
-	const trimmed = key.trim();
+function normaliseOverride(value: string | undefined | null): string | null {
+	if (value === undefined || value === null) return null;
+	const trimmed = value.trim();
 	return trimmed.length === 0 ? null : trimmed;
 }
 

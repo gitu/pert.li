@@ -1,26 +1,27 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	addDependencyMutation,
-	addInterfaceMutation,
 	addTaskMutation,
-	moveTaskMutation,
+	assignTaskToGroupMutation,
+	createGroupMutation,
+	deleteGroupMutation,
 	newId,
-	pinDependencyMutation,
 	removeDependencyMutation,
-	removeInterfaceMutation,
 	removeTaskMutation,
+	renameGroupMutation,
 	setActualDatesMutation,
 	setDependencyMutation,
 	setEstimateMutation,
-	setInterfaceMutation,
-	setKeyMutation,
+	setGroupParentMutation,
 	setKindMutation,
 	setNotesMutation,
 	setProgressMutation,
 	setStatusMutation,
+	setTaskNumberMutation,
 	setTitleMutation,
 	summarizeProject,
 } from "#/lib/ai/tool-mutators";
+import { computeNumbering } from "#/lib/pert/numbering";
 import { createEmptyPertDoc, type PertDoc } from "#/lib/pert/types";
 
 // todayIsoDate() reads `new Date()` — freezing the clock at a known UTC
@@ -75,17 +76,13 @@ describe("addTaskMutation", () => {
 		expect(d.tasksById.task_x.estimate?.unit).toBe("hour");
 	});
 
-	it("auto-creates default Entry + Exit interfaces for new containers", () => {
+	it("assigns a task to an existing group", () => {
 		const d = createEmptyPertDoc("p");
-		addTaskMutation(d, { title: "Workstream", kind: "container" }, "c1");
-		const ifs = Object.values(d.interfacesByContainerId.c1 ?? {});
-		expect(ifs.map((i) => i.kind).sort()).toEqual(["entry", "exit"]);
-	});
-
-	it("does not auto-create interfaces for non-container kinds", () => {
-		const d = createEmptyPertDoc("p");
-		addTaskMutation(d, { title: "Leaf" }, "t1");
-		expect(d.interfacesByContainerId.t1).toBeUndefined();
+		const g = createGroupMutation(d, { name: "Backend", id: "grp_1" });
+		expect(g).toEqual({ ok: true, id: "grp_1" });
+		const res = addTaskMutation(d, { title: "Leaf", groupId: "grp_1" }, "t1");
+		expect(res).toEqual({ id: "t1" });
+		expect(d.tasksById.t1.groupId).toBe("grp_1");
 	});
 
 	it("rejects an id that already exists instead of overwriting", () => {
@@ -97,37 +94,23 @@ describe("addTaskMutation", () => {
 		expect(d.tasksById.dup.title).toBe("First");
 	});
 
-	it("rejects a parentId that doesn't exist", () => {
+	it("rejects a groupId that doesn't exist", () => {
 		const d = createEmptyPertDoc("p");
-		const res = addTaskMutation(
-			d,
-			{ title: "Orphan", parentId: "ghost" },
-			"t1",
-		);
-		expect(res).toEqual({
-			ok: false,
-			error: "parent container ghost not found",
-		});
+		const res = addTaskMutation(d, { title: "Orphan", groupId: "ghost" }, "t1");
+		expect(res).toEqual({ ok: false, error: "group ghost not found" });
 		expect(d.tasksById.t1).toBeUndefined();
 	});
 
-	it("rejects a parentId that points at a non-container", () => {
-		const d = createEmptyPertDoc("p");
-		addTaskMutation(d, { title: "Leaf" }, "leaf");
-		const res = addTaskMutation(d, { title: "Child", parentId: "leaf" }, "t1");
-		expect(res).toEqual({ ok: false, error: "parent leaf is not a container" });
-	});
-
-	it("accepts a parentId listed in pendingContainerIds (forward reference)", () => {
+	it("accepts a groupId listed in pendingGroupIds (forward reference)", () => {
 		const d = createEmptyPertDoc("p");
 		const res = addTaskMutation(
 			d,
-			{ title: "Child", parentId: "future_container" },
+			{ title: "Child", groupId: "future_group" },
 			"t1",
-			{ pendingContainerIds: new Set(["future_container"]) },
+			{ pendingGroupIds: new Set(["future_group"]) },
 		);
 		expect(res).toEqual({ id: "t1" });
-		expect(d.tasksById.t1.parentId).toBe("future_container");
+		expect(d.tasksById.t1.groupId).toBe("future_group");
 	});
 });
 
@@ -231,23 +214,6 @@ describe("addDependencyMutation", () => {
 			addDependencyMutation(d, { fromTaskId: "ghost", toTaskId: "task_a" }),
 		).toEqual({ ok: false, error: "task ghost not found" });
 	});
-
-	it("rejects container endpoints with a helpful error", () => {
-		const d = seed();
-		addTaskMutation(d, { title: "Box", kind: "container" }, "c1");
-		expect(
-			addDependencyMutation(d, { fromTaskId: "c1", toTaskId: "task_a" }),
-		).toEqual({
-			ok: false,
-			error: "cannot depend from container c1 — pick a specific leaf inside it",
-		});
-		expect(
-			addDependencyMutation(d, { fromTaskId: "task_a", toTaskId: "c1" }),
-		).toEqual({
-			ok: false,
-			error: "cannot depend on container c1 — pick a specific leaf inside it",
-		});
-	});
 });
 
 describe("removeTaskMutation", () => {
@@ -263,20 +229,12 @@ describe("removeTaskMutation", () => {
 		expect(d.dependenciesById.dep_1).toBeUndefined();
 	});
 
-	it("promotes children to top-level rather than cascading", () => {
+	it("errors on unknown task", () => {
 		const d = seed();
-		addTaskMutation(d, { title: "Box", kind: "container" }, "box");
-		addTaskMutation(d, { title: "Child", parentId: "box" }, "task_child");
-		removeTaskMutation(d, { taskId: "box" });
-		expect(d.tasksById.task_child.parentId).toBeNull();
-	});
-
-	it("drops the interface bucket when a container is removed", () => {
-		const d = seed();
-		addTaskMutation(d, { title: "Workstream", kind: "container" }, "c1");
-		expect(d.interfacesByContainerId.c1).toBeDefined();
-		removeTaskMutation(d, { taskId: "c1" });
-		expect(d.interfacesByContainerId.c1).toBeUndefined();
+		expect(removeTaskMutation(d, { taskId: "ghost" })).toEqual({
+			ok: false,
+			error: "task ghost not found",
+		});
 	});
 });
 
@@ -309,6 +267,35 @@ describe("summarizeProject", () => {
 				type: "finish_to_start",
 			},
 		]);
+	});
+
+	it("surfaces groups with their derived WBS numbers", () => {
+		const d = createEmptyPertDoc("Test");
+		createGroupMutation(d, { name: "Backend", id: "grp_1" });
+		createGroupMutation(d, {
+			name: "API",
+			parentGroupId: "grp_1",
+			id: "grp_2",
+		});
+		addTaskMutation(d, { title: "Leaf", groupId: "grp_2" }, "task_a");
+		const summary = summarizeProject(d);
+		const g1 = summary.groups.find((g) => g.id === "grp_1");
+		const g2 = summary.groups.find((g) => g.id === "grp_2");
+		expect(g1).toEqual({
+			id: "grp_1",
+			name: "Backend",
+			parentGroupId: null,
+			number: "1",
+		});
+		expect(g2).toEqual({
+			id: "grp_2",
+			name: "API",
+			parentGroupId: "grp_1",
+			number: "1.1",
+		});
+		const a = summary.tasks.find((t) => t.id === "task_a");
+		expect(a?.groupId).toBe("grp_2");
+		expect(a?.number).toBe("1.1.1");
 	});
 });
 
@@ -348,42 +335,6 @@ describe("setKindMutation", () => {
 			error: "task ghost not found",
 		});
 	});
-
-	it("auto-creates default interfaces when converting to a container", () => {
-		const d = seed();
-		setKindMutation(d, { taskId: "task_a", kind: "container" });
-		const ifs = Object.values(d.interfacesByContainerId.task_a ?? {});
-		expect(ifs.map((i) => i.kind).sort()).toEqual(["entry", "exit"]);
-	});
-
-	it("drops the interface bucket when converting away from container", () => {
-		const d = seed();
-		setKindMutation(d, { taskId: "task_a", kind: "container" });
-		setKindMutation(d, { taskId: "task_a", kind: "task" });
-		expect(d.interfacesByContainerId.task_a).toBeUndefined();
-	});
-});
-
-describe("setKeyMutation", () => {
-	it("sets and trims the key", () => {
-		const d = seed();
-		setKeyMutation(d, { taskId: "task_a", key: "  M1.A  " });
-		expect(d.tasksById.task_a.key).toBe("M1.A");
-	});
-
-	it("clears the key on empty string", () => {
-		const d = seed();
-		d.tasksById.task_a.key = "M1";
-		setKeyMutation(d, { taskId: "task_a", key: "" });
-		expect(d.tasksById.task_a.key).toBeUndefined();
-	});
-
-	it("clears the key on null", () => {
-		const d = seed();
-		d.tasksById.task_a.key = "M1";
-		setKeyMutation(d, { taskId: "task_a", key: null });
-		expect(d.tasksById.task_a.key).toBeUndefined();
-	});
 });
 
 describe("setNotesMutation", () => {
@@ -398,72 +349,6 @@ describe("setNotesMutation", () => {
 		d.tasksById.task_a.notes = "x";
 		setNotesMutation(d, { taskId: "task_a", notes: null });
 		expect(d.tasksById.task_a.notes).toBeUndefined();
-	});
-});
-
-describe("moveTaskMutation", () => {
-	function withContainer(): PertDoc {
-		const d = seed();
-		addTaskMutation(d, { title: "C", kind: "container" }, "task_c");
-		return d;
-	}
-
-	it("reparents a task into a container", () => {
-		const d = withContainer();
-		const res = moveTaskMutation(d, {
-			taskId: "task_a",
-			parentId: "task_c",
-		});
-		expect(res).toEqual({ ok: true });
-		expect(d.tasksById.task_a.parentId).toBe("task_c");
-	});
-
-	it("promotes to top level on parentId=null", () => {
-		const d = withContainer();
-		d.tasksById.task_a.parentId = "task_c";
-		moveTaskMutation(d, { taskId: "task_a", parentId: null });
-		expect(d.tasksById.task_a.parentId).toBeNull();
-	});
-
-	it("is a no-op when parentId already matches", () => {
-		const d = withContainer();
-		expect(moveTaskMutation(d, { taskId: "task_a", parentId: null })).toEqual({
-			ok: true,
-		});
-	});
-
-	it("rejects moving into a non-container", () => {
-		const d = withContainer();
-		expect(
-			moveTaskMutation(d, { taskId: "task_a", parentId: "task_b" }),
-		).toEqual({ ok: false, error: "task task_b is not a container" });
-	});
-
-	it("rejects unknown container", () => {
-		const d = withContainer();
-		expect(
-			moveTaskMutation(d, { taskId: "task_a", parentId: "ghost" }),
-		).toEqual({ ok: false, error: "container ghost not found" });
-	});
-
-	it("rejects a move that would create a hierarchy cycle", () => {
-		const d = seed();
-		addTaskMutation(d, { title: "Outer", kind: "container" }, "task_outer");
-		addTaskMutation(
-			d,
-			{ title: "Inner", kind: "container", parentId: "task_outer" },
-			"task_inner",
-		);
-		const res = moveTaskMutation(d, {
-			taskId: "task_outer",
-			parentId: "task_inner",
-		});
-		expect(res).toMatchObject({ ok: false });
-		if ("error" in res) {
-			// The message teaches the model what went wrong and how to fix it.
-			expect(res.error).toContain("cycle in the hierarchy");
-			expect(res.error).toContain("cannot be moved into its own descendant");
-		}
 	});
 });
 
@@ -663,9 +548,9 @@ describe("setDependencyMutation", () => {
 });
 
 describe("summarizeProject (extended fields)", () => {
-	it("surfaces key, status, progress, notes, actual dates, and lag", () => {
+	it("surfaces number override, status, progress, notes, actual dates, and lag", () => {
 		const d = seed();
-		d.tasksById.task_a.key = "M1.A";
+		d.tasksById.task_a.numberOverride = "M1.A";
 		d.tasksById.task_a.status = "in_progress";
 		d.tasksById.task_a.progress = 40;
 		d.tasksById.task_a.notes = "watch out for X";
@@ -678,7 +563,8 @@ describe("summarizeProject (extended fields)", () => {
 		d.dependenciesById.dep_1.lagDays = 5;
 		const summary = summarizeProject(d);
 		const a = summary.tasks.find((t) => t.id === "task_a");
-		expect(a?.key).toBe("M1.A");
+		// An override wins over the derived number in the summary.
+		expect(a?.number).toBe("M1.A");
 		expect(a?.status).toBe("in_progress");
 		expect(a?.progress).toBe(40);
 		expect(a?.notes).toBe("watch out for X");
@@ -687,203 +573,210 @@ describe("summarizeProject (extended fields)", () => {
 	});
 });
 
-function seedWithContainer(): PertDoc {
-	const d = createEmptyPertDoc("p");
-	addTaskMutation(d, { title: "Workstream", kind: "container" }, "c1");
-	addTaskMutation(d, { title: "Inside", parentId: "c1" }, "leaf");
-	return d;
-}
-
-describe("addInterfaceMutation", () => {
-	it("creates an interface bound to a descendant", () => {
-		const d = seedWithContainer();
-		const res = addInterfaceMutation(
-			d,
-			{
-				containerId: "c1",
-				kind: "entry",
-				label: "Begin",
-				taskRef: "leaf",
-			},
-			"if_x",
-		);
-		expect(res).toEqual({ id: "if_x" });
-		expect(d.interfacesByContainerId.c1.if_x).toEqual({
-			id: "if_x",
-			containerId: "c1",
-			kind: "entry",
-			label: "Begin",
-			taskRef: "leaf",
-		});
-	});
-
-	it("rejects unknown containers and non-container targets", () => {
-		const d = seedWithContainer();
-		expect(
-			addInterfaceMutation(d, { containerId: "leaf", kind: "entry" }),
-		).toEqual({ ok: false, error: "task leaf is not a container" });
-		expect(
-			addInterfaceMutation(d, { containerId: "ghost", kind: "entry" }),
-		).toEqual({ ok: false, error: "task ghost not found" });
-	});
-
-	it("rejects an unknown taskRef", () => {
-		const d = seedWithContainer();
-		expect(
-			addInterfaceMutation(d, {
-				containerId: "c1",
-				kind: "entry",
-				taskRef: "ghost",
-			}),
-		).toEqual({ ok: false, error: "task ghost not found" });
-	});
-});
-
-describe("setInterfaceMutation", () => {
-	it("renames an interface", () => {
-		const d = seedWithContainer();
-		const created = addInterfaceMutation(d, {
-			containerId: "c1",
-			kind: "entry",
-		});
-		if ("ok" in created) throw new Error("expected success");
-		setInterfaceMutation(d, {
-			containerId: "c1",
-			interfaceId: created.id,
-			label: "Renamed",
-		});
-		expect(d.interfacesByContainerId.c1[created.id].label).toBe("Renamed");
-	});
-
-	it("unbinds taskRef when passed null", () => {
-		const d = seedWithContainer();
-		const created = addInterfaceMutation(d, {
-			containerId: "c1",
-			kind: "exit",
-			taskRef: "leaf",
-		});
-		if ("ok" in created) throw new Error("expected success");
-		setInterfaceMutation(d, {
-			containerId: "c1",
-			interfaceId: created.id,
-			taskRef: null,
-		});
-		expect(d.interfacesByContainerId.c1[created.id].taskRef).toBeUndefined();
-	});
-});
-
-describe("removeInterfaceMutation", () => {
-	it("removes an interface and is noisy when absent", () => {
-		const d = seedWithContainer();
-		const created = addInterfaceMutation(d, {
-			containerId: "c1",
-			kind: "exit",
-		});
-		if ("ok" in created) throw new Error("expected success");
-		removeInterfaceMutation(d, {
-			containerId: "c1",
-			interfaceId: created.id,
-		});
-		expect(d.interfacesByContainerId.c1[created.id]).toBeUndefined();
-		expect(
-			removeInterfaceMutation(d, {
-				containerId: "c1",
-				interfaceId: "ghost",
-			}),
-		).toEqual({ ok: false, error: "interface ghost not found on c1" });
-	});
-});
-
-describe("pinDependencyMutation", () => {
-	function seedWithDep(): { doc: PertDoc; depId: string; ifaceId: string } {
-		const d = seedWithContainer();
-		addTaskMutation(d, { title: "Outside" }, "out");
-		const dep = addDependencyMutation(
-			d,
-			{ fromTaskId: "out", toTaskId: "leaf" },
-			"dep_1",
-		);
-		if ("ok" in dep && !dep.ok) throw new Error("dep failed");
-		const iface = addInterfaceMutation(
-			d,
-			{ containerId: "c1", kind: "entry", taskRef: "leaf" },
-			"if_e",
-		);
-		if ("ok" in iface) throw new Error("expected success");
-		return { doc: d, depId: "dep_1", ifaceId: "if_e" };
+describe("group mutators", () => {
+	function withGroups(): PertDoc {
+		const d = createEmptyPertDoc("p");
+		createGroupMutation(d, { name: "Backend", id: "g1" });
+		createGroupMutation(d, { name: "Frontend", id: "g2" });
+		return d;
 	}
 
-	it("pins the to-side interfaceId without changing taskId", () => {
-		const { doc, depId, ifaceId } = seedWithDep();
-		pinDependencyMutation(doc, {
-			dependencyId: depId,
-			side: "to",
-			interfaceId: ifaceId,
+	describe("createGroupMutation", () => {
+		it("assigns sibling order and returns the id", () => {
+			const d = createEmptyPertDoc("p");
+			const first = createGroupMutation(d, { name: "One", id: "g1" });
+			const second = createGroupMutation(d, { name: "Two", id: "g2" });
+			expect(first).toEqual({ ok: true, id: "g1" });
+			expect(second).toEqual({ ok: true, id: "g2" });
+			expect(d.groupsById.g1.order).toBe(0);
+			expect(d.groupsById.g2.order).toBe(1);
+			expect(d.groupsById.g1.parentGroupId).toBeNull();
 		});
-		expect(doc.dependenciesById[depId].to.interfaceId).toBe(ifaceId);
-		expect(doc.dependenciesById[depId].to.taskId).toBe("leaf");
+
+		it("generates an id when none is given", () => {
+			const d = createEmptyPertDoc("p");
+			const res = createGroupMutation(d, { name: "Auto" });
+			expect(res.ok).toBe(true);
+			if (res.ok) {
+				expect(res.id.startsWith("grp_")).toBe(true);
+				expect(d.groupsById[res.id].name).toBe("Auto");
+			}
+		});
+
+		it("nests under an existing parent group", () => {
+			const d = withGroups();
+			const res = createGroupMutation(d, {
+				name: "API",
+				parentGroupId: "g1",
+				id: "g1a",
+			});
+			expect(res).toEqual({ ok: true, id: "g1a" });
+			expect(d.groupsById.g1a.parentGroupId).toBe("g1");
+		});
+
+		it("rejects an unknown parent group", () => {
+			const d = createEmptyPertDoc("p");
+			expect(
+				createGroupMutation(d, { name: "Orphan", parentGroupId: "ghost" }),
+			).toEqual({ ok: false, error: "parent group ghost not found" });
+		});
 	});
 
-	it("clears the hint when interfaceId is null", () => {
-		const { doc, depId, ifaceId } = seedWithDep();
-		pinDependencyMutation(doc, {
-			dependencyId: depId,
-			side: "to",
-			interfaceId: ifaceId,
+	describe("renameGroupMutation", () => {
+		it("renames and trims", () => {
+			const d = withGroups();
+			expect(
+				renameGroupMutation(d, { groupId: "g1", name: "  Core  " }),
+			).toEqual({ ok: true });
+			expect(d.groupsById.g1.name).toBe("Core");
 		});
-		pinDependencyMutation(doc, {
-			dependencyId: depId,
-			side: "to",
-			interfaceId: null,
+
+		it("errors on unknown group", () => {
+			const d = withGroups();
+			expect(renameGroupMutation(d, { groupId: "ghost", name: "x" })).toEqual({
+				ok: false,
+				error: "group ghost not found",
+			});
 		});
-		expect(doc.dependenciesById[depId].to.interfaceId).toBeUndefined();
 	});
 
-	it("rejects an unknown interfaceId", () => {
-		const { doc, depId } = seedWithDep();
-		expect(
-			pinDependencyMutation(doc, {
-				dependencyId: depId,
-				side: "to",
-				interfaceId: "ghost",
-			}),
-		).toEqual({ ok: false, error: "interface ghost not found" });
-	});
-});
+	describe("setGroupParentMutation", () => {
+		it("re-parents a group under another", () => {
+			const d = withGroups();
+			expect(
+				setGroupParentMutation(d, { groupId: "g2", parentGroupId: "g1" }),
+			).toEqual({ ok: true });
+			expect(d.groupsById.g2.parentGroupId).toBe("g1");
+		});
 
-describe("summarizeProject — interfaces", () => {
-	it("includes interfaces and dependency hints", () => {
-		const d = seedWithContainer();
-		const iface = addInterfaceMutation(
-			d,
-			{
-				containerId: "c1",
-				kind: "entry",
-				label: "Begin",
-				taskRef: "leaf",
-			},
-			"if_e",
-		);
-		if ("ok" in iface) throw new Error("expected success");
-		addTaskMutation(d, { title: "Outside" }, "out");
-		addDependencyMutation(d, { fromTaskId: "out", toTaskId: "leaf" }, "dep_1");
-		pinDependencyMutation(d, {
-			dependencyId: "dep_1",
-			side: "to",
-			interfaceId: "if_e",
+		it("promotes a group to root with parentGroupId=null", () => {
+			const d = withGroups();
+			setGroupParentMutation(d, { groupId: "g2", parentGroupId: "g1" });
+			setGroupParentMutation(d, { groupId: "g2", parentGroupId: null });
+			expect(d.groupsById.g2.parentGroupId).toBeNull();
 		});
-		const summary = summarizeProject(d);
-		expect(summary.interfaces).toHaveLength(3);
-		expect(summary.interfaces).toContainEqual({
-			id: "if_e",
-			containerId: "c1",
-			kind: "entry",
-			label: "Begin",
-			taskRef: "leaf",
+
+		it("rejects a move that would create a group cycle", () => {
+			const d = withGroups();
+			// g2 becomes a child of g1…
+			setGroupParentMutation(d, { groupId: "g2", parentGroupId: "g1" });
+			// …so moving g1 under g2 would close a cycle.
+			expect(
+				setGroupParentMutation(d, { groupId: "g1", parentGroupId: "g2" }),
+			).toEqual({ ok: false, error: "would create a group cycle" });
+			// The doc is untouched.
+			expect(d.groupsById.g1.parentGroupId).toBeNull();
 		});
-		expect(summary.interfaces).toContainEqual(
-			expect.objectContaining({ kind: "exit", label: "Exit" }),
-		);
-		expect(summary.dependencies[0].toInterfaceId).toBe("if_e");
+	});
+
+	describe("deleteGroupMutation", () => {
+		it("promotes member tasks to the parent group and re-parents child groups to the grandparent", () => {
+			const d = createEmptyPertDoc("p");
+			createGroupMutation(d, { name: "Parent", id: "P" });
+			createGroupMutation(d, { name: "Child", parentGroupId: "P", id: "C" });
+			createGroupMutation(d, {
+				name: "Grandchild",
+				parentGroupId: "C",
+				id: "GC",
+			});
+			addTaskMutation(d, { title: "Member", groupId: "C" }, "t_member");
+
+			const res = deleteGroupMutation(d, { groupId: "C" });
+			expect(res).toEqual({ ok: true, promotedTasks: 1, promotedGroups: 1 });
+			// The group is gone…
+			expect(d.groupsById.C).toBeUndefined();
+			// …but its member task survives, promoted to the parent group.
+			expect(d.tasksById.t_member).toBeDefined();
+			expect(d.tasksById.t_member.groupId).toBe("P");
+			// …and its child group survives, re-parented to the grandparent.
+			expect(d.groupsById.GC).toBeDefined();
+			expect(d.groupsById.GC.parentGroupId).toBe("P");
+		});
+
+		it("ungroups member tasks when a root group is deleted", () => {
+			const d = createEmptyPertDoc("p");
+			createGroupMutation(d, { name: "Root", id: "R" });
+			addTaskMutation(d, { title: "Member", groupId: "R" }, "t_member");
+			const res = deleteGroupMutation(d, { groupId: "R" });
+			expect(res).toEqual({ ok: true, promotedTasks: 1, promotedGroups: 0 });
+			expect(d.tasksById.t_member).toBeDefined();
+			expect(d.tasksById.t_member.groupId).toBeNull();
+		});
+
+		it("errors on unknown group", () => {
+			const d = withGroups();
+			expect(deleteGroupMutation(d, { groupId: "ghost" })).toEqual({
+				ok: false,
+				error: "group ghost not found",
+			});
+		});
+	});
+
+	describe("assignTaskToGroupMutation", () => {
+		it("assigns and clears a task's group", () => {
+			const d = withGroups();
+			addTaskMutation(d, { title: "T" }, "t1");
+			expect(
+				assignTaskToGroupMutation(d, { taskId: "t1", groupId: "g1" }),
+			).toEqual({ ok: true });
+			expect(d.tasksById.t1.groupId).toBe("g1");
+			assignTaskToGroupMutation(d, { taskId: "t1", groupId: null });
+			expect(d.tasksById.t1.groupId).toBeNull();
+		});
+
+		it("rejects an unknown group", () => {
+			const d = withGroups();
+			addTaskMutation(d, { title: "T" }, "t1");
+			expect(
+				assignTaskToGroupMutation(d, { taskId: "t1", groupId: "ghost" }),
+			).toEqual({ ok: false, error: "group ghost not found" });
+		});
+	});
+
+	describe("setTaskNumberMutation", () => {
+		it("sets and clears the number override", () => {
+			const d = seed();
+			expect(
+				setTaskNumberMutation(d, { taskId: "task_a", number: "  M1.A  " }),
+			).toEqual({ ok: true });
+			expect(d.tasksById.task_a.numberOverride).toBe("M1.A");
+			setTaskNumberMutation(d, { taskId: "task_a", number: null });
+			expect(d.tasksById.task_a.numberOverride).toBeUndefined();
+		});
+
+		it("clears the override on empty string", () => {
+			const d = seed();
+			d.tasksById.task_a.numberOverride = "X";
+			setTaskNumberMutation(d, { taskId: "task_a", number: "" });
+			expect(d.tasksById.task_a.numberOverride).toBeUndefined();
+		});
+	});
+
+	// Headline: moving a task between groups recomputes its derived number,
+	// unless the task pins a manual override.
+	describe("derived numbering follows group moves", () => {
+		it("a task with no override gets a different derived number after a move", () => {
+			const d = withGroups(); // g1 → "1", g2 → "2"
+			addTaskMutation(d, { title: "T" }, "t1");
+			assignTaskToGroupMutation(d, { taskId: "t1", groupId: "g1" });
+			const before = computeNumbering(d).tasks.t1;
+			assignTaskToGroupMutation(d, { taskId: "t1", groupId: "g2" });
+			const after = computeNumbering(d).tasks.t1;
+			expect(before).toBe("1.1");
+			expect(after).toBe("2.1");
+			expect(after).not.toBe(before);
+		});
+
+		it("a task WITH an override keeps its number across a move", () => {
+			const d = withGroups();
+			addTaskMutation(d, { title: "T" }, "t1");
+			assignTaskToGroupMutation(d, { taskId: "t1", groupId: "g1" });
+			setTaskNumberMutation(d, { taskId: "t1", number: "PINNED" });
+			const before = computeNumbering(d).tasks.t1;
+			assignTaskToGroupMutation(d, { taskId: "t1", groupId: "g2" });
+			const after = computeNumbering(d).tasks.t1;
+			expect(before).toBe("PINNED");
+			expect(after).toBe("PINNED");
+		});
 	});
 });

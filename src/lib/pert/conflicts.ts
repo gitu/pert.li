@@ -1,4 +1,4 @@
-import type { Estimate, PertDoc, Task, TaskId } from "./types";
+import type { Estimate, GroupId, PertDoc, Task, TaskId } from "./types";
 
 // Pure conflict types and resolution mutators. The Automerge-using
 // `readTaskConflicts` reader lives in `read-conflicts.ts` so this module
@@ -14,8 +14,8 @@ export type TaskFieldConflict =
 			values: Array<{ opId: string; value: Estimate | undefined }>;
 	  }
 	| {
-			field: "parentId";
-			values: Array<{ opId: string; value: TaskId | null }>;
+			field: "groupId";
+			values: Array<{ opId: string; value: GroupId | null }>;
 	  }
 	| {
 			field: "notes";
@@ -80,8 +80,8 @@ function applyField(
 			if (value) task.estimate = value as Estimate;
 			else delete task.estimate;
 			return;
-		case "parentId":
-			task.parentId = (value as TaskId | null | undefined) ?? null;
+		case "groupId":
+			task.groupId = (value as GroupId | null | undefined) ?? null;
 			return;
 		case "notes":
 			if (typeof value === "string" && value.length > 0) task.notes = value;

@@ -33,7 +33,6 @@ function StoryHarness({
 			id: "T1",
 			kind: "task",
 			title: "Ship the beta",
-			parentId: null,
 			estimate: {
 				optimistic: 2,
 				mostLikely: 5,
@@ -95,7 +94,7 @@ export const Editable: Story = {
 		await userEvent.click(await canvas.findByTestId("inspector-delete"));
 
 		await waitFor(() =>
-			expect(canvas.getByText(/Select a task to edit/i)).toBeVisible(),
+			expect(canvas.getByText(/Select a task or group to edit/i)).toBeVisible(),
 		);
 	},
 };
@@ -122,6 +121,6 @@ export const ReadOnly: Story = {
 
 		// Selection was never cleared → the read-only surface is still mounted.
 		await expect(canvas.getByTestId("inspector-readonly-banner")).toBeVisible();
-		expect(canvas.queryByText(/Select a task to edit/i)).toBeNull();
+		expect(canvas.queryByText(/Select a task or group to edit/i)).toBeNull();
 	},
 };

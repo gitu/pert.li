@@ -48,7 +48,6 @@ const cleanAdd: MergeChange = {
 		id: "C2",
 		kind: "task",
 		title: "Cross-functional sync",
-		parentId: null,
 	},
 	mainEntity: null,
 	suggestedSide: "branch",
@@ -78,7 +77,6 @@ const conflictRemovedVsModified: MergeChange = {
 		id: "D",
 		kind: "task",
 		title: "QA gate (renamed by main)",
-		parentId: null,
 	},
 	suggestedSide: "main",
 };

@@ -25,7 +25,6 @@ function withTask(actor: string): Automerge.Doc<PertDoc> {
 			id: "T",
 			kind: "task",
 			title: "Task",
-			parentId: null,
 			estimate: est(1, 2, 4),
 		};
 	});
@@ -52,7 +51,6 @@ describe("readTaskConflicts", () => {
 				id: "T",
 				kind: "task",
 				title: "Task",
-				parentId: null,
 				estimate: est(1, 2, 4),
 			};
 		});
@@ -81,7 +79,6 @@ describe("readTaskConflicts", () => {
 				id: "T",
 				kind: "task",
 				title: "Original",
-				parentId: null,
 			};
 		});
 		const a = Automerge.change(

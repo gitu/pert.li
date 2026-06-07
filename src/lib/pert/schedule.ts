@@ -13,9 +13,9 @@ import type {
 // callers cache the result with useMemo / TanStack Store. Never written back
 // into the Automerge doc.
 //
-// Scope (Phase 3):
-//  - Leaf tasks only (kind !== "container"). Containers and interface-routed
-//    edges land in Phase 5 (projection).
+// Scope:
+//  - Every task schedules. Groups are organisational only — they add no
+//    scheduling constraints; the projection layer rolls their members up.
 //  - All four dependency types are honoured.
 //  - Lag is applied as additional days on the edge.
 //  - Tasks with no estimate are treated as zero-duration (milestone-like).
@@ -83,7 +83,6 @@ export function variance(estimate: Estimate | undefined): number {
 
 export function durationOf(task: Task): number {
 	if (task.kind === "milestone") return 0;
-	if (task.kind === "container") return 0;
 	return expected(task.estimate);
 }
 
@@ -142,7 +141,6 @@ function collectSchedulable(doc: PertDoc): {
 	const tasks: Record<TaskId, Task> = {};
 	const taskIds: TaskId[] = [];
 	for (const [id, task] of Object.entries(doc.tasksById)) {
-		if (task.kind === "container") continue;
 		tasks[id] = task;
 		taskIds.push(id);
 	}
@@ -173,7 +171,7 @@ function collectSchedulable(doc: PertDoc): {
 function toSchedulable(dep: Dependency): SchedulableDep | null {
 	const fromId = dep.from.taskId;
 	const toId = dep.to.taskId;
-	if (!fromId || !toId) return null; // interface-routed edges arrive in Phase 5
+	if (!fromId || !toId) return null;
 	return { from: fromId, to: toId, type: dep.type, lag: dep.lagDays ?? 0 };
 }
 

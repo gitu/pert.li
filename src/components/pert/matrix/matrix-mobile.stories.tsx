@@ -14,7 +14,6 @@ function seedDoc(): PertDoc {
 			id,
 			kind: "task",
 			title: `Task ${id}`,
-			parentId: null,
 			estimate: { optimistic: 1, mostLikely: 2, pessimistic: 4, unit: "day" },
 		};
 	}

@@ -1,146 +1,156 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
-	getAncestors,
-	getChildren,
-	getContainers,
-	getDescendants,
-	getNearestCollapsedAncestor,
-	getRootTasks,
-	isWithin,
+	getChildGroups,
+	getGroupAncestors,
+	getGroupDescendants,
+	getNearestCollapsedAncestorGroup,
+	getNearestCollapsedGroup,
+	getRootGroups,
+	getTasksInGroup,
+	getTasksInGroupDeep,
+	isGroupWithin,
 } from "../hierarchy";
-import type { PertDoc, Task, TaskKind } from "../types";
+import type { Group, PertDoc, Task } from "../types";
 import { createEmptyPertDoc } from "../types";
 
-function t(
+function group(
 	id: string,
-	parentId: string | null = null,
-	kind: TaskKind = "task",
-): Task {
-	return { id, kind, title: id, parentId };
+	parentGroupId: string | null = null,
+	order = 0,
+): Group {
+	return { id, name: id, parentGroupId, order };
 }
 
-function build(tasks: Task[]): PertDoc {
+function task(id: string, groupId: string | null = null, order = 0): Task {
+	return { id, kind: "task", title: id, groupId, order };
+}
+
+function build(groups: Group[], tasks: Task[]): PertDoc {
 	const doc = createEmptyPertDoc("h");
-	for (const task of tasks) doc.tasksById[task.id] = task;
+	for (const g of groups) doc.groupsById[g.id] = g;
+	for (const t of tasks) doc.tasksById[t.id] = t;
 	return doc;
 }
 
-describe("hierarchy helpers", () => {
-	const doc = build([
-		t("root", null, "container"),
-		t("childA", "root"),
-		t("group", "root", "container"),
-		t("leaf1", "group"),
-		t("leaf2", "group"),
-		t("orphan"),
-	]);
+describe("group-tree helpers", () => {
+	// root ─┬─ b (order 0)
+	//       └─ a (order 1) ─┬─ leaf1
+	//                       └─ leaf2
+	// root's direct member: childTask. orphan is ungrouped.
+	const doc = build(
+		[group("root", null, 0), group("a", "root", 1), group("b", "root", 0)],
+		[
+			task("childTask", "root", 0),
+			task("leaf1", "a", 0),
+			task("leaf2", "a", 1),
+			task("orphan", null, 0),
+		],
+	);
 
-	it("getChildren returns only direct children", () => {
-		expect(
-			getChildren(doc, "root")
-				.map((x) => x.id)
-				.sort(),
-		).toEqual(["childA", "group"]);
-		expect(
-			getChildren(doc, "group")
-				.map((x) => x.id)
-				.sort(),
-		).toEqual(["leaf1", "leaf2"]);
-		expect(getChildren(doc, "childA")).toEqual([]);
+	it("getChildGroups returns direct child groups sorted by (order, id)", () => {
+		expect(getChildGroups(doc, "root").map((g) => g.id)).toEqual(["b", "a"]);
+		expect(getChildGroups(doc, "a")).toEqual([]);
 	});
 
-	it("getRootTasks returns null-parent tasks", () => {
-		expect(
-			getRootTasks(doc)
-				.map((x) => x.id)
-				.sort(),
-		).toEqual(["orphan", "root"]);
+	it("getRootGroups returns top-level groups", () => {
+		expect(getRootGroups(doc).map((g) => g.id)).toEqual(["root"]);
 	});
 
-	it("getAncestors walks parentId upward", () => {
-		expect(getAncestors(doc, "leaf1")).toEqual(["group", "root"]);
-		expect(getAncestors(doc, "childA")).toEqual(["root"]);
-		expect(getAncestors(doc, "root")).toEqual([]);
-		expect(getAncestors(doc, "missing")).toEqual([]);
+	it("getGroupAncestors walks parentGroupId upward", () => {
+		expect(getGroupAncestors(doc, "a")).toEqual(["root"]);
+		expect(getGroupAncestors(doc, "root")).toEqual([]);
+		expect(getGroupAncestors(doc, "missing")).toEqual([]);
 	});
 
-	it("getAncestors stops at a parent cycle instead of looping", () => {
-		const looped = build([
-			{ id: "X", kind: "task", title: "X", parentId: "Y" },
-			{ id: "Y", kind: "task", title: "Y", parentId: "X" },
-		]);
-		const ancestors = getAncestors(looped, "X");
-		expect(ancestors.length).toBeLessThanOrEqual(2);
+	it("getGroupAncestors stops at a parent cycle instead of looping", () => {
+		const looped = build([group("X", "Y"), group("Y", "X")], []);
+		expect(getGroupAncestors(looped, "X").length).toBeLessThanOrEqual(2);
 	});
 
-	it("getDescendants gathers the whole subtree", () => {
-		expect(getDescendants(doc, "root").sort()).toEqual([
-			"childA",
-			"group",
+	it("getGroupDescendants gathers the whole subtree of groups", () => {
+		expect(getGroupDescendants(doc, "root").sort()).toEqual(["a", "b"]);
+		expect(getGroupDescendants(doc, "a")).toEqual([]);
+	});
+
+	it("getTasksInGroup returns direct member tasks sorted by (order, id)", () => {
+		expect(getTasksInGroup(doc, "a").map((t) => t.id)).toEqual([
 			"leaf1",
 			"leaf2",
 		]);
-		expect(getDescendants(doc, "group").sort()).toEqual(["leaf1", "leaf2"]);
-		expect(getDescendants(doc, "leaf1")).toEqual([]);
+		expect(getTasksInGroup(doc, "root").map((t) => t.id)).toEqual([
+			"childTask",
+		]);
 	});
 
-	it("isWithin checks containment", () => {
-		expect(isWithin(doc, "leaf1", "root")).toBe(true);
-		expect(isWithin(doc, "leaf1", "group")).toBe(true);
-		expect(isWithin(doc, "leaf1", "leaf1")).toBe(true);
-		expect(isWithin(doc, "orphan", "root")).toBe(false);
-		expect(isWithin(doc, "leaf1", "childA")).toBe(false);
-	});
-
-	it("getNearestCollapsedAncestor returns the closest collapsed wrapper", () => {
-		const collapsed = new Set(["root"]);
-		expect(getNearestCollapsedAncestor(doc, "leaf1", collapsed)).toBe("root");
-		expect(getNearestCollapsedAncestor(doc, "root", collapsed)).toBe("root");
-		expect(getNearestCollapsedAncestor(doc, "orphan", collapsed)).toBe(null);
-
-		const collapsedInner = new Set(["group"]);
-		expect(getNearestCollapsedAncestor(doc, "leaf1", collapsedInner)).toBe(
-			"group",
-		);
-		expect(getNearestCollapsedAncestor(doc, "childA", collapsedInner)).toBe(
-			null,
-		);
-	});
-
-	it("getContainers filters to kind === 'container'", () => {
+	it("getTasksInGroupDeep includes tasks of descendant groups", () => {
 		expect(
-			getContainers(doc)
-				.map((x) => x.id)
+			getTasksInGroupDeep(doc, "root")
+				.map((t) => t.id)
 				.sort(),
-		).toEqual(["group", "root"]);
+		).toEqual(["childTask", "leaf1", "leaf2"]);
+		expect(
+			getTasksInGroupDeep(doc, "a")
+				.map((t) => t.id)
+				.sort(),
+		).toEqual(["leaf1", "leaf2"]);
+	});
+
+	it("isGroupWithin checks group containment", () => {
+		expect(isGroupWithin(doc, "a", "root")).toBe(true);
+		expect(isGroupWithin(doc, "root", "root")).toBe(true);
+		expect(isGroupWithin(doc, "b", "a")).toBe(false);
+		expect(isGroupWithin(doc, "root", "a")).toBe(false);
+	});
+
+	it("getNearestCollapsedAncestorGroup returns the closest collapsed wrapper", () => {
+		const collapsedRoot = new Set(["root"]);
+		expect(getNearestCollapsedAncestorGroup(doc, "a", collapsedRoot)).toBe(
+			"root",
+		);
+		expect(getNearestCollapsedAncestorGroup(doc, "root", collapsedRoot)).toBe(
+			"root",
+		);
+
+		const collapsedA = new Set(["a"]);
+		expect(getNearestCollapsedAncestorGroup(doc, "a", collapsedA)).toBe("a");
+		expect(getNearestCollapsedAncestorGroup(doc, "b", collapsedA)).toBe(null);
+	});
+
+	it("getNearestCollapsedGroup resolves the collapsed group a task lives in", () => {
+		const collapsedRoot = new Set(["root"]);
+		expect(getNearestCollapsedGroup(doc, "leaf1", collapsedRoot)).toBe("root");
+		expect(getNearestCollapsedGroup(doc, "childTask", collapsedRoot)).toBe(
+			"root",
+		);
+		expect(getNearestCollapsedGroup(doc, "orphan", collapsedRoot)).toBe(null);
+
+		const collapsedA = new Set(["a"]);
+		expect(getNearestCollapsedGroup(doc, "leaf1", collapsedA)).toBe("a");
+		expect(getNearestCollapsedGroup(doc, "childTask", collapsedA)).toBe(null);
 	});
 });
 
-// Generates a valid forest: each task is placed under a parent with lower
-// index, ensuring acyclic parentId chains. Mixes containers and leaves.
-function arbDoc(maxTasks = 12): fc.Arbitrary<PertDoc> {
-	return fc.integer({ min: 1, max: maxTasks }).chain((n) =>
+// Generates a valid group forest: each group is parented under one of lower
+// index (or root), guaranteeing acyclic parentGroupId chains.
+function arbDoc(maxGroups = 12): fc.Arbitrary<PertDoc> {
+	return fc.integer({ min: 1, max: maxGroups }).chain((n) =>
 		fc
-			.tuple(
-				fc.array(fc.boolean(), { minLength: n, maxLength: n }), // isContainer
-				fc.array(fc.integer({ min: -1, max: maxTasks - 1 }), {
-					minLength: n,
-					maxLength: n,
-				}), // parentIdx (or -1 for root)
-			)
-			.map(([kinds, parents]) => {
+			.array(fc.integer({ min: -1, max: maxGroups - 1 }), {
+				minLength: n,
+				maxLength: n,
+			})
+			.map((parents) => {
 				const doc = createEmptyPertDoc("rand");
 				for (let i = 0; i < n; i++) {
 					const parentIdx = parents[i];
-					const parentId =
-						parentIdx >= 0 && parentIdx < i ? `T${parentIdx}` : null;
-					const kind: TaskKind = kinds[i] ? "container" : "task";
-					doc.tasksById[`T${i}`] = {
-						id: `T${i}`,
-						kind,
-						title: `T${i}`,
-						parentId,
+					const parentGroupId =
+						parentIdx >= 0 && parentIdx < i ? `G${parentIdx}` : null;
+					doc.groupsById[`G${i}`] = {
+						id: `G${i}`,
+						name: `G${i}`,
+						parentGroupId,
+						order: i,
 					};
 				}
 				return doc;
@@ -148,19 +158,17 @@ function arbDoc(maxTasks = 12): fc.Arbitrary<PertDoc> {
 	);
 }
 
-describe("hierarchy property tests", () => {
+describe("group-tree property tests", () => {
 	it("ancestors and descendants are dual: A in ancestors(B) iff B in descendants(A)", () => {
 		fc.assert(
 			fc.property(arbDoc(), (doc) => {
-				const ids = Object.keys(doc.tasksById);
+				const ids = Object.keys(doc.groupsById);
 				for (const a of ids) {
-					const desc = new Set(getDescendants(doc, a));
+					const desc = new Set(getGroupDescendants(doc, a));
 					for (const b of ids) {
 						if (b === a) continue;
-						const ancestors = new Set(getAncestors(doc, b));
-						const expectAInAncestorsOfB = desc.has(b);
-						const expectBInDescOfA = ancestors.has(a);
-						if (expectAInAncestorsOfB !== expectBInDescOfA) return false;
+						const ancestors = new Set(getGroupAncestors(doc, b));
+						if (desc.has(b) !== ancestors.has(a)) return false;
 					}
 				}
 				return true;
@@ -169,12 +177,12 @@ describe("hierarchy property tests", () => {
 		);
 	});
 
-	it("isWithin is the transitive closure of getChildren", () => {
+	it("isGroupWithin is the transitive closure of getChildGroups", () => {
 		fc.assert(
 			fc.property(arbDoc(), (doc) => {
-				for (const id of Object.keys(doc.tasksById)) {
-					for (const desc of getDescendants(doc, id)) {
-						if (!isWithin(doc, desc, id)) return false;
+				for (const id of Object.keys(doc.groupsById)) {
+					for (const desc of getGroupDescendants(doc, id)) {
+						if (!isGroupWithin(doc, desc, id)) return false;
 					}
 				}
 				return true;
@@ -183,11 +191,11 @@ describe("hierarchy property tests", () => {
 		);
 	});
 
-	it("root tasks have no ancestors", () => {
+	it("root groups have no ancestors", () => {
 		fc.assert(
 			fc.property(arbDoc(), (doc) => {
-				for (const root of getRootTasks(doc)) {
-					if (getAncestors(doc, root.id).length !== 0) return false;
+				for (const root of getRootGroups(doc)) {
+					if (getGroupAncestors(doc, root.id).length !== 0) return false;
 				}
 				return true;
 			}),

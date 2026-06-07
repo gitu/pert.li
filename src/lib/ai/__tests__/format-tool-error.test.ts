@@ -10,17 +10,9 @@ describe("formatToolError", () => {
 		["task abc123 not found", "I couldn't find that task"],
 		["task id m2 already exists", "already exists"],
 		["dependency dep_7 not found", "That dependency no longer exists."],
-		[
-			"interface if_3 not found on c1",
-			"That connection point no longer exists.",
-		],
-		["container c9 not found", "I couldn't find that container"],
-		["parent p1 is not a container", "That target isn't a container."],
+		["group grp_9 not found", "I couldn't find that group"],
+		["would create a group cycle", "can't be nested inside itself"],
 		["self-dependency is not allowed", "A task can't depend on itself."],
-		[
-			"cannot depend on container c1 — pick a specific leaf inside it",
-			"pick a specific task inside it",
-		],
 		[
 			"move would create a cycle in the hierarchy",
 			"would create a dependency loop",

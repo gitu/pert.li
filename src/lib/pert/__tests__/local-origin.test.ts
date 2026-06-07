@@ -19,7 +19,7 @@ function makeChangeDoc(doc: PertDoc): ChangeFn {
 }
 
 function leaf(id: TaskId): Task {
-	return { id, kind: "task", title: id, parentId: null };
+	return { id, kind: "task", title: id };
 }
 
 describe("local-origin tracking", () => {

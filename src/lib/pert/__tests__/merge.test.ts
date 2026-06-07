@@ -21,7 +21,6 @@ function leaf(id: string, title: string, e?: Estimate): Task {
 		id,
 		kind: "task",
 		title,
-		parentId: null,
 		estimate: e ?? est(1, 2, 3),
 	};
 }

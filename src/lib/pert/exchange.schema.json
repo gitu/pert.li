@@ -2,7 +2,7 @@
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
 	"$id": "https://pert.li/schemas/v1/exchange.schema.json",
 	"title": "pert.li project exchange",
-	"description": "Portable, layout-free JSON format for sharing PERT projects between instances of pert.li. Tasks carry their predecessors inline via `dependsOn`; container interfaces are co-located on the container task that owns them. Layout state, derived analytics (ES/EF, Monte Carlo), and per-user view state are intentionally not exchanged. Keep this file in sync with src/lib/pert/exchange.ts.",
+	"description": "Portable, layout-free JSON format for sharing PERT projects between instances of pert.li. Tasks carry their predecessors inline via `dependsOn` and reference their group via `groupId`; groups are listed separately. Layout state, derived analytics (ES/EF, Monte Carlo), the auto WBS numbers, and per-user view state are intentionally not exchanged. Keep this file in sync with src/lib/pert/exchange.ts.",
 	"type": "object",
 	"required": ["format", "schemaVersion", "exportedAt", "title", "tasks"],
 	"additionalProperties": false,
@@ -26,6 +26,11 @@
 			"type": "string",
 			"description": "Human-readable project title."
 		},
+		"groups": {
+			"type": "array",
+			"items": { "$ref": "#/$defs/Group" },
+			"description": "First-class organising groups. Tasks reference these by `groupId`; groups nest via `parentGroupId`."
+		},
 		"tasks": {
 			"type": "array",
 			"items": { "$ref": "#/$defs/Task" }
@@ -35,7 +40,7 @@
 	"$defs": {
 		"TaskKind": {
 			"type": "string",
-			"enum": ["task", "milestone", "container"]
+			"enum": ["task", "milestone"]
 		},
 		"TaskStatus": {
 			"type": "string",
@@ -55,10 +60,6 @@
 			],
 			"description": "PERT-style edge relationship between predecessor and successor. Defaults to finish_to_start when omitted."
 		},
-		"InterfaceKind": {
-			"type": "string",
-			"enum": ["entry", "exit"]
-		},
 		"Estimate": {
 			"type": "object",
 			"required": ["optimistic", "mostLikely", "pessimistic", "unit"],
@@ -73,53 +74,55 @@
 		},
 		"DependsOnEntry": {
 			"type": "object",
+			"required": ["taskId"],
 			"additionalProperties": false,
 			"properties": {
 				"taskId": {
 					"type": "string",
 					"minLength": 1,
-					"description": "Predecessor task id. Mutually exclusive with interfaceId."
-				},
-				"interfaceId": {
-					"type": "string",
-					"minLength": 1,
-					"description": "Predecessor container interface id. Mutually exclusive with taskId."
+					"description": "Predecessor task id."
 				},
 				"type": { "$ref": "#/$defs/DependencyType" }
 			},
-			"oneOf": [{ "required": ["taskId"] }, { "required": ["interfaceId"] }],
 			"description": "A single predecessor relationship. The owning task is the successor. Storage-internal dependency ids and lag/lead days are not part of the exchange contract — importers synthesize fresh ids, and lag (which has no GUI control) does not round-trip."
 		},
-		"InterfaceEntry": {
+		"Group": {
 			"type": "object",
-			"required": ["id", "kind", "label"],
+			"required": ["id", "name", "parentGroupId"],
 			"additionalProperties": false,
 			"properties": {
 				"id": { "type": "string", "minLength": 1 },
-				"kind": { "$ref": "#/$defs/InterfaceKind" },
-				"label": { "type": "string" },
-				"taskRef": {
-					"type": "string",
-					"description": "Descendant task id this interface routes to / from."
+				"name": { "type": "string" },
+				"parentGroupId": {
+					"type": ["string", "null"],
+					"description": "Parent group's id, or null when the group is top-level."
+				},
+				"order": {
+					"type": "number",
+					"description": "Sibling ordering; drives the WBS number index."
 				}
 			},
-			"description": "A container's entry or exit port. Only meaningful when the owning task has kind === \"container\"."
+			"description": "A first-class organising group. Names a collapsible box on the canvas and seeds the WBS number of its member tasks."
 		},
 		"Task": {
 			"type": "object",
-			"required": ["id", "kind", "title", "parentId"],
+			"required": ["id", "kind", "title"],
 			"additionalProperties": false,
 			"properties": {
 				"id": { "type": "string", "minLength": 1 },
 				"kind": { "$ref": "#/$defs/TaskKind" },
 				"title": { "type": "string" },
-				"parentId": {
+				"groupId": {
 					"type": ["string", "null"],
-					"description": "Parent container's id, or null when the task lives at the project root."
+					"description": "The group this task belongs to (references groups[].id), or null/omitted when ungrouped."
 				},
-				"key": {
+				"numberOverride": {
 					"type": "string",
-					"description": "Dotted-segment grouping label (e.g. \"M1.A\"). Purely for grouping in views — not a dependency."
+					"description": "Manual WBS-number override. The auto number is re-derived on import."
+				},
+				"order": {
+					"type": "number",
+					"description": "Sibling ordering within the task's group; drives the WBS member index."
 				},
 				"estimate": { "$ref": "#/$defs/Estimate" },
 				"notes": { "type": "string" },
@@ -150,12 +153,7 @@
 				"dependsOn": {
 					"type": "array",
 					"items": { "$ref": "#/$defs/DependsOnEntry" },
-					"description": "Predecessors of this task. Empty / omitted means the task starts as soon as its parent allows."
-				},
-				"interfaces": {
-					"type": "array",
-					"items": { "$ref": "#/$defs/InterfaceEntry" },
-					"description": "Container ports — only meaningful when kind === \"container\"."
+					"description": "Predecessors of this task. Empty / omitted means the task starts at project day 0."
 				}
 			}
 		},

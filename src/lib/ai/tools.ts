@@ -17,7 +17,7 @@ import { editOpSchema } from "./operations";
 //    truth for both the JSON schema sent to the LLM and the TS types at
 //    the execute site.
 
-const taskKindSchema = z.enum(["task", "milestone", "container"]);
+const taskKindSchema = z.enum(["task", "milestone"]);
 const taskStatusSchema = z.enum(["not_started", "in_progress", "completed"]);
 const estimateUnitSchema = z.enum(["hour", "day", "week"]);
 const dependencyTypeSchema = z.enum([
@@ -26,8 +26,6 @@ const dependencyTypeSchema = z.enum([
 	"finish_to_finish",
 	"start_to_finish",
 ]);
-const interfaceKindSchema = z.enum(["entry", "exit"]);
-const dependencySideSchema = z.enum(["from", "to"]);
 
 const estimateSchema = z.object({
 	optimistic: z.number().nonnegative(),
@@ -56,13 +54,21 @@ const documentManifestEntrySchema = z.object({
 
 const projectSummarySchema = z.object({
 	title: z.string(),
+	groups: z.array(
+		z.object({
+			id: z.string(),
+			name: z.string(),
+			parentGroupId: z.string().nullable(),
+			number: z.string(),
+		}),
+	),
 	tasks: z.array(
 		z.object({
 			id: z.string(),
 			title: z.string(),
 			kind: taskKindSchema,
-			parentId: z.string().nullable(),
-			key: z.string().optional(),
+			groupId: z.string().nullable(),
+			number: z.string(),
 			estimate: estimateSchema.optional(),
 			status: taskStatusSchema.optional(),
 			progress: z.number().optional(),
@@ -78,17 +84,6 @@ const projectSummarySchema = z.object({
 			toTaskId: z.string().nullable(),
 			type: dependencyTypeSchema,
 			lagDays: z.number().optional(),
-			fromInterfaceId: z.string().optional(),
-			toInterfaceId: z.string().optional(),
-		}),
-	),
-	interfaces: z.array(
-		z.object({
-			id: z.string(),
-			containerId: z.string(),
-			kind: interfaceKindSchema,
-			label: z.string(),
-			taskRef: z.string().optional(),
 		}),
 	),
 	attachedDocuments: z.array(documentManifestEntrySchema),
@@ -97,7 +92,7 @@ const projectSummarySchema = z.object({
 export const readProjectTool = toolDefinition({
 	name: "read_project",
 	description:
-		"Read the active project: title, all tasks (id, title, kind, parentId, key, three-point estimate, status, progress, notes, actualStart/Finish), dependencies (with type and optional lagDays), and a manifest of attached source documents (id, name, kind, pages) — call read_document to read a document's text. Call this BEFORE proposing changes so you reference existing task ids instead of inventing new ones.",
+		"Read the active project: title, all groups (id, name, parentGroupId, WBS number), all tasks (id, title, kind, groupId, WBS number, three-point estimate, status, progress, notes, actualStart/Finish), dependencies (with type and optional lagDays), and a manifest of attached source documents (id, name, kind, pages) — call read_document to read a document's text. Call this BEFORE proposing changes so you reference existing ids instead of inventing new ones.",
 	inputSchema: z.object({}),
 	// Returns the project summary OR the "no active project" error shape the
 	// client emits when the user hasn't opened a project. The model treats it
@@ -145,11 +140,11 @@ export const readDocumentTool = toolDefinition({
 export const addTaskTool = toolDefinition({
 	name: "add_task",
 	description:
-		"Add a new task, milestone, or container to the project. Returns the generated id you can reference in follow-up calls (e.g. add_dependency). Default kind is 'task' and default estimate is 1/2/4 days.",
+		"Add a new task or milestone to the project. Optionally assign it to a group by id (its WBS number is derived from the group). Returns the generated id you can reference in follow-up calls (e.g. add_dependency). Default kind is 'task' and default estimate is 1/2/4 days.",
 	inputSchema: z.object({
 		title: z.string().min(1),
 		kind: taskKindSchema.optional(),
-		parentId: z.string().nullable().optional(),
+		groupId: z.string().nullable().optional(),
 		estimate: estimateSchema.optional(),
 	}),
 	outputSchema: z.union([
@@ -229,18 +224,18 @@ const okOrErrorSchema = z.union([
 export const setKindTool = toolDefinition({
 	name: "set_kind",
 	description:
-		"Change a task's kind (task | milestone | container). Milestones drop their estimate; tasks gain a default 1/2/4 day estimate if they don't have one.",
+		"Change a task's kind (task | milestone). Milestones drop their estimate; tasks gain a default 1/2/4 day estimate if they don't have one.",
 	inputSchema: z.object({ taskId: z.string(), kind: taskKindSchema }),
 	outputSchema: okOrErrorSchema,
 });
 
-export const setKeyTool = toolDefinition({
-	name: "set_key",
+export const setTaskNumberTool = toolDefinition({
+	name: "set_task_number",
 	description:
-		"Set or clear a task's semantic grouping key (dotted, e.g. 'M1.A'). Pass an empty string or null to clear. Purely a grouping label — not a dependency or hierarchy.",
+		"Override a task's auto WBS number with a fixed value, or clear the override. Pass an empty string or null to clear (the task reverts to its auto-derived number from its group). A pinned override survives group moves.",
 	inputSchema: z.object({
 		taskId: z.string(),
-		key: z.string().nullable(),
+		number: z.string().nullable(),
 	}),
 	outputSchema: okOrErrorSchema,
 });
@@ -256,13 +251,13 @@ export const setNotesTool = toolDefinition({
 	outputSchema: okOrErrorSchema,
 });
 
-export const moveTaskTool = toolDefinition({
-	name: "move_task",
+export const moveTaskToGroupTool = toolDefinition({
+	name: "move_task_to_group",
 	description:
-		"Reparent a task: move it into a container, or pass parentId=null to promote it to the top level. Fails on cycles or non-container targets.",
+		"Move a task into a group by id, or pass groupId=null to make it ungrouped. The task's auto WBS number recomputes for the new group; a pinned override (see set_task_number) is left intact.",
 	inputSchema: z.object({
 		taskId: z.string(),
-		parentId: z.string().nullable(),
+		groupId: z.string().nullable(),
 	}),
 	outputSchema: okOrErrorSchema,
 });
@@ -313,15 +308,13 @@ export const setDependencyTool = toolDefinition({
 	outputSchema: okOrErrorSchema,
 });
 
-export const addInterfaceTool = toolDefinition({
-	name: "add_interface",
+export const createGroupTool = toolDefinition({
+	name: "create_group",
 	description:
-		"Add a named entry or exit port to a container. Use this when an external caller needs to depend on a specific milestone inside the container rather than the container as a whole. Optionally pin the interface to a descendant via taskRef so the projection can route collapsed edges precisely.",
+		"Create a named group. Groups organise tasks into a collapsible box on the canvas and seed their members' WBS numbers. Optionally nest it under another group via parentGroupId. Returns the new group id you can pass to add_task / move_task_to_group.",
 	inputSchema: z.object({
-		containerId: z.string(),
-		kind: interfaceKindSchema,
-		label: z.string().optional(),
-		taskRef: z.string().nullable().optional(),
+		name: z.string().min(1),
+		parentGroupId: z.string().nullable().optional(),
 	}),
 	outputSchema: z.union([
 		z.object({ id: z.string() }),
@@ -329,39 +322,29 @@ export const addInterfaceTool = toolDefinition({
 	]),
 });
 
-export const removeInterfaceTool = toolDefinition({
-	name: "remove_interface",
+export const renameGroupTool = toolDefinition({
+	name: "rename_group",
+	description: "Rename a group by id.",
+	inputSchema: z.object({ groupId: z.string(), name: z.string().min(1) }),
+	outputSchema: okOrErrorSchema,
+});
+
+export const setGroupParentTool = toolDefinition({
+	name: "set_group_parent",
 	description:
-		"Delete a container interface. Existing dependencies that hint at this interface keep their canonical taskId endpoint; the orphaned hint is ignored by the projection.",
+		"Re-parent a group: nest it under another group by id, or pass parentGroupId=null to make it top-level. Fails if it would create a group cycle.",
 	inputSchema: z.object({
-		containerId: z.string(),
-		interfaceId: z.string(),
+		groupId: z.string(),
+		parentGroupId: z.string().nullable(),
 	}),
 	outputSchema: okOrErrorSchema,
 });
 
-export const setInterfaceTool = toolDefinition({
-	name: "set_interface",
+export const deleteGroupTool = toolDefinition({
+	name: "delete_group",
 	description:
-		"Edit an existing container interface: rename it and/or rebind it to a descendant task. Omit a field to leave it unchanged. Pass taskRef=null to unbind.",
-	inputSchema: z.object({
-		containerId: z.string(),
-		interfaceId: z.string(),
-		label: z.string().optional(),
-		taskRef: z.string().nullable().optional(),
-	}),
-	outputSchema: okOrErrorSchema,
-});
-
-export const pinDependencyTool = toolDefinition({
-	name: "pin_dependency",
-	description:
-		"Pin one side of a dependency to a specific container interface. The dep's canonical taskId stays the same — the interface is the port the edge attaches to when the container is collapsed. Pass interfaceId=null to clear the pin.",
-	inputSchema: z.object({
-		dependencyId: z.string(),
-		side: dependencySideSchema,
-		interfaceId: z.string().nullable(),
-	}),
+		"Delete a group. Its member tasks and child groups are PROMOTED to the group's parent (or to ungrouped / top-level) — tasks are never deleted.",
+	inputSchema: z.object({ groupId: z.string() }),
 	outputSchema: okOrErrorSchema,
 });
 
@@ -387,7 +370,7 @@ export const proposeChangesTool = toolDefinition({
 			.array(editOpSchema)
 			.min(1)
 			.describe(
-				"Edit operations in the order they should apply. Each operation mirrors one of the single-task tools. You may use client-provided ids on add_task / add_dependency / add_interface to reference newly-added entities in later operations within the same batch. Every entry must be a REAL edit — never include placeholder or probe operations (they fail to stage and the user sees an empty proposal). Top-level tasks take parentId: null; there is no task id for the project itself.",
+				"Edit operations in the order they should apply. Each operation mirrors one of the single-task tools. You may use client-provided ids on add_task / add_dependency / create_group to reference newly-added entities in later operations within the same batch. Every entry must be a REAL edit — never include placeholder or probe operations (they fail to stage and the user sees an empty proposal). Ungrouped tasks take groupId: null; there is no id for the project itself.",
 			),
 	}),
 	outputSchema: z.union([
@@ -405,7 +388,7 @@ export const proposeChangesTool = toolDefinition({
 				// the most common causes are referencing a task id that doesn't
 				// exist (use read_project or ids returned by earlier operations)
 				// and inventing placeholder ids like "__ROOT__" or "__PROJECT__";
-				// top-level tasks take parentId: null.
+				// ungrouped tasks take groupId: null.
 				failures: z.array(
 					z.object({
 						operationIndex: z.number(),
@@ -446,12 +429,12 @@ const workPlanStepInputSchema = z.object({
 	title: z
 		.string()
 		.min(1)
-		.describe("Short imperative step name, e.g. 'Create phase containers'."),
+		.describe("Short imperative step name, e.g. 'Create phase groups'."),
 	description: z
 		.string()
 		.min(1)
 		.describe(
-			"Everything needed to execute this step WITHOUT re-reading the source documents: the concrete tasks/containers/dependencies to create, with titles and estimates. One step should be 5–15 operations of work.",
+			"Everything needed to execute this step WITHOUT re-reading the source documents: the concrete groups/tasks/dependencies to create, with titles and estimates. One step should be 5–15 operations of work.",
 		),
 });
 
@@ -643,21 +626,21 @@ export const CHAT_TOOL_DEFINITIONS = [
 	addTaskTool,
 	setTitleTool,
 	setKindTool,
-	setKeyTool,
+	setTaskNumberTool,
 	setNotesTool,
 	setEstimateTool,
 	setStatusTool,
 	setProgressTool,
 	setActualDatesTool,
-	moveTaskTool,
+	moveTaskToGroupTool,
 	addDependencyTool,
 	setDependencyTool,
 	removeDependencyTool,
 	removeTaskTool,
-	addInterfaceTool,
-	removeInterfaceTool,
-	setInterfaceTool,
-	pinDependencyTool,
+	createGroupTool,
+	renameGroupTool,
+	setGroupParentTool,
+	deleteGroupTool,
 	proposeChangesTool,
 	createWorkPlanTool,
 	updateWorkPlanTool,

@@ -42,13 +42,11 @@ function pushToMap(m: Map<TaskId, TaskId[]>, key: TaskId, value: TaskId): void {
 export function MatrixMobile({ projectId, doc }: MatrixMobileProps) {
 	const tasks = useMemo(
 		() =>
-			(Object.values(doc.tasksById) as Task[])
-				.filter((t) => t.kind !== "container")
-				.sort((a, b) =>
-					(a.title || "").localeCompare(b.title || "", undefined, {
-						sensitivity: "base",
-					}),
-				),
+			(Object.values(doc.tasksById) as Task[]).sort((a, b) =>
+				(a.title || "").localeCompare(b.title || "", undefined, {
+					sensitivity: "base",
+				}),
+			),
 		[doc.tasksById],
 	);
 	const index = useMemo(() => indexDeps(doc), [doc]);

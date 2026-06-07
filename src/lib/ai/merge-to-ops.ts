@@ -39,9 +39,9 @@ export function mergeSelectionToOps(
 //     task), so a sibling remove_dependency for that same dep then reports
 //     "dependency not found".
 //   * a clean-add-from-branch dependency whose endpoint task no longer exists
-//     on the target reports "task not found". Its follow-up set_dependency /
-//     pin_dependency ops (emitted when the branch dep carried lagDays or
-//     interface pins) then report "dependency not found".
+//     on the target reports "task not found". Its follow-up set_dependency op
+//     (emitted when the branch dep carried lagDays) then reports "dependency
+//     not found".
 //
 // We simulate task/dep existence as the batch runs — mirroring
 // applyOperations + removeTaskMutation's cascade — and drop the ops that would
@@ -110,11 +110,10 @@ export function planMergeOps(
 				kept.push(op);
 				break;
 			}
-			case "set_dependency":
-			case "pin_dependency": {
-				// Follow-ups to an add_dependency. If the dep never made it into
+			case "set_dependency": {
+				// Follow-up to an add_dependency. If the dep never made it into
 				// the live set (its add was dropped, or it was cascaded away),
-				// drop these too — otherwise they'd fail "dependency not found".
+				// drop it too — otherwise it'd fail "dependency not found".
 				if (!deps.has(op.dependencyId)) {
 					dropped.push(op);
 					break;
@@ -123,9 +122,9 @@ export function planMergeOps(
 				break;
 			}
 			default:
-				// set_* (task), move_task, etc. In a merge these always target an
-				// entity that exists or is added in-batch, so they pass through
-				// untouched.
+				// set_* (task), move_task_to_group, group ops, etc. In a merge
+				// these always target an entity that exists or is added in-batch,
+				// so they pass through untouched.
 				kept.push(op);
 		}
 	}
@@ -191,12 +190,16 @@ function pushAddOps(
 			id: t.id,
 			title: t.title,
 			kind: t.kind,
-			parentId: t.parentId ?? null,
+			groupId: t.groupId ?? null,
 			estimate: t.estimate,
 		});
 		// Backfill anything add_task doesn't natively accept.
-		if (t.key !== undefined) {
-			out.push({ op: "set_key", taskId: t.id, key: t.key ?? null });
+		if (t.numberOverride !== undefined) {
+			out.push({
+				op: "set_task_number",
+				taskId: t.id,
+				number: t.numberOverride ?? null,
+			});
 		}
 		if (t.notes !== undefined) {
 			out.push({ op: "set_notes", taskId: t.id, notes: t.notes ?? null });
@@ -240,22 +243,6 @@ function pushAddOps(
 			lagDays: d.lagDays,
 		});
 	}
-	if (d.from.interfaceId) {
-		out.push({
-			op: "pin_dependency",
-			dependencyId: d.id,
-			side: "from",
-			interfaceId: d.from.interfaceId,
-		});
-	}
-	if (d.to.interfaceId) {
-		out.push({
-			op: "pin_dependency",
-			dependencyId: d.id,
-			side: "to",
-			interfaceId: d.to.interfaceId,
-		});
-	}
 }
 
 function taskFieldOp(
@@ -268,10 +255,18 @@ function taskFieldOp(
 			return { op: "set_title", taskId, title: value as string };
 		case "kind":
 			return { op: "set_kind", taskId, kind: value as Task["kind"] };
-		case "parentId":
-			return { op: "move_task", taskId, parentId: (value as string) ?? null };
-		case "key":
-			return { op: "set_key", taskId, key: (value as string) ?? null };
+		case "groupId":
+			return {
+				op: "move_task_to_group",
+				taskId,
+				groupId: (value as string) ?? null,
+			};
+		case "numberOverride":
+			return {
+				op: "set_task_number",
+				taskId,
+				number: (value as string) ?? null,
+			};
 		case "notes":
 			return { op: "set_notes", taskId, notes: (value as string) ?? null };
 		case "estimate": {
@@ -328,20 +323,6 @@ function dependencyFieldOp(
 				op: "set_dependency",
 				dependencyId,
 				lagDays: value as number,
-			};
-		case "fromInterfaceId":
-			return {
-				op: "pin_dependency",
-				dependencyId,
-				side: "from",
-				interfaceId: (value as string) ?? null,
-			};
-		case "toInterfaceId":
-			return {
-				op: "pin_dependency",
-				dependencyId,
-				side: "to",
-				interfaceId: (value as string) ?? null,
 			};
 		// fromTaskId / toTaskId have no direct mutator — the user would have to
 		// recreate the dependency. We surface that as no-op here; the merge UI

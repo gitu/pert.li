@@ -1,7 +1,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { computeLayout, fallbackGridLayout, NODE_WIDTH } from "../layout";
-import type { Estimate, PertDoc, Task } from "../types";
+import type { Estimate, Group, PertDoc, Task } from "../types";
 import { createEmptyPertDoc } from "../types";
 
 const est: Estimate = {
@@ -16,10 +16,13 @@ function task(id: string, overrides: Partial<Task> = {}): Task {
 		id,
 		kind: "task",
 		title: id,
-		parentId: null,
 		estimate: est,
 		...overrides,
 	};
+}
+
+function group(id: string, parentGroupId: string | null = null): Group {
+	return { id, name: id, parentGroupId, order: 0 };
 }
 
 function chain(n: number): PertDoc {
@@ -56,27 +59,24 @@ describe("computeLayout", () => {
 		expect(positions.T1).toEqual({ x: 9999, y: -42 });
 	});
 
-	it("returns a position for a top-level container too (hierarchical mode)", async () => {
+	it("returns a position for a top-level group too (hierarchical mode)", async () => {
 		const doc = chain(2);
-		doc.tasksById.box = task("box", { kind: "container" });
+		doc.groupsById.box = group("box");
 		const positions = await computeLayout(doc);
-		// Container participates in the layout — leaf positions still exist
-		// alongside it. ELK chose the container's coordinates.
+		// The group participates in the layout — leaf positions still exist
+		// alongside it. ELK chose the group's coordinates.
 		expect(positions.box).toBeDefined();
 		expect(positions.T0).toBeDefined();
 	});
 });
 
-describe("computeLayout — hierarchical (containers)", () => {
+describe("computeLayout — hierarchical (groups)", () => {
 	function nestedDoc(): PertDoc {
 		const doc = createEmptyPertDoc("nested");
-		doc.tasksById.outer = task("outer", { kind: "container" });
-		doc.tasksById.inner = task("inner", {
-			kind: "container",
-			parentId: "outer",
-		});
-		doc.tasksById.A = task("A", { parentId: "inner" });
-		doc.tasksById.B = task("B", { parentId: "inner" });
+		doc.groupsById.outer = group("outer");
+		doc.groupsById.inner = group("inner", "outer");
+		doc.tasksById.A = task("A", { groupId: "inner" });
+		doc.tasksById.B = task("B", { groupId: "inner" });
 		doc.tasksById.outsider = task("outsider");
 		doc.dependenciesById.ab = {
 			id: "ab",
@@ -93,7 +93,7 @@ describe("computeLayout — hierarchical (containers)", () => {
 		return doc;
 	}
 
-	it("places leaves inside their container's bounds (forceReflow)", async () => {
+	it("places member tasks inside their group's bounds (forceReflow)", async () => {
 		const doc = nestedDoc();
 		const positions = await computeLayout(doc, { forceReflow: true });
 		const outer = positions.outer;
@@ -104,31 +104,29 @@ describe("computeLayout — hierarchical (containers)", () => {
 		expect(inner).toBeDefined();
 		expect(a).toBeDefined();
 		expect(b).toBeDefined();
-		// A and B should both sit *inside* the inner container, which is
-		// inside the outer container. We don't know exact sizes from ELK's
-		// computed bounds here, so just sanity-check ordering: outer.x ≤
-		// inner.x ≤ leaf.x.
+		// A and B should both sit *inside* the inner group, which is inside the
+		// outer group. Sanity-check ordering: outer.x ≤ inner.x ≤ leaf.x.
 		expect(outer.x).toBeLessThanOrEqual(inner.x);
 		expect(inner.x).toBeLessThanOrEqual(a.x);
 		expect(inner.x).toBeLessThanOrEqual(b.x);
 		expect(outer.y).toBeLessThanOrEqual(inner.y);
 	});
 
-	it("preserves left-to-right ordering for chained leaves inside a container", async () => {
+	it("preserves left-to-right ordering for chained leaves inside a group", async () => {
 		const doc = nestedDoc();
 		const positions = await computeLayout(doc, { forceReflow: true });
 		// A → B inside inner.
 		expect(positions.A.x).toBeLessThan(positions.B.x);
 	});
 
-	it("collapsed containers participate as a single sized node", async () => {
+	it("collapsed groups participate as a single sized node", async () => {
 		const doc = nestedDoc();
 		const positions = await computeLayout(doc, {
 			forceReflow: true,
 			collapsed: new Set(["outer"]),
 		});
-		// Outer is still placed; its descendants either don't appear or
-		// share its coordinates (we don't render them either way).
+		// Outer is still placed; its descendants either don't appear or share
+		// its coordinates (we don't render them either way).
 		expect(positions.outer).toBeDefined();
 		// Outsider should sit to the right of outer because B→outsider was
 		// rerouted to outer→outsider during collapse.
@@ -160,17 +158,17 @@ describe("fallbackGridLayout", () => {
 	});
 });
 
-// Orphan handling — a task whose parentId doesn't resolve to an existing
-// container (dangling reference from a half-applied AI proposal, parent
-// converted to a leaf, parentId cycle) must still be laid out. Before this
-// was fixed, orphans got no position at all and their edges referenced nodes
-// missing from the ELK graph, which failed the entire hierarchical layout.
-describe("layout with broken parent references", () => {
-	it("ELK layout places a task whose parentId is dangling", async () => {
+// Orphan handling — a task whose groupId doesn't resolve to an existing group
+// (dangling reference from a half-applied AI proposal, a deleted group, a
+// parentGroupId cycle) must still be laid out. Before this was fixed, orphans
+// got no position at all and their edges referenced nodes missing from the ELK
+// graph, which failed the entire hierarchical layout.
+describe("layout with broken group references", () => {
+	it("ELK layout places a task whose groupId is dangling", async () => {
 		const doc = createEmptyPertDoc("orphans");
-		doc.tasksById.box = task("box", { kind: "container" });
-		doc.tasksById.inside = task("inside", { parentId: "box" });
-		doc.tasksById.orphan = task("orphan", { parentId: "ghost_container" });
+		doc.groupsById.box = group("box");
+		doc.tasksById.inside = task("inside", { groupId: "box" });
+		doc.tasksById.orphan = task("orphan", { groupId: "ghost_group" });
 		const positions = await computeLayout(doc, { forceReflow: true });
 		expect(positions.orphan).toBeDefined();
 		expect(positions.inside).toBeDefined();
@@ -179,9 +177,9 @@ describe("layout with broken parent references", () => {
 
 	it("ELK layout survives edges that touch an orphaned task", async () => {
 		const doc = createEmptyPertDoc("orphans");
-		doc.tasksById.box = task("box", { kind: "container" });
-		doc.tasksById.inside = task("inside", { parentId: "box" });
-		doc.tasksById.orphan = task("orphan", { parentId: "ghost_container" });
+		doc.groupsById.box = group("box");
+		doc.tasksById.inside = task("inside", { groupId: "box" });
+		doc.tasksById.orphan = task("orphan", { groupId: "ghost_group" });
 		doc.dependenciesById.e = {
 			id: "e",
 			from: { taskId: "orphan" },
@@ -193,21 +191,21 @@ describe("layout with broken parent references", () => {
 		expect(positions.inside).toBeDefined();
 	});
 
-	it("ELK layout places tasks whose parent is not a container", async () => {
+	it("ELK layout places ungrouped tasks alongside grouped ones", async () => {
 		const doc = createEmptyPertDoc("orphans");
-		doc.tasksById.box = task("box", { kind: "container" });
-		doc.tasksById.leafparent = task("leafparent");
-		doc.tasksById.child = task("child", { parentId: "leafparent" });
+		doc.groupsById.box = group("box");
+		doc.tasksById.member = task("member", { groupId: "box" });
+		doc.tasksById.loose = task("loose");
 		const positions = await computeLayout(doc, { forceReflow: true });
-		expect(positions.child).toBeDefined();
-		expect(positions.leafparent).toBeDefined();
+		expect(positions.member).toBeDefined();
+		expect(positions.loose).toBeDefined();
 	});
 
-	it("ELK layout terminates and places everything when parentIds form a cycle", async () => {
+	it("ELK layout terminates and places everything when parentGroupIds form a cycle", async () => {
 		const doc = createEmptyPertDoc("cycle");
-		doc.tasksById.a = task("a", { kind: "container", parentId: "b" });
-		doc.tasksById.b = task("b", { kind: "container", parentId: "a" });
-		doc.tasksById.t = task("t", { parentId: "a" });
+		doc.groupsById.a = group("a", "b");
+		doc.groupsById.b = group("b", "a");
+		doc.tasksById.t = task("t", { groupId: "a" });
 		const positions = await computeLayout(doc, { forceReflow: true });
 		expect(positions.a).toBeDefined();
 		expect(positions.b).toBeDefined();
@@ -216,58 +214,72 @@ describe("layout with broken parent references", () => {
 
 	it("fallbackGridLayout places orphaned leaves", () => {
 		const doc = createEmptyPertDoc("orphans");
-		doc.tasksById.box = task("box", { kind: "container" });
-		doc.tasksById.orphan = task("orphan", { parentId: "ghost" });
+		doc.groupsById.box = group("box");
+		doc.tasksById.orphan = task("orphan", { groupId: "ghost" });
 		const positions = fallbackGridLayout(doc);
 		expect(positions.orphan).toBeDefined();
 	});
 
-	it("fallbackGridLayout terminates on parentId cycles", () => {
+	it("fallbackGridLayout terminates on parentGroupId cycles", () => {
 		const doc = createEmptyPertDoc("cycle");
-		doc.tasksById.a = task("a", { kind: "container", parentId: "b" });
-		doc.tasksById.b = task("b", { kind: "container", parentId: "a" });
-		doc.tasksById.t = task("t", { parentId: "b" });
+		doc.groupsById.a = group("a", "b");
+		doc.groupsById.b = group("b", "a");
+		doc.tasksById.t = task("t", { groupId: "b" });
 		const positions = fallbackGridLayout(doc);
 		expect(positions.t).toBeDefined();
 	});
 });
 
 // Property test (CLAUDE.md rule: src/lib/pert/ logic gets fast-check coverage):
-// for ANY parentId wiring — valid, dangling, non-container parents, cycles —
-// fallbackGridLayout returns a position for every non-container task.
+// for ANY groupId wiring — valid, dangling, cyclic group parents —
+// fallbackGridLayout returns a position for every task.
 describe("fallbackGridLayout properties", () => {
-	const kindArb = fc.constantFrom<Task["kind"]>("task", "container");
-
-	it("every leaf task gets a position regardless of parentId validity", () => {
+	it("every task gets a position regardless of groupId validity", () => {
 		fc.assert(
 			fc.property(
-				fc.array(
-					fc.record({
-						idx: fc.integer({ min: 0, max: 11 }),
-						kind: kindArb,
-						// Parent picked from a wider id space than the tasks that
-						// exist, so dangling references and self/cyclic links occur.
-						parentIdx: fc.option(fc.integer({ min: 0, max: 15 }), {
-							nil: null,
+				fc.record({
+					// A few groups whose parents may dangle or form cycles.
+					groups: fc.array(
+						fc.record({
+							idx: fc.integer({ min: 0, max: 3 }),
+							parentIdx: fc.option(fc.integer({ min: 0, max: 5 }), {
+								nil: null,
+							}),
 						}),
-					}),
-					{ minLength: 1, maxLength: 12 },
-				),
-				(specs) => {
+						{ maxLength: 4 },
+					),
+					tasks: fc.array(
+						fc.record({
+							idx: fc.integer({ min: 0, max: 11 }),
+							// Group picked from a wider id space than the groups that
+							// exist, so dangling references occur.
+							groupIdx: fc.option(fc.integer({ min: 0, max: 6 }), {
+								nil: null,
+							}),
+						}),
+						{ minLength: 1, maxLength: 12 },
+					),
+				}),
+				({ groups, tasks }) => {
 					const doc = createEmptyPertDoc("prop");
-					for (const spec of specs) {
-						const id = `t${spec.idx}`;
+					for (const g of groups) {
+						const id = `g${g.idx}`;
+						doc.groupsById[id] = group(
+							id,
+							g.parentIdx === null ? null : `g${g.parentIdx}`,
+						);
+					}
+					for (const t of tasks) {
+						const id = `t${t.idx}`;
 						doc.tasksById[id] = task(id, {
-							kind: spec.kind,
-							parentId: spec.parentIdx === null ? null : `t${spec.parentIdx}`,
+							groupId: t.groupIdx === null ? null : `g${t.groupIdx}`,
 						});
 					}
 					const positions = fallbackGridLayout(doc);
 					for (const t of Object.values(doc.tasksById)) {
-						if (t.kind === "container") continue;
 						expect(
 							positions[t.id],
-							`no position for ${t.id} (parentId=${t.parentId})`,
+							`no position for ${t.id} (groupId=${t.groupId})`,
 						).toBeDefined();
 					}
 				},

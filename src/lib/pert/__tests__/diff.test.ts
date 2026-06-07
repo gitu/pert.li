@@ -26,7 +26,7 @@ function leaf(
 	title: string,
 	e: Estimate | undefined = est(1, 2, 3),
 ): Task {
-	return { id, kind: "task", title, parentId: null, estimate: e };
+	return { id, kind: "task", title, estimate: e };
 }
 
 describe("diffPertDoc", () => {
@@ -125,12 +125,11 @@ describe("diffPertDoc", () => {
 		]);
 	});
 
-	it("flags status, progress, key, and actual-date changes", () => {
+	it("flags status, progress, numberOverride, and actual-date changes", () => {
 		const before = build({
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 			estimate: est(1, 2, 3),
 			status: "not_started",
 		});
@@ -138,17 +137,31 @@ describe("diffPertDoc", () => {
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 			estimate: est(1, 2, 3),
 			status: "in_progress",
 			progress: 40,
-			key: "M1",
+			numberOverride: "M1",
 			actualStart: "2026-06-01",
 		});
 		const diff = diffPertDoc(before, after);
 		expect(diff.tasks).toHaveLength(1);
 		const fields = diff.tasks[0].fields.map((f) => f.field).sort();
-		expect(fields).toEqual(["actualStart", "key", "progress", "status"]);
+		expect(fields).toEqual([
+			"actualStart",
+			"numberOverride",
+			"progress",
+			"status",
+		]);
+	});
+
+	it("flags groupId (re-grouping) changes", () => {
+		const before = build({ id: "A", kind: "task", title: "A", groupId: "g1" });
+		const after = build({ id: "A", kind: "task", title: "A", groupId: "g2" });
+		const diff = diffPertDoc(before, after);
+		expect(diff.tasks).toHaveLength(1);
+		expect(diff.tasks[0].fields).toEqual([
+			{ field: "groupId", before: "g1", after: "g2" },
+		]);
 	});
 
 	it("flags notes (task description text) changes", () => {
@@ -156,14 +169,12 @@ describe("diffPertDoc", () => {
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 			notes: "Original line 1\nOriginal line 2",
 		});
 		const after = build({
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 			notes: "Updated line 1\nUpdated line 2",
 		});
 		const diff = diffPertDoc(before, after);
@@ -201,19 +212,17 @@ describe("diffPertDoc", () => {
 		expect(fields).toEqual(["lagDays", "toTaskId"]);
 	});
 
-	it("normalises key: empty/whitespace counts as the same as undefined", () => {
+	it("normalises numberOverride: empty/whitespace counts as the same as undefined", () => {
 		const before = build({
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
-			key: "",
+			numberOverride: "",
 		});
 		const afterEmpty = build({
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
 		});
 		expect(diffPertDoc(before, afterEmpty).tasks).toEqual([]);
 
@@ -221,8 +230,7 @@ describe("diffPertDoc", () => {
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
-			key: "   ",
+			numberOverride: "   ",
 		});
 		expect(diffPertDoc(before, afterWhitespace).tasks).toEqual([]);
 
@@ -231,15 +239,13 @@ describe("diffPertDoc", () => {
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
-			key: "  M1  ",
+			numberOverride: "  M1  ",
 		});
 		const afterTrimmed = build({
 			id: "A",
 			kind: "task",
 			title: "A",
-			parentId: null,
-			key: "M1",
+			numberOverride: "M1",
 		});
 		expect(diffPertDoc(beforeWithKey, afterTrimmed).tasks).toEqual([]);
 	});
@@ -290,7 +296,6 @@ const taskArb = fc
 			id,
 			kind: "task",
 			title,
-			parentId: null,
 			estimate,
 		}),
 	);

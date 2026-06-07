@@ -13,7 +13,6 @@ function task(
 		id,
 		kind: "task",
 		title: id,
-		parentId: null,
 		estimate,
 		...overrides,
 	};

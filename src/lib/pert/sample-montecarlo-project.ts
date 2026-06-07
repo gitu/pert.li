@@ -42,14 +42,12 @@ export function createMonteCarloPertDoc(
 			id: "kickoff",
 			kind: "milestone",
 			title: "Kickoff",
-			parentId: null,
 			layout: at(0, 160),
 		},
 		sdk: {
 			id: "sdk",
 			kind: "task",
 			title: "Integrate vendor SDK",
-			parentId: null,
 			estimate: days(9, 9.5, 10),
 			notes:
 				"Well-understood work — a tight estimate. Its mean is the longer of the two branches, so the plain critical-path view marks it critical.",
@@ -59,7 +57,6 @@ export function createMonteCarloPertDoc(
 			id: "migrate",
 			kind: "task",
 			title: "Migrate legacy data",
-			parentId: null,
 			estimate: days(2.5, 10.7, 11.5),
 			notes:
 				"Looks like it has slack on paper, but it's risky: usually slow (high most-likely), only occasionally quick. The simulation puts it on the critical path in most runs — the merge-bias lesson.",
@@ -69,14 +66,12 @@ export function createMonteCarloPertDoc(
 			id: "merge",
 			kind: "milestone",
 			title: "Integration checkpoint",
-			parentId: null,
 			layout: at(560, 160),
 		},
 		s1: {
 			id: "s1",
 			kind: "task",
 			title: "Build core features",
-			parentId: null,
 			estimate: days(4, 6, 14),
 			layout: at(840, 160),
 		},
@@ -84,7 +79,6 @@ export function createMonteCarloPertDoc(
 			id: "s2",
 			kind: "task",
 			title: "QA & hardening",
-			parentId: null,
 			estimate: days(3, 5, 13),
 			layout: at(1120, 160),
 		},
@@ -92,7 +86,6 @@ export function createMonteCarloPertDoc(
 			id: "s3",
 			kind: "task",
 			title: "Beta program & fixes",
-			parentId: null,
 			estimate: days(5, 8, 20),
 			notes:
 				"Wide three-point spread — the main driver of the gap between the realistic (P50) and safe (P90) finish dates.",
@@ -102,7 +95,6 @@ export function createMonteCarloPertDoc(
 			id: "launch",
 			kind: "milestone",
 			title: "Launch 🚀",
-			parentId: null,
 			layout: at(1680, 160),
 		},
 	};

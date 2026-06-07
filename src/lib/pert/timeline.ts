@@ -1,6 +1,6 @@
 import { dayOffsetToDate } from "./calendar";
 import type { ScheduleResult } from "./schedule";
-import type { PertDoc, TaskId, TaskKind, TaskStatus } from "./types";
+import type { GroupId, PertDoc, TaskId, TaskKind, TaskStatus } from "./types";
 
 // Pure layout helpers for the Timeline view. The view itself only knows how
 // to render a sorted list of lanes — slack / critical / duration come from
@@ -10,9 +10,9 @@ export type TimelineLane = {
 	taskId: TaskId;
 	title: string;
 	kind: TaskKind;
-	// Dotted grouping key (e.g. "M1.A"). Carried through so the view can sort
-	// + render group boundaries when the user toggles grouping on.
-	key?: string;
+	// The group this task belongs to (if any), carried through so the view can
+	// group + render boundaries when the user toggles grouping on.
+	groupId?: GroupId | null;
 	earliestStart: number;
 	earliestFinish: number;
 	duration: number;
@@ -52,16 +52,13 @@ export function buildTimelineModel(
 	const schedule = scheduleResult.schedule;
 	const lanes: TimelineLane[] = [];
 	for (const task of Object.values(doc.tasksById)) {
-		if (task.kind === "container") continue;
 		const s = schedule.tasks[task.id];
 		if (!s) continue;
 		lanes.push({
 			taskId: task.id,
 			title: task.title || "Untitled",
 			kind: task.kind,
-			...(task.key !== undefined && task.key.length > 0
-				? { key: task.key }
-				: {}),
+			...(task.groupId ? { groupId: task.groupId } : {}),
 			earliestStart: s.earliestStart,
 			earliestFinish: s.earliestFinish,
 			duration: s.duration,

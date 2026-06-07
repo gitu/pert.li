@@ -14,13 +14,15 @@ const est = {
 
 function sampleDoc(): PertDoc {
 	const d = createEmptyPertDoc("Q3 product launch");
+	d.groupsById = {
+		g1: { id: "g1", name: "Design", parentGroupId: null, order: 0 },
+	};
 	d.tasksById = {
-		c1: { id: "c1", kind: "container", title: "Design", parentId: null },
 		t1: {
 			id: "t1",
 			kind: "task",
 			title: "Wireframes",
-			parentId: "c1",
+			groupId: "g1",
 			estimate: est,
 			status: "completed",
 		},
@@ -28,7 +30,7 @@ function sampleDoc(): PertDoc {
 			id: "t2",
 			kind: "task",
 			title: "Visual design",
-			parentId: "c1",
+			groupId: "g1",
 			estimate: est,
 			status: "in_progress",
 			progress: 40,
@@ -37,10 +39,9 @@ function sampleDoc(): PertDoc {
 			id: "t3",
 			kind: "task",
 			title: "Build API",
-			parentId: null,
 			estimate: est,
 		},
-		m1: { id: "m1", kind: "milestone", title: "Launch", parentId: null },
+		m1: { id: "m1", kind: "milestone", title: "Launch" },
 	};
 	d.dependenciesById = {
 		d1: {
@@ -177,7 +178,7 @@ export const SummaryDone: Story = {
 	args: {
 		summaryState: {
 			status: "done",
-			text: "A small launch plan: 2 tasks, 1 milestone across one design container. Roughly on track with one task in progress.\n\nRisks:\n- Build API is unscheduled work feeding the launch milestone.\n- Visual design is the current bottleneck on the critical path.",
+			text: "A small launch plan: 2 tasks, 1 milestone across one design group. Roughly on track with one task in progress.\n\nRisks:\n- Build API is unscheduled work feeding the launch milestone.\n- Visual design is the current bottleneck on the critical path.",
 		},
 	},
 };

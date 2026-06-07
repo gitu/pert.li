@@ -15,7 +15,6 @@ function leaf(id: string, title = id): Task {
 		id,
 		kind: "task",
 		title,
-		parentId: null,
 		estimate: { optimistic: 1, mostLikely: 1, pessimistic: 1, unit: "day" },
 	};
 }

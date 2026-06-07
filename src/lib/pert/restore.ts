@@ -8,8 +8,8 @@ import type { Dependency, DependencyId, PertDoc, Task, TaskId } from "./types";
 export type RestoreableField =
 	| "title"
 	| "kind"
-	| "parentId"
-	| "key"
+	| "groupId"
+	| "numberOverride"
 	| "estimate"
 	| "notes"
 	| "status"
@@ -97,16 +97,16 @@ function applyField(draft: Task, source: Task, field: RestoreableField): void {
 		case "kind":
 			draft.kind = source.kind;
 			return;
-		case "parentId":
-			draft.parentId = source.parentId ?? null;
+		case "groupId":
+			draft.groupId = source.groupId ?? null;
 			return;
-		case "key": {
-			// Mirror setKeyMutation's normalisation: whitespace-only or empty
-			// keys are treated as a clear so restoring a snapshot doesn't
-			// reintroduce a noise key the live editor would have removed.
-			const trimmed = source.key?.trim() ?? "";
-			if (trimmed.length === 0) delete draft.key;
-			else draft.key = trimmed;
+		case "numberOverride": {
+			// Mirror setTaskNumberMutation's normalisation: whitespace-only or
+			// empty overrides clear, so restoring a snapshot doesn't reintroduce
+			// a noise override the live editor would have removed.
+			const trimmed = source.numberOverride?.trim() ?? "";
+			if (trimmed.length === 0) delete draft.numberOverride;
+			else draft.numberOverride = trimmed;
 			return;
 		}
 		case "estimate":

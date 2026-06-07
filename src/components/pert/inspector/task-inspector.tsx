@@ -32,18 +32,34 @@ import {
 import {
 	addDependencyMutation,
 	addTaskMutation,
-	moveTaskMutation,
+	assignTaskToGroupMutation,
+	deleteGroupMutation,
 	removeTaskMutation,
+	renameGroupMutation,
+	setGroupParentMutation,
+	setTaskNumberMutation,
 } from "#/lib/ai/tool-mutators";
 import { todayIsoDate } from "#/lib/pert/calendar";
-import { getChildren, getDescendants } from "#/lib/pert/hierarchy";
+import {
+	getChildGroups,
+	getGroupDescendants,
+	getTasksInGroup,
+	getTasksInGroupDeep,
+} from "#/lib/pert/hierarchy";
 import type { MonteCarloResult } from "#/lib/pert/montecarlo";
-import { rollupContainer, rollupContainerPaths } from "#/lib/pert/projection";
+import { computeNumbering } from "#/lib/pert/numbering";
+import { type GroupRollup, rollupGroup } from "#/lib/pert/projection";
 import { readTaskConflicts } from "#/lib/pert/read-conflicts";
 import { computeSchedule, type TaskSchedule } from "#/lib/pert/schedule";
-import { projectDocStore, selectionStore } from "#/lib/pert/store";
+import {
+	projectDocStore,
+	selectGroup,
+	selectionStore,
+	selectTask,
+} from "#/lib/pert/store";
 import type {
 	Estimate,
+	Group,
 	PertDoc,
 	Task,
 	TaskId,
@@ -79,17 +95,69 @@ export function TaskInspector({ pane }: { pane?: InspectorPane } = {}) {
 	if (!doc || !projectId) {
 		return <EmptyState message="Open a project to edit tasks." />;
 	}
-	if (selection.projectId !== projectId || !selection.taskId) {
+	if (selection.projectId !== projectId) {
 		return (
-			<EmptyState message="Select a task to edit its estimate, dependencies, and notes." />
+			<EmptyState message="Select a task or group to edit its estimate, dependencies, and notes." />
 		);
 	}
-	const task = doc.tasksById[selection.taskId];
-	if (!task) {
+
+	// A group selection takes its own form; a task selection takes TaskForm.
+	const selectedGroup = selection.groupId
+		? doc.groupsById[selection.groupId]
+		: null;
+	if (selection.groupId && !selectedGroup) {
+		return <EmptyState message="The selected group has been removed." />;
+	}
+	if (!selection.taskId && !selectedGroup) {
+		return (
+			<EmptyState message="Select a task or group to edit its estimate, dependencies, and notes." />
+		);
+	}
+
+	const task = selection.taskId ? doc.tasksById[selection.taskId] : null;
+	if (selection.taskId && !task) {
 		return <EmptyState message="The selected task has been removed." />;
 	}
 	const readOnly = !changeDoc;
 	const safeChangeDoc = changeDoc ?? noopChangeDoc;
+
+	// --- Group selection: render the dedicated GroupForm. ---
+	if (selectedGroup) {
+		const group = selectedGroup;
+		const onDeleteGroup = () => {
+			if (readOnly) return;
+			safeChangeDoc((d) => {
+				deleteGroupMutation(d, { groupId: group.id });
+			});
+			selectionStore.setState((s) => ({ ...s, taskId: null, groupId: null }));
+		};
+		const renderGroupPane = (p: InspectorPane) => (
+			<GroupForm
+				key={`${group.id}-${p}`}
+				group={group}
+				doc={doc}
+				changeDoc={safeChangeDoc}
+				projectId={projectId}
+				onDelete={onDeleteGroup}
+				mcResult={mc.result}
+				pane={p}
+			/>
+		);
+		const groupBody = pane ? (
+			<div className="h-full min-h-0 overflow-auto">
+				{renderGroupPane(pane)}
+			</div>
+		) : (
+			<InspectorTabsShell renderPane={renderGroupPane} />
+		);
+		if (!readOnly) return groupBody;
+		return <ReadOnlyShell>{groupBody}</ReadOnlyShell>;
+	}
+
+	// --- Task selection (the only remaining case). ---
+	if (!task) {
+		return <EmptyState message="The selected task has been removed." />;
+	}
 	const conflicts = readTaskConflicts(doc, task.id);
 	const conflictPill = conflicts ? (
 		<ConflictPill
@@ -105,41 +173,28 @@ export function TaskInspector({ pane }: { pane?: InspectorPane } = {}) {
 		});
 		// Clear selection so the inspector falls back to its empty state instead
 		// of showing "the selected task has been removed."
-		selectionStore.setState((s) => ({ ...s, taskId: null }));
+		selectionStore.setState((s) => ({ ...s, taskId: null, groupId: null }));
 	};
-	const renderPane = (p: InspectorPane) =>
-		task.kind === "container" ? (
-			<ContainerForm
-				key={`${task.id}-${p}`}
-				task={task}
-				doc={doc}
-				changeDoc={safeChangeDoc}
-				projectId={projectId}
-				conflictPill={conflictPill}
-				onDelete={onDelete}
-				mcResult={mc.result}
-				pane={p}
-			/>
-		) : (
-			<TaskForm
-				key={`${task.id}-${p}`}
-				task={task}
-				doc={doc}
-				changeDoc={safeChangeDoc}
-				projectId={projectId}
-				scheduleResult={computeSchedule(doc)}
-				conflictPill={conflictPill}
-				mcResult={mc.result}
-				onMutate={(mutate) =>
-					safeChangeDoc((d) => {
-						const draft = d.tasksById[task.id];
-						if (draft) mutate(draft);
-					})
-				}
-				onDelete={onDelete}
-				pane={p}
-			/>
-		);
+	const renderPane = (p: InspectorPane) => (
+		<TaskForm
+			key={`${task.id}-${p}`}
+			task={task}
+			doc={doc}
+			changeDoc={safeChangeDoc}
+			projectId={projectId}
+			scheduleResult={computeSchedule(doc)}
+			conflictPill={conflictPill}
+			mcResult={mc.result}
+			onMutate={(mutate) =>
+				safeChangeDoc((d) => {
+					const draft = d.tasksById[task.id];
+					if (draft) mutate(draft);
+				})
+			}
+			onDelete={onDelete}
+			pane={p}
+		/>
+	);
 
 	const body = pane ? (
 		// Host containers (RightTabs / readonly wrapper) are `overflow-hidden`,
@@ -147,6 +202,21 @@ export function TaskInspector({ pane }: { pane?: InspectorPane } = {}) {
 		// with no way to reach the bottom.
 		<div className="h-full min-h-0 overflow-auto">{renderPane(pane)}</div>
 	) : (
+		<InspectorTabsShell renderPane={renderPane} />
+	);
+	if (!readOnly) return body;
+	return <ReadOnlyShell>{body}</ReadOnlyShell>;
+}
+
+// The bundled 3-tab UI (Details/Plan/Track) used by the mobile sheet and
+// fullscreen popup when no single `pane` is requested. Shared by the task and
+// group forms so both honour the same tab strip.
+function InspectorTabsShell({
+	renderPane,
+}: {
+	renderPane: (p: InspectorPane) => React.ReactNode;
+}) {
+	return (
 		<Tabs
 			defaultValue="details"
 			className="flex h-full min-h-0 flex-col gap-0"
@@ -191,7 +261,10 @@ export function TaskInspector({ pane }: { pane?: InspectorPane } = {}) {
 			</TabsContent>
 		</Tabs>
 	);
-	if (!readOnly) return body;
+}
+
+// Read-only wrapper: banner + the form body underneath.
+function ReadOnlyShell({ children }: { children: React.ReactNode }) {
 	return (
 		<div className="flex h-full min-h-0 flex-col">
 			<div
@@ -200,7 +273,7 @@ export function TaskInspector({ pane }: { pane?: InspectorPane } = {}) {
 			>
 				View only — tap the pencil in the top bar to edit.
 			</div>
-			<div className="min-h-0 flex-1 overflow-hidden">{body}</div>
+			<div className="min-h-0 flex-1 overflow-hidden">{children}</div>
 		</div>
 	);
 }
@@ -254,15 +327,6 @@ function TaskForm({
 		(value: string) =>
 			onMutate((d) => {
 				d.notes = value;
-			}),
-		[onMutate],
-	);
-	const setKey = useCallback(
-		(value: string) =>
-			onMutate((d) => {
-				const trimmed = value.trim();
-				if (trimmed.length === 0) delete d.key;
-				else d.key = trimmed;
 			}),
 		[onMutate],
 	);
@@ -365,6 +429,33 @@ function TaskForm({
 		[onMutate],
 	);
 
+	const numbering = useMemo(() => computeNumbering(doc), [doc]);
+	const derivedNumber = numbering.tasks[task.id] ?? "—";
+	// Every group, labelled "<number> <name>", for the Group <Select>.
+	const groupOptions = useMemo(() => {
+		const list = Object.values(doc.groupsById).map((g) => ({
+			id: g.id,
+			label: `${numbering.groups[g.id] ?? "?"} ${g.name || "Untitled"}`.trim(),
+		}));
+		list.sort((a, b) => a.label.localeCompare(b.label));
+		return list;
+	}, [doc.groupsById, numbering.groups]);
+
+	const setGroup = useCallback(
+		(groupId: string | null) =>
+			changeDoc((d) => {
+				assignTaskToGroupMutation(d, { taskId: task.id, groupId });
+			}),
+		[changeDoc, task.id],
+	);
+	const setNumberOverride = useCallback(
+		(number: string | null) =>
+			changeDoc((d) => {
+				setTaskNumberMutation(d, { taskId: task.id, number });
+			}),
+		[changeDoc, task.id],
+	);
+
 	const status: TaskStatus = task.status ?? "not_started";
 	const progressValue =
 		status === "completed"
@@ -395,21 +486,30 @@ function TaskForm({
 					</div>
 
 					<div className="space-y-1.5">
-						<Label htmlFor="ti-key">
-							Key{" "}
-							<span className="text-muted-foreground/70">
-								— dotted group, e.g. M1.A
-							</span>
-						</Label>
-						<Input
-							id="ti-key"
-							data-testid="inspector-key"
-							value={task.key ?? ""}
-							onChange={(e) => setKey(e.target.value)}
-							placeholder="ungrouped"
-							className="font-mono text-xs"
-						/>
+						<Label htmlFor="ti-group">Group</Label>
+						<Select
+							value={task.groupId ?? "__none__"}
+							onValueChange={(v) => setGroup(v === "__none__" ? null : v)}
+						>
+							<SelectTrigger id="ti-group" data-testid="inspector-group">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="__none__">(none)</SelectItem>
+								{groupOptions.map((g) => (
+									<SelectItem key={g.id} value={g.id}>
+										{g.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
 					</div>
+
+					<NumberOverrideRow
+						derivedNumber={derivedNumber}
+						override={task.numberOverride}
+						onCommit={setNumberOverride}
+					/>
 
 					<div className="space-y-1.5">
 						<Label htmlFor="ti-kind">Kind</Label>
@@ -616,7 +716,9 @@ function TaskOverview({
 	progress: number;
 	conflictPill?: React.ReactNode;
 }) {
-	const parent = task.parentId ? doc.tasksById[task.parentId] : null;
+	const numbering = useMemo(() => computeNumbering(doc), [doc]);
+	const taskNumber = task.numberOverride ?? numbering.tasks[task.id] ?? "—";
+	const group = task.groupId ? doc.groupsById[task.groupId] : null;
 	const { incoming, outgoing } = useMemo(() => {
 		const inc: Array<{ depId: string; otherId: TaskId }> = [];
 		const out: Array<{ depId: string; otherId: TaskId }> = [];
@@ -630,7 +732,7 @@ function TaskOverview({
 		return { incoming: inc, outgoing: out };
 	}, [doc, task.id]);
 	const navigate = (id: TaskId) => {
-		selectionStore.setState((s) => ({ ...s, projectId, taskId: id }));
+		selectTask(projectId, id);
 	};
 	return (
 		<div className="@container space-y-5 p-4 text-sm">
@@ -644,22 +746,32 @@ function TaskOverview({
 						label="Kind"
 						value={task.kind === "milestone" ? "Milestone" : "Task"}
 					/>
-					{task.key && (
+					<OverviewRow
+						label="Number"
+						value={
+							<span className="font-mono text-xs">
+								{taskNumber}
+								{task.numberOverride && (
+									<span className="ml-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+										override
+									</span>
+								)}
+							</span>
+						}
+					/>
+					{group && (
 						<OverviewRow
-							label="Key"
-							value={<span className="font-mono text-xs">{task.key}</span>}
-						/>
-					)}
-					{parent && (
-						<OverviewRow
-							label="Inside"
+							label="Group"
 							value={
 								<button
 									type="button"
 									className="text-left hover:underline"
-									onClick={() => navigate(parent.id)}
+									onClick={() => selectGroup(projectId, group.id)}
 								>
-									{parent.title || "Untitled container"}
+									<span className="mr-1 font-mono text-xs text-muted-foreground">
+										{numbering.groups[group.id] ?? ""}
+									</span>
+									{group.name || "Untitled"}
 								</button>
 							}
 						/>
@@ -1172,9 +1284,11 @@ function MonteCarloCard({ mc }: { mc: MonteCarloResult["tasks"][string] }) {
 function DangerZone({
 	onDelete,
 	label,
+	description = "Permanently remove this task. Its dependencies are dropped.",
 }: {
 	onDelete: () => void;
 	label: string;
+	description?: string;
 }) {
 	const [armed, setArmed] = useState(false);
 	useEffect(() => {
@@ -1185,9 +1299,7 @@ function DangerZone({
 	return (
 		<div className="flex items-center justify-between gap-3 rounded-md border border-destructive/30 bg-destructive/[0.04] px-3 py-2">
 			<div className="text-xs text-muted-foreground">
-				{armed
-					? "Are you sure? Click again within 3.5s."
-					: "Permanently remove this task. Children, if any, are promoted to the parent."}
+				{armed ? "Are you sure? Click again within 3.5s." : description}
 			</div>
 			<Button
 				type="button"
@@ -1345,7 +1457,7 @@ function DependencyList({
 // Inline quick-add: the user types a name, optionally adjusts the estimate
 // (most-likely days; o/p auto-derive as m/2 and m*2), and clicks Successor
 // (current → new) or Predecessor (new → current). New tasks inherit the
-// current task's parent so a quick-add inside a container stays inside it.
+// current task's group so a quick-add inside a group stays inside it.
 function QuickAddDependencyRow({
 	task,
 	changeDoc,
@@ -1364,11 +1476,11 @@ function QuickAddDependencyRow({
 		const optimistic = Math.max(0.25, mostLikely / 2);
 		const pessimistic = mostLikely * 2;
 		changeDoc((d) => {
-			// Generated id + the selected task's own parent — can't collide or
+			// Generated id + the selected task's own group — can't collide or
 			// dangle, so the error arm is unreachable here.
 			const created = addTaskMutation(d, {
 				title: trimmed,
-				parentId: task.parentId,
+				groupId: task.groupId ?? null,
 				estimate: {
 					optimistic,
 					mostLikely,
@@ -1446,77 +1558,183 @@ function QuickAddDependencyRow({
 	);
 }
 
-// Lists the direct children of a container with a "Remove from container"
-// action that promotes the child one level up (to the container's parent).
-function ChildrenSection({
-	task,
+// Lists a group's direct members — its tasks and its child groups — each with
+// a "Remove" action. Removing a task ungroups it; removing a child group
+// re-parents it up to this group's own parent.
+function GroupMembersSection({
+	group,
 	doc,
 	changeDoc,
 	projectId,
 }: {
-	task: Task;
+	group: Group;
 	doc: PertDoc;
 	changeDoc: (mutate: (d: PertDoc) => void) => void;
 	projectId: string;
 }) {
-	const children = useMemo(() => getChildren(doc, task.id), [doc, task.id]);
-	const navigate = (id: TaskId) => {
-		selectionStore.setState((s) => ({ ...s, projectId, taskId: id }));
-	};
-	const detach = (childId: TaskId) => {
+	const numbering = useMemo(() => computeNumbering(doc), [doc]);
+	const tasks = useMemo(() => getTasksInGroup(doc, group.id), [doc, group.id]);
+	const childGroups = useMemo(
+		() => getChildGroups(doc, group.id),
+		[doc, group.id],
+	);
+	const total = tasks.length + childGroups.length;
+
+	const removeTask = (taskId: TaskId) => {
 		changeDoc((d) => {
-			moveTaskMutation(d, { taskId: childId, parentId: task.parentId ?? null });
+			assignTaskToGroupMutation(d, { taskId, groupId: null });
 		});
 	};
+	const removeChildGroup = (childId: string) => {
+		changeDoc((d) => {
+			setGroupParentMutation(d, {
+				groupId: childId,
+				parentGroupId: group.parentGroupId,
+			});
+		});
+	};
+
 	return (
 		<div>
 			<div className="mb-1.5 flex items-center justify-between">
 				<h3 className="text-[11px] font-semibold uppercase tracking-wider text-foreground/80">
-					Children
+					Members
 				</h3>
-				<span className="text-[10px] text-muted-foreground">
-					{children.length}
-				</span>
+				<span className="text-[10px] text-muted-foreground">{total}</span>
 			</div>
-			{children.length === 0 ? (
+			{total === 0 ? (
 				<p className="text-xs text-muted-foreground">
-					Drag a task onto this container on the canvas to nest it.
+					Drag a task onto this group on the canvas, or use the Group selector
+					on a task.
 				</p>
 			) : (
-				<ul className="space-y-1" data-testid="container-children">
-					{children.map((child) => (
+				<ul className="space-y-1" data-testid="group-members">
+					{childGroups.map((child) => (
 						<li
 							key={child.id}
 							className="flex items-center gap-2 rounded-md border border-border/60 bg-card/40 px-2 py-1 text-xs"
 						>
 							<button
 								type="button"
-								onClick={() => navigate(child.id)}
+								onClick={() => selectGroup(projectId, child.id)}
 								className="min-w-0 flex-1 truncate text-left hover:underline"
-								title={child.title}
+								title={child.name}
 							>
-								<span className="mr-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-									{child.kind === "container"
-										? "box"
-										: child.kind === "milestone"
-											? "★"
-											: ""}
+								<span className="mr-1 font-mono text-[10px] text-muted-foreground">
+									{numbering.groups[child.id] ?? ""}
 								</span>
-								{child.title || "Untitled"}
+								<span className="mr-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+									group
+								</span>
+								{child.name || "Untitled"}
 							</button>
 							<Button
 								type="button"
 								size="sm"
 								variant="ghost"
 								className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-destructive"
-								onClick={() => detach(child.id)}
-								data-testid={`container-detach-${child.id}`}
+								onClick={() => removeChildGroup(child.id)}
+								data-testid={`group-remove-${child.id}`}
 							>
-								Detach
+								Remove
+							</Button>
+						</li>
+					))}
+					{tasks.map((member) => (
+						<li
+							key={member.id}
+							className="flex items-center gap-2 rounded-md border border-border/60 bg-card/40 px-2 py-1 text-xs"
+						>
+							<button
+								type="button"
+								onClick={() => selectTask(projectId, member.id)}
+								className="min-w-0 flex-1 truncate text-left hover:underline"
+								title={member.title}
+							>
+								<span className="mr-1 font-mono text-[10px] text-muted-foreground">
+									{member.numberOverride ?? numbering.tasks[member.id] ?? ""}
+								</span>
+								<span className="mr-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+									{member.kind === "milestone" ? "★" : ""}
+								</span>
+								{member.title || "Untitled"}
+							</button>
+							<Button
+								type="button"
+								size="sm"
+								variant="ghost"
+								className="h-6 px-1.5 text-[10px] text-muted-foreground hover:text-destructive"
+								onClick={() => removeTask(member.id)}
+								data-testid={`group-remove-${member.id}`}
+							>
+								Remove
 							</Button>
 						</li>
 					))}
 				</ul>
+			)}
+		</div>
+	);
+}
+
+// WBS number row. Shows the task's derived number (mono, read-only) with an
+// "Override" checkbox that reveals an input. The input is bound straight to the
+// stored `numberOverride` (controlled — so remote edits flow through), and the
+// underlying mutation clears the override when the text is emptied. Toggling
+// the checkbox off clears any override outright.
+function NumberOverrideRow({
+	derivedNumber,
+	override,
+	onCommit,
+}: {
+	derivedNumber: string;
+	override?: string;
+	onCommit: (number: string | null) => void;
+}) {
+	const hasOverride = typeof override === "string";
+	const [editing, setEditing] = useState(hasOverride);
+	// Re-open the input when a remote override lands while we weren't editing.
+	useEffect(() => {
+		if (hasOverride) setEditing(true);
+	}, [hasOverride]);
+
+	const toggle = () => {
+		if (editing) {
+			setEditing(false);
+			onCommit(null);
+		} else {
+			setEditing(true);
+		}
+	};
+
+	return (
+		<div className="space-y-1.5" data-testid="inspector-number">
+			<div className="flex items-center justify-between">
+				<Label htmlFor="ti-number">Number</Label>
+				<label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+					<input
+						type="checkbox"
+						checked={editing}
+						onChange={toggle}
+						data-testid="inspector-number-override-toggle"
+						className="size-3.5 cursor-pointer accent-foreground"
+					/>
+					Override
+				</label>
+			</div>
+			{editing ? (
+				<Input
+					id="ti-number"
+					data-testid="inspector-number-input"
+					value={override ?? ""}
+					onChange={(e) => onCommit(e.target.value)}
+					placeholder={derivedNumber}
+					className="font-mono text-xs"
+				/>
+			) : (
+				<div className="px-1 py-1 font-mono text-xs tabular-nums text-muted-foreground">
+					{derivedNumber}
+				</div>
 			)}
 		</div>
 	);
@@ -1612,21 +1830,22 @@ function fmt(n: number): string {
 	return snapped.toFixed(2);
 }
 
-function ContainerForm({
-	task,
+// Right-pane editor for the currently selected group. Mirrors TaskForm's
+// three-pane shape (Details / Plan / Track) but edits a `Group` and rolls up
+// stats across its member tasks instead of editing a single task.
+function GroupForm({
+	group,
 	doc,
 	changeDoc,
 	projectId,
-	conflictPill,
 	onDelete,
 	mcResult,
 	pane,
 }: {
-	task: Task;
+	group: Group;
 	doc: PertDoc;
 	changeDoc: (mutate: (d: PertDoc) => void) => void;
 	projectId: string;
-	conflictPill?: React.ReactNode;
 	onDelete: () => void;
 	mcResult: MonteCarloResult | null;
 	pane: InspectorPane;
@@ -1634,108 +1853,110 @@ function ContainerForm({
 	const scheduleResult = useMemo(() => computeSchedule(doc), [doc]);
 	const schedule = scheduleResult.ok ? scheduleResult.schedule : null;
 	const rollup = useMemo(
-		() => rollupContainer(doc, schedule, task.id),
-		[doc, schedule, task.id],
+		() => rollupGroup(doc, schedule, group.id),
+		[doc, schedule, group.id],
 	);
-	const descendantIds = useMemo(
-		() => getDescendants(doc, task.id),
-		[doc, task.id],
+	const numbering = useMemo(() => computeNumbering(doc), [doc]);
+	const groupNumber = numbering.groups[group.id] ?? "—";
+	const deepMembers = useMemo(
+		() => getTasksInGroupDeep(doc, group.id),
+		[doc, group.id],
 	);
 	const mcRollup = useMemo(() => {
 		if (!mcResult) return null;
-		const set = new Set(descendantIds);
+		const ids = new Set(deepMembers.map((t) => t.id));
 		let p50 = 0;
 		let p90 = 0;
 		let maxCrit = 0;
 		let count = 0;
 		for (const [id, entry] of Object.entries(mcResult.tasks)) {
-			if (!set.has(id)) continue;
+			if (!ids.has(id)) continue;
 			count += 1;
 			if (entry.p50 > p50) p50 = entry.p50;
 			if (entry.p90 > p90) p90 = entry.p90;
 			if (entry.criticality > maxCrit) maxCrit = entry.criticality;
 		}
 		return count > 0 ? { p50, p90, maxCriticality: maxCrit } : null;
-	}, [mcResult, descendantIds]);
-	const pathRollups = useMemo(
-		() => rollupContainerPaths(doc, schedule, mcResult, task.id),
-		[doc, schedule, mcResult, task.id],
-	);
-	const mutateTask = useCallback(
-		(mutate: (t: Task) => void) => {
-			changeDoc((d) => {
-				const draft = d.tasksById[task.id];
-				if (draft) mutate(draft);
-			});
-		},
-		[changeDoc, task.id],
-	);
+	}, [mcResult, deepMembers]);
+
+	// Candidate parents: every other group that isn't this group or one of its
+	// descendants (re-parenting under a descendant would create a cycle).
+	const parentOptions = useMemo(() => {
+		const descendants = new Set(getGroupDescendants(doc, group.id));
+		return Object.values(doc.groupsById)
+			.filter((g) => g.id !== group.id && !descendants.has(g.id))
+			.map((g) => ({
+				id: g.id,
+				label:
+					`${numbering.groups[g.id] ?? "?"} ${g.name || "Untitled"}`.trim(),
+			}))
+			.sort((a, b) => a.label.localeCompare(b.label));
+	}, [doc, group.id, numbering.groups]);
+
+	const setName = (name: string) => {
+		changeDoc((d) => {
+			renameGroupMutation(d, { groupId: group.id, name });
+		});
+	};
+	const setParent = (parentGroupId: string | null) => {
+		changeDoc((d) => {
+			setGroupParentMutation(d, { groupId: group.id, parentGroupId });
+		});
+	};
 
 	const planView = (
 		<div className="@container p-4">
-			{conflictPill && <div className="mb-4">{conflictPill}</div>}
-			<ContainerSummary rollup={rollup} />
+			<GroupSummary rollup={rollup} />
 
 			<div className="mt-4 grid grid-cols-1 gap-4 @4xl:grid-cols-2 @4xl:gap-6">
 				<div className="space-y-5">
 					<SectionHeading
-						label="Hierarchy"
-						hint="What this container holds and how to identify it."
+						label="Group"
+						hint="What this group holds and where it sits in the hierarchy."
 					/>
 					<div className="space-y-1.5">
-						<Label htmlFor="ci-title">Title</Label>
+						<Label htmlFor="gi-name">Name</Label>
 						<Input
-							id="ci-title"
-							data-testid="inspector-title"
-							value={task.title}
-							onChange={(e) => {
-								const next = e.target.value;
-								mutateTask((d) => {
-									d.title = next;
-								});
-							}}
+							id="gi-name"
+							data-testid="inspector-group-name"
+							value={group.name}
+							onChange={(e) => setName(e.target.value)}
 						/>
 					</div>
 					<div className="space-y-1.5">
-						<Label htmlFor="ci-key">
-							Key{" "}
-							<span className="text-muted-foreground/70">
-								— dotted group, e.g. M1.A
-							</span>
-						</Label>
-						<Input
-							id="ci-key"
-							data-testid="inspector-key"
-							value={task.key ?? ""}
-							onChange={(e) => {
-								const next = e.target.value;
-								mutateTask((d) => {
-									const trimmed = next.trim();
-									if (trimmed.length === 0) delete d.key;
-									else d.key = trimmed;
-								});
-							}}
-							placeholder="ungrouped"
-							className="font-mono text-xs"
-						/>
+						<Label>Number</Label>
+						<div
+							data-testid="inspector-group-number"
+							className="px-1 py-1 font-mono text-xs tabular-nums text-muted-foreground"
+						>
+							{groupNumber}
+						</div>
 					</div>
 					<div className="space-y-1.5">
-						<Label htmlFor="ci-notes">Notes</Label>
-						<Textarea
-							id="ci-notes"
-							value={task.notes ?? ""}
-							onChange={(e) => {
-								const next = e.target.value;
-								mutateTask((d) => {
-									d.notes = next;
-								});
-							}}
-							rows={3}
-						/>
+						<Label htmlFor="gi-parent">Parent group</Label>
+						<Select
+							value={group.parentGroupId ?? "__top__"}
+							onValueChange={(v) => setParent(v === "__top__" ? null : v)}
+						>
+							<SelectTrigger
+								id="gi-parent"
+								data-testid="inspector-group-parent"
+							>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="__top__">(top level)</SelectItem>
+								{parentOptions.map((g) => (
+									<SelectItem key={g.id} value={g.id}>
+										{g.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
 					</div>
 					<div className="pt-2">
-						<ChildrenSection
-							task={task}
+						<GroupMembersSection
+							group={group}
 							doc={doc}
 							changeDoc={changeDoc}
 							projectId={projectId}
@@ -1746,7 +1967,7 @@ function ContainerForm({
 				<div className="space-y-5">
 					<SectionHeading
 						label="Schedule"
-						hint="Rolled-up scheduling stats across every descendant. When the container is collapsed, these are the numbers shown on the card."
+						hint="Rolled-up scheduling stats across every member task. When the group is collapsed, these are the numbers shown on the card."
 					/>
 					<div>
 						<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -1774,99 +1995,57 @@ function ContainerForm({
 						</dl>
 					</div>
 					{mcRollup && (
-						<div data-testid="container-monte-carlo">
+						<div data-testid="group-monte-carlo">
 							<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-								Monte Carlo (worst descendant)
+								Monte Carlo (worst member)
 							</h3>
 							<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
 								<ScheduleStat
 									label="P50 finish"
-									tooltip="The realistic finish day of the latest descendant: across 1,500 simulated runs, half of them had everything in this container done by this date."
+									tooltip="The realistic finish day of the latest member: across 1,500 simulated runs, half of them had everything in this group done by this date."
 									value={`${fmt(mcRollup.p50)} d`}
 								/>
 								<ScheduleStat
 									label="P90 finish"
-									tooltip="The safe finish day for the whole container: 90% of simulated runs finished every descendant by this date. Use it for stakeholder commitments."
+									tooltip="The safe finish day for the whole group: 90% of simulated runs finished every member by this date. Use it for stakeholder commitments."
 									value={`${fmt(mcRollup.p90)} d`}
 								/>
 								<ScheduleStat
 									label="Max criticality"
-									tooltip="The highest criticality score across all descendants. Tells you how often at least one task inside this container ended up on the project's critical path."
+									tooltip="The highest criticality score across all members. Tells you how often at least one task inside this group ended up on the project's critical path."
 									value={`${Math.round(mcRollup.maxCriticality * 100)}%`}
 								/>
 							</dl>
-						</div>
-					)}
-					{pathRollups.length > 0 && (
-						<div data-testid="container-path-rollups">
-							<h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-								Per-interface paths
-							</h3>
-							<table className="w-full text-xs">
-								<thead className="text-[10px] uppercase tracking-wide text-muted-foreground">
-									<tr>
-										<th className="py-1 text-left font-medium">Entry → Exit</th>
-										<th className="py-1 text-right font-medium">Expected</th>
-										{pathRollups.some((p) => p.p90 !== undefined) && (
-											<th className="py-1 text-right font-medium">P90</th>
-										)}
-									</tr>
-								</thead>
-								<tbody>
-									{pathRollups.map((p) => (
-										<tr
-											key={`${p.entryId}-${p.exitId}`}
-											className="border-t"
-											data-testid={`path-${p.entryId}-${p.exitId}`}
-										>
-											<td className="py-1">
-												<span className="font-medium">{p.entryLabel}</span>
-												<span className="mx-1 text-muted-foreground">→</span>
-												<span className="font-medium">{p.exitLabel}</span>
-											</td>
-											<td className="py-1 text-right tabular-nums">
-												{fmt(p.expected)}d
-											</td>
-											{p.p90 !== undefined && (
-												<td className="py-1 text-right tabular-nums">
-													{fmt(p.p90)}d
-												</td>
-											)}
-										</tr>
-									))}
-								</tbody>
-							</table>
 						</div>
 					)}
 				</div>
 			</div>
 
 			<Separator className="my-6" />
-			<DangerZone onDelete={onDelete} label="Delete container" />
+			<DangerZone
+				onDelete={onDelete}
+				label="Delete group"
+				description="Delete this group. Its tasks are ungrouped and any sub-groups move up a level — no tasks are deleted."
+			/>
 		</div>
 	);
 
 	const trackView = (
 		<div className="@container p-4">
-			{conflictPill && <div className="mb-4">{conflictPill}</div>}
-			<ContainerSummary rollup={rollup} />
-			<div className="mt-3 rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
-				A container's progress reflects its children. Open a child task to mark
-				it started or finished.
-			</div>
+			<GroupSummary rollup={rollup} />
+			<GroupProgress rollup={rollup} />
 		</div>
 	);
 
 	if (pane === "details") {
 		return (
-			<ContainerOverview
-				task={task}
+			<GroupOverview
+				group={group}
 				doc={doc}
 				projectId={projectId}
 				rollup={rollup}
 				mcRollup={mcRollup}
-				pathRollups={pathRollups}
-				conflictPill={conflictPill}
+				groupNumber={groupNumber}
 			/>
 		);
 	}
@@ -1874,9 +2053,53 @@ function ContainerForm({
 	return planView;
 }
 
-// Compact heading + tooltip used to label the three conceptual sections of
-// the container inspector (Hierarchy / Boundary / Schedule). The hint comes
-// from a hover tooltip so the headings stay scannable on narrow widths.
+// Status/progress rollup for a group's Track pane: a completion bar plus the
+// completed / in-progress / not-started member tallies.
+function GroupProgress({ rollup }: { rollup: GroupRollup }) {
+	return (
+		<div className="mt-3 space-y-3 rounded-md border bg-muted/20 p-3">
+			<div className="flex items-center justify-between text-xs">
+				<Label className="text-xs text-muted-foreground">Progress</Label>
+				<span className="tabular-nums">{Math.round(rollup.progress)}%</span>
+			</div>
+			<Progress value={rollup.progress} className="h-1.5" />
+			<dl className="grid grid-cols-3 gap-2 text-center text-xs">
+				<div>
+					<dd className="tabular-nums text-sky-700 dark:text-sky-300">
+						{rollup.completedCount}
+					</dd>
+					<dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
+						Done
+					</dt>
+				</div>
+				<div>
+					<dd className="tabular-nums text-amber-700 dark:text-amber-300">
+						{rollup.inProgressCount}
+					</dd>
+					<dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
+						In progress
+					</dt>
+				</div>
+				<div>
+					<dd className="tabular-nums text-muted-foreground">
+						{rollup.notStartedCount}
+					</dd>
+					<dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
+						Not started
+					</dt>
+				</div>
+			</dl>
+			<p className="text-[11px] text-muted-foreground">
+				A group's progress reflects its members. Open a member task to mark it
+				started or finished.
+			</p>
+		</div>
+	);
+}
+
+// Compact heading + tooltip used to label the conceptual sections of the group
+// inspector (Group / Schedule). The hint comes from a hover tooltip so the
+// headings stay scannable on narrow widths.
 function SectionHeading({
 	label,
 	hint,
@@ -1903,45 +2126,45 @@ function SectionHeading({
 	);
 }
 
-// Read-only consolidated view shown in the container's "All details" sub-tab.
-// Mirrors the editable container form fields plus the schedule rollup, MC
-// summary, per-interface paths, and a navigable children list.
-function ContainerOverview({
-	task,
+// Read-only consolidated view shown in the group's "All details" sub-tab.
+// Mirrors the editable group form fields plus the schedule rollup, MC summary,
+// and a navigable members list.
+function GroupOverview({
+	group,
 	doc,
 	projectId,
 	rollup,
 	mcRollup,
-	pathRollups,
-	conflictPill,
+	groupNumber,
 }: {
-	task: Task;
+	group: Group;
 	doc: PertDoc;
 	projectId: string;
-	rollup: ReturnType<typeof rollupContainer>;
+	rollup: GroupRollup;
 	mcRollup: { p50: number; p90: number; maxCriticality: number } | null;
-	pathRollups: ReturnType<typeof rollupContainerPaths>;
-	conflictPill?: React.ReactNode;
+	groupNumber: string;
 }) {
-	const parent = task.parentId ? doc.tasksById[task.parentId] : null;
-	const children = useMemo(() => getChildren(doc, task.id), [doc, task.id]);
-	const navigate = (id: TaskId) => {
-		selectionStore.setState((s) => ({ ...s, projectId, taskId: id }));
-	};
+	const numbering = useMemo(() => computeNumbering(doc), [doc]);
+	const parent = group.parentGroupId
+		? doc.groupsById[group.parentGroupId]
+		: null;
+	const tasks = useMemo(() => getTasksInGroup(doc, group.id), [doc, group.id]);
+	const childGroups = useMemo(
+		() => getChildGroups(doc, group.id),
+		[doc, group.id],
+	);
+	const total = tasks.length + childGroups.length;
 	return (
 		<div className="@container space-y-5 p-4 text-sm">
-			{conflictPill && <div>{conflictPill}</div>}
-			<ContainerSummary rollup={rollup} />
+			<GroupSummary rollup={rollup} />
 
 			<OverviewSection label="Description">
 				<dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5">
-					<OverviewRow label="Title" value={task.title || "Untitled"} />
-					{task.key && (
-						<OverviewRow
-							label="Key"
-							value={<span className="font-mono text-xs">{task.key}</span>}
-						/>
-					)}
+					<OverviewRow label="Name" value={group.name || "Untitled"} />
+					<OverviewRow
+						label="Number"
+						value={<span className="font-mono text-xs">{groupNumber}</span>}
+					/>
 					{parent && (
 						<OverviewRow
 							label="Inside"
@@ -1949,47 +2172,66 @@ function ContainerOverview({
 								<button
 									type="button"
 									className="text-left hover:underline"
-									onClick={() => navigate(parent.id)}
+									onClick={() => selectGroup(projectId, parent.id)}
 								>
-									{parent.title || "Untitled container"}
+									<span className="mr-1 font-mono text-xs text-muted-foreground">
+										{numbering.groups[parent.id] ?? ""}
+									</span>
+									{parent.name || "Untitled"}
 								</button>
 							}
 						/>
 					)}
 				</dl>
-				{task.notes && (
-					<p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
-						{task.notes}
-					</p>
-				)}
 			</OverviewSection>
 
-			<OverviewSection label="Children">
-				{children.length === 0 ? (
+			<OverviewSection label="Members">
+				{total === 0 ? (
 					<p className="text-xs text-muted-foreground/70">
-						Drag tasks onto this container on the canvas to nest them.
+						Drag a task onto this group on the canvas, or use the Group selector
+						on a task.
 					</p>
 				) : (
-					<ul className="space-y-1" data-testid="overview-children">
-						{children.map((child) => (
+					<ul className="space-y-1" data-testid="overview-members">
+						{childGroups.map((child) => (
 							<li
 								key={child.id}
 								className="rounded-md border border-border/60 bg-card/40 px-2 py-1 text-xs"
 							>
 								<button
 									type="button"
-									onClick={() => navigate(child.id)}
+									onClick={() => selectGroup(projectId, child.id)}
 									className="w-full truncate text-left hover:underline"
-									title={child.title}
+									title={child.name}
 								>
-									<span className="mr-1 text-[10px] uppercase tracking-wide text-muted-foreground">
-										{child.kind === "container"
-											? "box"
-											: child.kind === "milestone"
-												? "★"
-												: ""}
+									<span className="mr-1 font-mono text-[10px] text-muted-foreground">
+										{numbering.groups[child.id] ?? ""}
 									</span>
-									{child.title || "Untitled"}
+									<span className="mr-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+										group
+									</span>
+									{child.name || "Untitled"}
+								</button>
+							</li>
+						))}
+						{tasks.map((member) => (
+							<li
+								key={member.id}
+								className="rounded-md border border-border/60 bg-card/40 px-2 py-1 text-xs"
+							>
+								<button
+									type="button"
+									onClick={() => selectTask(projectId, member.id)}
+									className="w-full truncate text-left hover:underline"
+									title={member.title}
+								>
+									<span className="mr-1 font-mono text-[10px] text-muted-foreground">
+										{member.numberOverride ?? numbering.tasks[member.id] ?? ""}
+									</span>
+									<span className="mr-1 text-[10px] uppercase tracking-wide text-muted-foreground">
+										{member.kind === "milestone" ? "★" : ""}
+									</span>
+									{member.title || "Untitled"}
 								</button>
 							</li>
 						))}
@@ -2021,76 +2263,33 @@ function ContainerOverview({
 			</OverviewSection>
 
 			{mcRollup && (
-				<OverviewSection label="Monte Carlo (worst descendant)">
+				<OverviewSection label="Monte Carlo (worst member)">
 					<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5">
 						<ScheduleStat
 							label="P50 finish"
-							tooltip="Realistic finish day of the latest descendant."
+							tooltip="Realistic finish day of the latest member."
 							value={`${fmt(mcRollup.p50)} d`}
 						/>
 						<ScheduleStat
 							label="P90 finish"
-							tooltip="Safe finish day for the whole container."
+							tooltip="Safe finish day for the whole group."
 							value={`${fmt(mcRollup.p90)} d`}
 						/>
 						<ScheduleStat
 							label="Max criticality"
-							tooltip="Highest criticality score across all descendants."
+							tooltip="Highest criticality score across all members."
 							value={`${Math.round(mcRollup.maxCriticality * 100)}%`}
 						/>
 					</dl>
-				</OverviewSection>
-			)}
-
-			{pathRollups.length > 0 && (
-				<OverviewSection label="Per-interface paths">
-					<table className="w-full text-xs">
-						<thead className="text-[10px] uppercase tracking-wide text-muted-foreground">
-							<tr>
-								<th className="py-1 text-left font-medium">Entry → Exit</th>
-								<th className="py-1 text-right font-medium">Expected</th>
-								{pathRollups.some((p) => p.p90 !== undefined) && (
-									<th className="py-1 text-right font-medium">P90</th>
-								)}
-							</tr>
-						</thead>
-						<tbody>
-							{pathRollups.map((p) => (
-								<tr
-									key={`${p.entryId}-${p.exitId}`}
-									className="border-t"
-									data-testid={`overview-path-${p.entryId}-${p.exitId}`}
-								>
-									<td className="py-1">
-										<span className="font-medium">{p.entryLabel}</span>
-										<span className="mx-1 text-muted-foreground">→</span>
-										<span className="font-medium">{p.exitLabel}</span>
-									</td>
-									<td className="py-1 text-right tabular-nums">
-										{fmt(p.expected)}d
-									</td>
-									{p.p90 !== undefined && (
-										<td className="py-1 text-right tabular-nums">
-											{fmt(p.p90)}d
-										</td>
-									)}
-								</tr>
-							))}
-						</tbody>
-					</table>
 				</OverviewSection>
 			)}
 		</div>
 	);
 }
 
-// At-a-glance pills for containers — same shape as TaskSummary but reading
-// from the rollup projection instead of the per-task schedule entry.
-function ContainerSummary({
-	rollup,
-}: {
-	rollup: ReturnType<typeof rollupContainer>;
-}) {
+// At-a-glance pills for groups — same shape as TaskSummary but reading from the
+// rollup projection instead of the per-task schedule entry.
+function GroupSummary({ rollup }: { rollup: GroupRollup }) {
 	const onCritical = rollup.hasCritical;
 	return (
 		<div

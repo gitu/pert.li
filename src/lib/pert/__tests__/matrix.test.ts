@@ -27,7 +27,7 @@ function build(...tasks: Task[]): PertDoc {
 }
 
 function leaf(id: string, title: string): Task {
-	return { id, kind: "task", title, parentId: null, estimate: est };
+	return { id, kind: "task", title, estimate: est };
 }
 
 describe("buildDependencyMatrix", () => {
@@ -66,16 +66,22 @@ describe("buildDependencyMatrix", () => {
 		expect(bToA.type).toBeNull();
 	});
 
-	it("skips containers", () => {
+	it("includes milestones and ignores groups", () => {
 		const doc = build(leaf("a", "Alpha"), {
-			id: "c",
-			kind: "container",
-			title: "Group",
-			parentId: null,
+			id: "m",
+			kind: "milestone",
+			title: "Mile",
 		});
+		// Groups are not tasks — they never appear as matrix rows.
+		doc.groupsById.g = {
+			id: "g",
+			name: "Group",
+			parentGroupId: null,
+			order: 0,
+		};
 		const m = buildDependencyMatrix(doc);
-		expect(m.tasks.map((t) => t.id)).toEqual(["a"]);
-		expect(m.cells.length).toBe(1);
+		expect(m.tasks.map((t) => t.id)).toEqual(["a", "m"]);
+		expect(m.cells.length).toBe(2);
 	});
 });
 
