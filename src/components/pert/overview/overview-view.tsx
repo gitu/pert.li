@@ -368,82 +368,90 @@ export function OverviewContent({
 
 	return (
 		<div className="h-full overflow-y-auto" data-testid="overview-view">
-			<div className="mx-auto w-full max-w-4xl space-y-6 p-4 sm:p-6">
-				{/* Description / title */}
-				<ProjectDescription
-					title={title}
-					description={description}
-					readOnly={readOnly}
-					saving={metaSaving}
-					onSave={onSaveMeta}
-				/>
+			<div className="mx-auto w-full max-w-6xl space-y-6 p-4 sm:p-6">
+				{/* Header: title & description on the left, project actions on the right */}
+				<header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+					<div className="min-w-0 flex-1">
+						<ProjectDescription
+							title={title}
+							description={description}
+							readOnly={readOnly}
+							saving={metaSaving}
+							onSave={onSaveMeta}
+						/>
+					</div>
+					{actions && (
+						<div className="flex flex-wrap items-center gap-1.5 sm:shrink-0 sm:justify-end">
+							{actions}
+						</div>
+					)}
+				</header>
 
 				{/* Key figures */}
 				<OverviewMetrics overview={overview} />
 
-				{/* AI summary */}
-				<OverviewSummaryCard
-					state={summaryState}
-					onSummarize={onSummarize}
-					disabled={readOnly}
-				/>
-
-				{/* Project actions */}
-				{actions && (
-					<section className="rounded-md border bg-card/40 p-4">
-						<h2 className="mb-2 text-sm font-medium">Project actions</h2>
-						<div className="flex flex-wrap items-center gap-1.5">{actions}</div>
-					</section>
-				)}
-
-				{/* Calendar settings */}
-				<section className="rounded-md border bg-card/40">
-					<div className="flex items-center gap-1.5 border-b px-4 py-3 text-sm font-medium">
-						<CalendarDaysIcon className="size-4" />
-						Calendar &amp; scheduling
-					</div>
-					{readOnly ? (
-						<p className="p-4 text-xs text-muted-foreground">
-							Switch to edit mode to change the project calendar.
-						</p>
-					) : (
-						<ProjectCalendarForm
-							key={calendarKey}
-							initial={calendarInitial}
-							doc={doc}
-							onCancel={() => setCalendarKey((k) => k + 1)}
-							onSave={(next) => {
-								onSaveCalendar(next);
-								setCalendarKey((k) => k + 1);
-							}}
+				{/* Dashboard grid: summary + explore on the left, calendar on the right */}
+				<div className="grid items-start gap-6 lg:grid-cols-2">
+					{/* AI summary */}
+					<div className="lg:col-start-1 lg:row-start-1">
+						<OverviewSummaryCard
+							state={summaryState}
+							onSummarize={onSummarize}
+							disabled={readOnly}
 						/>
-					)}
-				</section>
-
-				{/* View jump-offs */}
-				<section>
-					<h2 className="mb-2 text-sm font-medium">Explore this project</h2>
-					<div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-						{VIEW_JUMP_OFFS.map((v) => (
-							<button
-								key={v.id}
-								type="button"
-								onClick={() => onNavigate(v.id)}
-								data-testid={`overview-jump-${v.id}`}
-								className="group flex items-start gap-3 rounded-md border bg-card/40 p-3 text-left transition-colors hover:border-brand/50 hover:bg-brand/5"
-							>
-								<v.Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground group-hover:text-brand" />
-								<div className="min-w-0 flex-1">
-									<div className="flex items-center gap-1 text-sm font-medium">
-										{v.label}
-										<ArrowRightIcon className="size-3.5 -translate-x-1 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
-									</div>
-									<div className="text-xs text-muted-foreground">{v.intro}</div>
-								</div>
-							</button>
-						))}
 					</div>
-				</section>
+
+					{/* Calendar settings */}
+					<section className="rounded-md border bg-card/40 lg:col-start-2 lg:row-start-1">
+						<div className="flex items-center gap-1.5 border-b px-4 py-3 text-sm font-medium">
+							<CalendarDaysIcon className="size-4" />
+							Calendar &amp; scheduling
+						</div>
+						{readOnly ? (
+							<p className="p-4 text-xs text-muted-foreground">
+								Switch to edit mode to change the project calendar.
+							</p>
+						) : (
+							<ProjectCalendarForm
+								key={calendarKey}
+								initial={calendarInitial}
+								doc={doc}
+								onCancel={() => setCalendarKey((k) => k + 1)}
+								onSave={(next) => {
+									onSaveCalendar(next);
+									setCalendarKey((k) => k + 1);
+								}}
+							/>
+						)}
+					</section>
+
+					{/* View jump-offs */}
+					<section className="lg:col-start-1 lg:row-start-2">
+						<h2 className="mb-2 text-sm font-medium">Explore this project</h2>
+						<div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+							{VIEW_JUMP_OFFS.map((v) => (
+								<button
+									key={v.id}
+									type="button"
+									onClick={() => onNavigate(v.id)}
+									data-testid={`overview-jump-${v.id}`}
+									className="group flex items-start gap-3 rounded-md border bg-card/40 p-3 text-left transition-colors hover:border-brand/50 hover:bg-brand/5"
+								>
+									<v.Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground group-hover:text-brand" />
+									<div className="min-w-0 flex-1">
+										<div className="flex items-center gap-1 text-sm font-medium">
+											{v.label}
+											<ArrowRightIcon className="size-3.5 -translate-x-1 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
+										</div>
+										<div className="text-xs text-muted-foreground">
+											{v.intro}
+										</div>
+									</div>
+								</button>
+							))}
+						</div>
+					</section>
+				</div>
 			</div>
 		</div>
 	);
@@ -552,19 +560,20 @@ function ProjectDescription({
 
 	return (
 		<section className="space-y-1" data-testid="overview-description">
-			<div className="flex items-start justify-between gap-3">
+			<div className="flex items-center gap-1.5">
 				<h1 className="text-xl font-semibold">{title}</h1>
 				{!readOnly && (
 					<Button
 						type="button"
-						size="sm"
+						size="icon"
 						variant="ghost"
-						className="h-8 shrink-0 gap-1.5 text-xs"
+						className="size-7 shrink-0 text-muted-foreground"
 						onClick={startEdit}
 						data-testid="overview-description-edit-button"
+						title="Rename & edit description"
+						aria-label="Rename & edit description"
 					>
 						<PencilIcon className="size-3.5" />
-						Edit
 					</Button>
 				)}
 			</div>
