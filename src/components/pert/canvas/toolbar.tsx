@@ -35,7 +35,7 @@ import { CanvasLegend } from "./canvas-legend";
 export type CanvasAddToolbarProps = {
 	onAddTask: () => void;
 	onAddMilestone: () => void;
-	onAddContainer: () => void;
+	onAddGroup: () => void;
 };
 
 // Tooltip suffix that exposes the keyboard shortcut next to each button so
@@ -45,7 +45,7 @@ export type CanvasAddToolbarProps = {
 export function CanvasAddToolbar({
 	onAddTask,
 	onAddMilestone,
-	onAddContainer,
+	onAddGroup,
 }: CanvasAddToolbarProps) {
 	return (
 		<div
@@ -78,12 +78,12 @@ export function CanvasAddToolbar({
 				size="sm"
 				variant="ghost"
 				className="h-8 gap-1.5 text-xs"
-				onClick={onAddContainer}
-				data-testid="toolbar-add-container"
-				title="Add a container (c)"
+				onClick={onAddGroup}
+				data-testid="toolbar-add-group"
+				title="Add a group (g)"
 			>
 				<FolderPlusIcon className="size-3.5" />
-				Container
+				Group
 			</Button>
 		</div>
 	);
@@ -95,8 +95,8 @@ export type CanvasViewToolbarProps = {
 	onSetSpacing: (spacing: LayoutSpacing) => void;
 	onRelayout: () => void;
 	onToggleContinuous: () => void;
-	// Collapse / expand every container at once. Hidden when the project has
-	// no containers (callers pass undefined then).
+	// Collapse / expand every group at once. Hidden when the project has no
+	// groups (callers pass undefined then).
 	onCollapseAll?: () => void;
 	onExpandAll?: () => void;
 };
@@ -153,7 +153,7 @@ export function CanvasViewToolbar({
 					className="h-8 gap-1.5 text-xs"
 					onClick={onCollapseAll}
 					data-testid="toolbar-collapse-all"
-					title="Collapse every container to its summary card"
+					title="Collapse every group to its summary card"
 				>
 					<FoldVerticalIcon className="size-3.5" />
 					Collapse all
@@ -166,7 +166,7 @@ export function CanvasViewToolbar({
 					className="h-8 gap-1.5 text-xs"
 					onClick={onExpandAll}
 					data-testid="toolbar-expand-all"
-					title="Expand every container"
+					title="Expand every group"
 				>
 					<UnfoldVerticalIcon className="size-3.5" />
 					Expand all

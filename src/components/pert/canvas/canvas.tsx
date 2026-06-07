@@ -32,40 +32,41 @@ import {
 	useCollapsedSet,
 } from "#/lib/pert/collapse";
 import { cycleEdgeSet, cycleTaskSet } from "#/lib/pert/cycle";
-import { getAncestors } from "#/lib/pert/hierarchy";
 import {
-	ensureContainerInterfaces,
-	removeContainerInterfaces,
-} from "#/lib/pert/interfaces";
+	assignTaskToGroupMutation,
+	createGroupMutation,
+	deleteGroupMutation,
+} from "#/lib/pert/group-mutations";
+import { getGroupAncestors } from "#/lib/pert/hierarchy";
 import { computeLayout, fallbackGridLayout } from "#/lib/pert/layout";
 import type { MonteCarloResult } from "#/lib/pert/montecarlo";
+import { computeNumbering } from "#/lib/pert/numbering";
 import { type ProjectedNode, projectGraph } from "#/lib/pert/projection";
 import {
-	buildContainerSnapshot,
-	canReparent,
-	findContainerAtPointInSnapshot,
-	reparentMutation,
-	shiftDescendantsMutation,
+	buildGroupSnapshot,
+	findGroupAtPointInSnapshot,
+	groupBoundsFromMembers,
+	shiftGroupMembersMutation,
 } from "#/lib/pert/reparent";
 import { computeSchedule, type Schedule } from "#/lib/pert/schedule";
 import {
 	consumeLocallyCreated,
+	selectGroup,
 	selectionStore,
 	selectTask,
 } from "#/lib/pert/store";
-import type { PertDoc, Task, TaskId } from "#/lib/pert/types";
+import type { GroupId, PertDoc, Task, TaskId } from "#/lib/pert/types";
 import { useMonteCarlo } from "#/lib/pert/use-monte-carlo";
 import { useResolvedTheme } from "#/lib/theme";
 import { useIsMobile } from "#/lib/use-media-query";
+import { CycleBanner } from "./cycle-banner";
 import {
 	COLLAPSED_CARD_WIDTH,
-	ContainerCollapsedNode,
-	ContainerExpandedNode,
-	type ContainerNodeData,
-	type ContainerPort,
-	containerCollapsedHeight,
-} from "./container-node";
-import { CycleBanner } from "./cycle-banner";
+	GroupCollapsedNode,
+	GroupExpandedNode,
+	type GroupNodeData,
+	groupCollapsedHeight,
+} from "./group-node";
 import { TaskNode, type TaskNodeData } from "./task-node";
 import { CanvasAddToolbar, CanvasViewToolbar } from "./toolbar";
 
@@ -85,25 +86,20 @@ export function PertCanvas(props: CanvasProps) {
 
 const nodeTypes = {
 	task: TaskNode,
-	containerCollapsed: ContainerCollapsedNode,
-	containerExpanded: ContainerExpandedNode,
+	groupCollapsed: GroupCollapsedNode,
+	groupExpanded: GroupExpandedNode,
 };
 
 const TASK_WIDTH = 200;
 const TASK_HEIGHT = 80;
-const CONTAINER_PADDING_X = 36;
-const CONTAINER_PADDING_TOP = 44; // header height
-const CONTAINER_PADDING_BOTTOM = 36;
-const CONTAINER_MIN_WIDTH = 440;
-const CONTAINER_MIN_HEIGHT = 280;
 
-// Z-ordering. Containers stack by NESTING DEPTH — an outer group sits lowest,
+// Z-ordering. Group boxes stack by NESTING DEPTH — an outer group sits lowest,
 // each nested group one layer above it — so inner frames and headers stay
 // visible and clickable inside their parents. Edges paint above every
-// container body (an edge crossing a group is never hidden), and leaf /
+// group body (an edge crossing a group is never hidden), and leaf /
 // milestone nodes paint above everything.
-const CONTAINER_BASE_Z = 1; // + nesting depth
-const EDGE_Z = 50; // safely above any realistic container nesting depth
+const GROUP_BASE_Z = 1; // + nesting depth
+const EDGE_Z = 50; // safely above any realistic group nesting depth
 const LEAF_Z = 100;
 
 function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
@@ -122,11 +118,15 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			for (const task of Object.values(d.tasksById)) {
 				const pos = positions[task.id];
 				if (!pos) continue;
-				// Expanded containers derive their position from their
-				// children's bounds at render time, so writing a position on
-				// them is harmless. Collapsed containers + leaf tasks rely
-				// on this stored position to render.
 				task.layout = { ...(task.layout ?? {}), position: pos };
+			}
+			// Group positions anchor collapsed / empty groups; expanded groups
+			// derive their box from member bounds, so writing a position is
+			// harmless for them.
+			for (const group of Object.values(d.groupsById)) {
+				const pos = positions[group.id];
+				if (!pos) continue;
+				group.layout = { ...(group.layout ?? {}), position: pos };
 			}
 		});
 	}, [doc, changeDoc, prefs.spacing, collapsedSet]);
@@ -143,20 +143,20 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		setContinuousLayout(projectId, !prefs.continuousLayout);
 	}, [projectId, prefs.continuousLayout]);
 
-	// Collapse / expand every container at once (toolbar buttons). The buttons
-	// only render when the project actually has containers.
-	const hasContainers = useMemo(
-		() => Object.values(doc.tasksById).some((t) => t.kind === "container"),
+	// Collapse / expand every group at once (toolbar buttons). The buttons
+	// only render when the project actually has groups.
+	const hasGroups = useMemo(
+		() => Object.keys(doc.groupsById).length > 0,
 		[doc],
 	);
 	const handleCollapseAll = useCallback(() => {
-		for (const t of Object.values(doc.tasksById)) {
-			if (t.kind === "container") setCollapsed(projectId, t.id, true);
+		for (const id of Object.keys(doc.groupsById)) {
+			setCollapsed(projectId, id, true);
 		}
 	}, [doc, projectId]);
 	const handleExpandAll = useCallback(() => {
-		for (const t of Object.values(doc.tasksById)) {
-			if (t.kind === "container") setCollapsed(projectId, t.id, false);
+		for (const id of Object.keys(doc.groupsById)) {
+			setCollapsed(projectId, id, false);
 		}
 	}, [doc, projectId]);
 
@@ -174,6 +174,8 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		[doc, scheduleResult, collapsedSet],
 	);
 
+	const numbering = useMemo(() => computeNumbering(doc), [doc]);
+
 	const cycle = scheduleResult.ok ? null : scheduleResult.cycle;
 	const cycleTaskIds = useMemo(
 		() => (cycle ? cycleTaskSet(cycle) : new Set<TaskId>()),
@@ -184,13 +186,13 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		[doc, cycle],
 	);
 
-	const onContainerResize = useCallback(
-		(taskId: TaskId, size: { width: number; height: number }) => {
+	const onGroupResize = useCallback(
+		(groupId: GroupId, size: { width: number; height: number }) => {
 			changeDoc((d) => {
-				const t = d.tasksById[taskId];
-				if (!t) return;
-				t.layout = {
-					...(t.layout ?? {}),
+				const g = d.groupsById[groupId];
+				if (!g) return;
+				g.layout = {
+					...(g.layout ?? {}),
 					width: Math.round(size.width),
 					height: Math.round(size.height),
 				};
@@ -207,24 +209,36 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		[changeDoc, projectId],
 	);
 
-	const onContainerToggle = useCallback(
-		(taskId: TaskId) => {
-			// Capture the expanded bounds-position into the doc before collapsing
-			// so the collapsed card lands at the same spot users last saw it.
-			if (!collapsedSet.has(taskId)) {
-				const bounds = computeExpandedContainerBounds(doc, taskId);
+	const onDeleteGroup = useCallback(
+		(groupId: GroupId) => {
+			changeDoc((d) => {
+				deleteGroupMutation(d, { groupId });
+			});
+			selectGroup(projectId, null);
+		},
+		[changeDoc, projectId],
+	);
+
+	const onGroupToggle = useCallback(
+		(groupId: GroupId) => {
+			// Capture the expanded box position into the group before collapsing
+			// so the collapsed card lands at the same spot users last saw it. We
+			// store only the position — not the (large) expanded width/height —
+			// so the collapsed card keeps its compact size.
+			if (!collapsedSet.has(groupId)) {
+				const bounds = groupBoundsFromMembers(doc, groupId);
 				if (bounds) {
 					changeDoc((d) => {
-						const task = d.tasksById[taskId];
-						if (!task) return;
-						task.layout = {
-							...(task.layout ?? {}),
+						const g = d.groupsById[groupId];
+						if (!g) return;
+						g.layout = {
+							...(g.layout ?? {}),
 							position: { x: bounds.x, y: bounds.y },
 						};
 					});
 				}
 			}
-			toggleCollapse(projectId, taskId);
+			toggleCollapse(projectId, groupId);
 		},
 		[changeDoc, collapsedSet, doc, projectId],
 	);
@@ -237,12 +251,12 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	// edge (mirroring what the Backspace/Delete key already does via
 	// `onEdgesChange` + `deleteKeyCode`).
 	const [, setSelectedEdgeId] = useState<string | null>(null);
-	// Container that the user is currently hovering a dragged leaf over. Set
+	// Group that the user is currently hovering a dragged leaf over. Set
 	// while a drag is in progress; nulled when the drag ends or the leaf
-	// leaves all container bounds. Drives the drop-target ring on the
-	// container node.
-	const [dragHoverContainerId, setDragHoverContainerId] =
-		useState<TaskId | null>(null);
+	// leaves all group bounds. Drives the drop-target ring on the group node.
+	const [dragHoverGroupId, setDragHoverGroupId] = useState<GroupId | null>(
+		null,
+	);
 	// Node id currently in inline-edit mode (double-clicked). The node
 	// renders a small title + estimate form in place of its label until the
 	// user commits (Enter / blur) or cancels (Esc).
@@ -254,11 +268,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				const t = d.tasksById[taskId];
 				if (!t) return;
 				t.title = next.title;
-				if (
-					typeof next.mostLikelyDays === "number" &&
-					t.kind !== "milestone" &&
-					t.kind !== "container"
-				) {
+				if (typeof next.mostLikelyDays === "number" && t.kind !== "milestone") {
 					const m = next.mostLikelyDays;
 					t.estimate = {
 						optimistic: Math.max(0.25, m / 2),
@@ -276,11 +286,11 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	// Radial quick-add: spawn a new task or milestone linked by a dependency
 	// to the source task. The new node lands one column to the side at the
 	// source's y so the auto-layout (when enabled) only needs to nudge, and
-	// the user sees it without panning. Inherits the source's container
-	// parent so quick-adds inside a container stay inside it. Selecting +
-	// entering inline-edit on the new task lets the user immediately rename
-	// it without a second click. Milestones skip the estimate block — they
-	// have none in the model.
+	// the user sees it without panning. Inherits the source's group so
+	// quick-adds inside a group stay inside it. Selecting + entering
+	// inline-edit on the new task lets the user immediately rename it without
+	// a second click. Milestones skip the estimate block — they have none in
+	// the model.
 	const onAddLinkedTask = useCallback(
 		(
 			sourceId: TaskId,
@@ -307,7 +317,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 					id: newTaskId,
 					kind,
 					title: kind === "milestone" ? "New milestone" : "New task",
-					parentId: draftSource.parentId ?? null,
 					layout: { position },
 				};
 				if (kind === "task") {
@@ -319,6 +328,10 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 					};
 				}
 				d.tasksById[newTaskId] = draft;
+				const gid = draftSource.groupId ?? null;
+				if (gid && d.groupsById[gid]) {
+					assignTaskToGroupMutation(d, { taskId: newTaskId, groupId: gid });
+				}
 				const fromId = direction === "successor" ? sourceId : newTaskId;
 				const toId = direction === "successor" ? newTaskId : sourceId;
 				d.dependenciesById[newDepId] = {
@@ -348,9 +361,11 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				doc,
 				projection,
 				scheduleResult,
-				onContainerToggle,
-				onContainerResize,
+				numbering.groups,
+				onGroupToggle,
+				onGroupResize,
 				onDeleteTask,
+				onDeleteGroup,
 				cycleTaskIds,
 				onAddLinkedTask,
 			),
@@ -358,9 +373,11 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			doc,
 			projection,
 			scheduleResult,
-			onContainerToggle,
-			onContainerResize,
+			numbering,
+			onGroupToggle,
+			onGroupResize,
 			onDeleteTask,
+			onDeleteGroup,
 			cycleTaskIds,
 			onAddLinkedTask,
 		],
@@ -369,7 +386,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		() =>
 			applyNodeOverlays(
 				baseNodes,
-				dragHoverContainerId,
+				dragHoverGroupId,
 				recentlyCreated,
 				editingNodeId,
 				mc.result,
@@ -378,7 +395,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			),
 		[
 			baseNodes,
-			dragHoverContainerId,
+			dragHoverGroupId,
 			recentlyCreated,
 			editingNodeId,
 			mc.result,
@@ -408,16 +425,16 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		new Map(),
 	);
 	// Per-node snapshot at drag-start. Lets us derive the (dx, dy) delta for
-	// container drags (children need to follow) and skip no-op leaf drops.
-	const dragStartPositions = useRef<Map<TaskId, { x: number; y: number }>>(
+	// group-card drags (members need to follow) and skip no-op leaf drops.
+	const dragStartPositions = useRef<Map<string, { x: number; y: number }>>(
 		new Map(),
 	);
-	// Container-bounds snapshot taken when a leaf drag begins. While a single
+	// Group-bounds snapshot taken when a leaf drag begins. While a single
 	// leaf is dragging the bounds (computed with that leaf excluded) don't
-	// change, so we cache them and skip the O(containers × descendants) doc
-	// walk that `findContainerAtPoint` did on every drag frame.
+	// change, so we cache them and skip the O(groups × members) doc walk that
+	// `findGroupAtPoint` would do on every drag frame.
 	const dragSnapshots = useRef<
-		Map<TaskId, ReturnType<typeof buildContainerSnapshot>>
+		Map<string, ReturnType<typeof buildGroupSnapshot>>
 	>(new Map());
 
 	const onNodesChange = useCallback(
@@ -426,21 +443,31 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			for (const change of changes) {
 				if (change.type !== "position" || !change.position) {
 					if (change.type === "remove") {
-						removeTaskFromDoc(changeDoc, change.id);
+						// React Flow's Delete key can target a group card too —
+						// deleting a group promotes its members rather than cascading.
+						if (doc.groupsById[change.id]) {
+							changeDoc((d) => {
+								deleteGroupMutation(d, { groupId: change.id });
+							});
+							selectGroup(projectId, null);
+						} else {
+							removeTaskFromDoc(changeDoc, change.id);
+						}
 					} else if (change.type === "select" && change.selected) {
 						// Only mirror "selected: true" into our store. React Flow can
 						// fire `selected: false` for reasons unrelated to user intent
 						// (resize during fullscreen toggle, node-list re-syncs), and
 						// silently clearing the selection there hides the fullscreen
 						// inspector popup. Explicit deselection lives in onPaneClick.
-						selectTask(projectId, change.id);
+						if (doc.groupsById[change.id]) selectGroup(projectId, change.id);
+						else selectTask(projectId, change.id);
 						setSelectedEdgeId(null);
 					}
 					continue;
 				}
 
 				const task = doc.tasksById[change.id];
-				const isContainer = task?.kind === "container";
+				const isGroup = Boolean(doc.groupsById[change.id]);
 
 				if (change.dragging === true) {
 					if (!dragStartPositions.current.has(change.id)) {
@@ -448,13 +475,13 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 							x: change.position.x,
 							y: change.position.y,
 						});
-						if (!isContainer) {
-							// Cache container bounds once for the lifetime of this drag.
+						if (!isGroup) {
+							// Cache group bounds once for the lifetime of this drag.
 							// Exclude the dragged leaf so the bounds shrink — that's
-							// what lets the user drag a leaf back out of its parent.
+							// what lets the user drag a leaf back out of its group.
 							dragSnapshots.current.set(
 								change.id,
-								buildContainerSnapshot(
+								buildGroupSnapshot(
 									doc,
 									collapsedSet,
 									new Set<TaskId>([change.id]),
@@ -463,28 +490,23 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 						}
 					}
 					// Live drop-target preview: while a leaf is dragging, check
-					// which container its centre is over and mirror that into
-					// state so the container node can render a ring. Skip while
-					// dragging a container itself (you can't drop a container
-					// onto another in the current model).
-					if (!isContainer) {
+					// which group its centre is over and mirror that into state so
+					// the group node can render a ring. Skip while dragging a group
+					// card itself (groups re-nest via the inspector, not drag).
+					if (!isGroup) {
 						const center = {
 							x: change.position.x + TASK_WIDTH / 2,
 							y: change.position.y + TASK_HEIGHT / 2,
 						};
 						const snapshot = dragSnapshots.current.get(change.id) ?? [];
-						const hover = findContainerAtPointInSnapshot(snapshot, center);
-						const valid =
-							hover !== null && canReparent(doc, change.id, hover)
-								? hover
-								: null;
-						setDragHoverContainerId((prev) => (prev === valid ? prev : valid));
+						const hover = findGroupAtPointInSnapshot(snapshot, center);
+						setDragHoverGroupId((prev) => (prev === hover ? prev : hover));
 					}
 					continue;
 				}
 
 				if (change.dragging !== false) continue;
-				setDragHoverContainerId(null);
+				setDragHoverGroupId(null);
 
 				const seen = lastCommittedPosition.current.get(change.id);
 				if (
@@ -503,46 +525,51 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				const snapshot = dragSnapshots.current.get(change.id);
 				dragSnapshots.current.delete(change.id);
 
-				if (isContainer) {
-					// Drag a container: shift every descendant leaf by the same
-					// delta so the bounds-from-children calc re-anchors the
-					// container at the dropped location next render.
+				if (isGroup) {
+					// Drag a group card: shift every member by the same delta so the
+					// bounds-from-members calc re-anchors the box at the dropped
+					// location, and store the group's own position so collapsed /
+					// empty groups (which have no members to derive from) follow too.
 					if (!start) continue;
 					const dx = next.x - start.x;
 					const dy = next.y - start.y;
 					if (dx === 0 && dy === 0) continue;
-					changeDoc(shiftDescendantsMutation(change.id, dx, dy));
+					changeDoc((d) => {
+						shiftGroupMembersMutation(change.id, dx, dy)(d);
+						const g = d.groupsById[change.id];
+						if (g) g.layout = { ...(g.layout ?? {}), position: next };
+					});
 					continue;
 				}
 
-				// Leaf task: write position, and possibly re-parent if it was
-				// dropped inside a container's bounds. Reuse the drag-start
-				// snapshot for the drop hit-test — the bounds are still accurate
-				// (other descendants haven't moved) and avoids a fresh doc walk.
+				// Leaf task: write position, and possibly re-group if it was
+				// dropped inside a group's bounds. Reuse the drag-start snapshot for
+				// the drop hit-test — the bounds are still accurate (other members
+				// haven't moved) and avoids a fresh doc walk.
 				changeDoc((d) => {
 					const draft = d.tasksById[change.id];
 					if (!draft) return;
 					draft.layout = { ...(draft.layout ?? {}), position: next };
 				});
-				const targetContainer = snapshot
-					? findContainerAtPointInSnapshot(snapshot, {
+				const targetGroup = snapshot
+					? findGroupAtPointInSnapshot(snapshot, {
 							x: next.x + TASK_WIDTH / 2,
 							y: next.y + TASK_HEIGHT / 2,
 						})
 					: null;
-				if (
-					targetContainer !== null &&
-					canReparent(doc, change.id, targetContainer)
-				) {
-					changeDoc(reparentMutation(change.id, targetContainer));
-				} else if (
-					targetContainer === null &&
-					task?.parentId &&
-					canReparent(doc, change.id, null)
-				) {
-					// Dropped outside any container — promote back to root if it
-					// was previously nested.
-					changeDoc(reparentMutation(change.id, null));
+				const currentGroup = task?.groupId ?? null;
+				if (targetGroup !== null && targetGroup !== currentGroup) {
+					changeDoc((d) => {
+						assignTaskToGroupMutation(d, {
+							taskId: change.id,
+							groupId: targetGroup,
+						});
+					});
+				} else if (targetGroup === null && currentGroup) {
+					// Dropped outside any group — ungroup if it was previously a member.
+					changeDoc((d) => {
+						assignTaskToGroupMutation(d, { taskId: change.id, groupId: null });
+					});
 				}
 			}
 		},
@@ -580,11 +607,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				const fromTask = d.tasksById[fromId];
 				const toTask = d.tasksById[toId];
 				if (!fromTask || !toTask) return;
-				// Containers can't be edge endpoints — collapsed-edge routing is
-				// derived from leaf-to-leaf edges by the projection.
-				if (fromTask.kind === "container" || toTask.kind === "container") {
-					return;
-				}
 				for (const existing of Object.values(d.dependenciesById)) {
 					if (existing.from.taskId === fromId && existing.to.taskId === toId) {
 						return;
@@ -610,6 +632,9 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const selectedTaskId = useStore(selectionStore, (s) =>
 		s.projectId === projectId ? s.taskId : null,
 	);
+	const selectedGroupId = useStore(selectionStore, (s) =>
+		s.projectId === projectId ? s.groupId : null,
+	);
 
 	const handleAddTask = useCallback(
 		(kind: Task["kind"]) => {
@@ -617,21 +642,35 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				x: window.innerWidth / 2,
 				y: window.innerHeight / 2,
 			});
-			// If a container is currently selected and the new task isn't itself
-			// a container, drop it inside.
-			const selected = selectedTaskId
-				? doc.tasksById[selectedTaskId]
-				: undefined;
-			const parentId =
-				selected?.kind === "container" && kind !== "container"
-					? selected.id
-					: null;
-			createTask(changeDoc, kind, center, parentId, (id) =>
+			// If a group is currently selected, drop the new task into it.
+			createTask(changeDoc, kind, center, selectedGroupId, (id) =>
 				selectTask(projectId, id),
 			);
 		},
-		[changeDoc, doc.tasksById, projectId, screenToFlowPosition, selectedTaskId],
+		[changeDoc, projectId, screenToFlowPosition, selectedGroupId],
 	);
+
+	const onAddGroup = useCallback(() => {
+		const center = screenToFlowPosition({
+			x: window.innerWidth / 2,
+			y: window.innerHeight / 2,
+		});
+		// Nest the new group under the currently-selected group, if any.
+		const parentGroupId =
+			selectionStore.state.projectId === projectId
+				? selectionStore.state.groupId
+				: null;
+		let createdId: string | null = null;
+		changeDoc((d) => {
+			const result = createGroupMutation(d, {
+				name: "New group",
+				parentGroupId: parentGroupId ?? null,
+				layout: { position: center },
+			});
+			if (result.ok) createdId = result.id;
+		});
+		if (createdId) selectGroup(projectId, createdId);
+	}, [changeDoc, projectId, screenToFlowPosition]);
 
 	useEffect(() => {
 		return () => {
@@ -649,13 +688,16 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	// Flow container we leave the camera alone (the user can see it).
 	// biome-ignore lint/correctness/useExhaustiveDependencies: doc/reactFlow/setNodes are accessed through a ref so the effect only fires when the selection actually changes — re-running on doc would re-pan on every edit
 	useEffect(() => {
+		const selectedNodeId = selectedTaskId ?? selectedGroupId;
 		setNodes((current) =>
 			current.map((n) => {
-				const shouldSelect = n.id === selectedTaskId;
+				const shouldSelect = n.id === selectedNodeId;
 				if (n.selected === shouldSelect) return n;
 				return { ...n, selected: shouldSelect };
 			}),
 		);
+		// Camera follow only applies to task selection; group boxes derive their
+		// position from members and are large enough to find without panning.
 		if (!selectedTaskId) return;
 		const task = doc.tasksById[selectedTaskId];
 		if (!task) return;
@@ -684,7 +726,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			});
 		});
 		return () => cancelAnimationFrame(handle);
-	}, [selectedTaskId]);
+	}, [selectedTaskId, selectedGroupId]);
 
 	// Spawn a sibling that shares every predecessor of the seed — the "fan
 	// out from this point" gesture used by Shift+Tab. Placed one card-height
@@ -710,7 +752,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 					id: newTaskId,
 					kind: "task",
 					title: "New task",
-					parentId: draftSeed.parentId ?? null,
 					layout: { position },
 					estimate: {
 						optimistic: 1,
@@ -720,6 +761,10 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 					},
 				};
 				d.tasksById[newTaskId] = draft;
+				const gid = draftSeed.groupId ?? null;
+				if (gid && d.groupsById[gid]) {
+					assignTaskToGroupMutation(d, { taskId: newTaskId, groupId: gid });
+				}
 				for (const predId of predecessorIds) {
 					if (!d.tasksById[predId]) continue;
 					const depId = newId("dep");
@@ -737,37 +782,26 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		[changeDoc, doc.dependenciesById, doc.tasksById, projectId],
 	);
 
-	// Spawn a fresh task/milestone/container at the viewport centre. If a
-	// container is currently selected, the new leaf is dropped inside it —
-	// matches the same logic as the toolbar's add buttons so the keyboard
-	// and the mouse stay consistent.
+	// Spawn a fresh task/milestone at the viewport centre. If a group is
+	// currently selected, the new leaf is dropped into it — matches the same
+	// logic as the toolbar's add buttons so the keyboard and the mouse stay
+	// consistent.
 	const onAddFreshNode = useCallback(
 		(kind: Task["kind"]) => {
 			const center = screenToFlowPosition({
 				x: window.innerWidth / 2,
 				y: window.innerHeight / 2,
 			});
-			const selectedId = selectionStore.state.taskId;
-			const selected =
-				selectionStore.state.projectId === projectId && selectedId
-					? doc.tasksById[selectedId]
-					: undefined;
-			const parentId =
-				selected?.kind === "container" && kind !== "container"
-					? selected.id
+			const groupId =
+				selectionStore.state.projectId === projectId
+					? selectionStore.state.groupId
 					: null;
 			const newTaskId = newId("task");
 			changeDoc((d) => {
 				const draft: Task = {
 					id: newTaskId,
 					kind,
-					title:
-						kind === "milestone"
-							? "New milestone"
-							: kind === "container"
-								? "New container"
-								: "New task",
-					parentId,
+					title: kind === "milestone" ? "New milestone" : "New task",
 					layout: { position: center },
 				};
 				if (kind === "task") {
@@ -779,12 +813,14 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 					};
 				}
 				d.tasksById[newTaskId] = draft;
-				if (kind === "container") ensureContainerInterfaces(d, newTaskId);
+				if (groupId && d.groupsById[groupId]) {
+					assignTaskToGroupMutation(d, { taskId: newTaskId, groupId });
+				}
 			});
 			selectTask(projectId, newTaskId);
-			if (kind !== "container") setEditingNodeId(newTaskId);
+			setEditingNodeId(newTaskId);
 		},
-		[changeDoc, doc.tasksById, projectId, screenToFlowPosition],
+		[changeDoc, projectId, screenToFlowPosition],
 	);
 
 	// Keyboard shortcuts on the canvas. Three classes of action, all wired
@@ -795,9 +831,9 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	//   • Spawn from selection — Tab adds a downstream task connected to
 	//     the seed; Shift+Tab adds a sibling that shares the seed's
 	//     predecessors so users can fan out parallel work fast.
-	//   • Fresh add — `n` / `m` / `c` add a task / milestone / container
-	//     at the viewport centre, with no selection required. Lets users
-	//     bootstrap an empty canvas without reaching for the toolbar.
+	//   • Fresh add — `n` / `m` / `g` add a task / milestone / group at the
+	//     viewport centre, with no selection required. Lets users bootstrap an
+	//     empty canvas without reaching for the toolbar.
 	// Bound via refs so the listener doesn't re-attach on every doc edit.
 	const keyNavRef = useRef({
 		doc,
@@ -805,6 +841,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		onAddLinkedTask,
 		onAddSiblingTask,
 		onAddFreshNode,
+		onAddGroup,
 	});
 	keyNavRef.current = {
 		doc,
@@ -812,6 +849,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		onAddLinkedTask,
 		onAddSiblingTask,
 		onAddFreshNode,
+		onAddGroup,
 	};
 	useEffect(() => {
 		function isTypingTarget(target: EventTarget | null): boolean {
@@ -835,12 +873,16 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			// Fresh-add letters — only when no Cmd/Ctrl/Alt is held so we
 			// don't collide with browser shortcuts (Cmd+N / Cmd+M / Ctrl+N).
 			if (!e.metaKey && !e.ctrlKey && !e.altKey) {
-				if (key === "n" || key === "m" || key === "c") {
+				if (key === "n" || key === "m") {
 					e.preventDefault();
 					e.stopPropagation();
-					current.onAddFreshNode(
-						key === "n" ? "task" : key === "m" ? "milestone" : "container",
-					);
+					current.onAddFreshNode(key === "n" ? "task" : "milestone");
+					return;
+				}
+				if (key === "g") {
+					e.preventDefault();
+					e.stopPropagation();
+					current.onAddGroup();
 					return;
 				}
 			}
@@ -849,7 +891,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			if (key === "Tab") {
 				if (state.projectId !== current.projectId || !state.taskId) return;
 				const task = current.doc.tasksById[state.taskId];
-				if (!task || task.kind === "container") return;
+				if (!task) return;
 				e.preventDefault();
 				e.stopPropagation();
 				if (e.shiftKey) current.onAddSiblingTask(state.taskId);
@@ -868,7 +910,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			}
 			if (state.projectId !== current.projectId || !state.taskId) return;
 			const task = current.doc.tasksById[state.taskId];
-			if (!task || task.kind === "container") return;
+			if (!task) return;
 
 			const wantsCreate = e.metaKey || e.ctrlKey;
 			if (wantsCreate) {
@@ -920,7 +962,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				onPaneClick={onPaneClick}
 				onPaneContextMenu={(e) => e.preventDefault()}
 				onNodeDoubleClick={(_event, node) => {
-					// Containers handle expand/collapse via the chevron button —
+					// Group boxes handle expand/collapse via the chevron button —
 					// don't grab their double-click. Only leaf nodes get inline
 					// edit. Same for the cycle-marked nodes (chrome differs).
 					if (node.type === "task") setEditingNodeId(node.id);
@@ -956,7 +998,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 					<CanvasAddToolbar
 						onAddTask={() => handleAddTask("task")}
 						onAddMilestone={() => handleAddTask("milestone")}
-						onAddContainer={() => handleAddTask("container")}
+						onAddGroup={onAddGroup}
 					/>
 				</div>
 			</div>
@@ -973,8 +1015,8 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 							onSetSpacing={handleSetSpacing}
 							onRelayout={handleRelayout}
 							onToggleContinuous={handleToggleContinuous}
-							onCollapseAll={hasContainers ? handleCollapseAll : undefined}
-							onExpandAll={hasContainers ? handleExpandAll : undefined}
+							onCollapseAll={hasGroups ? handleCollapseAll : undefined}
+							onExpandAll={hasGroups ? handleExpandAll : undefined}
 						/>
 					</div>
 				</div>
@@ -1041,12 +1083,14 @@ function buildBaseNodes(
 	doc: PertDoc,
 	projection: ReturnType<typeof projectGraph>,
 	scheduleResult: ReturnType<typeof computeSchedule>,
-	onToggleContainer: (taskId: TaskId) => void,
-	onResizeContainer: (
-		taskId: TaskId,
+	groupNumbers: Record<GroupId, string>,
+	onToggleGroup: (groupId: GroupId) => void,
+	onResizeGroup: (
+		groupId: GroupId,
 		size: { width: number; height: number },
 	) => void,
 	onDeleteTask: (taskId: TaskId) => void,
+	onDeleteGroup: (groupId: GroupId) => void,
 	cycleTaskIds: ReadonlySet<TaskId>,
 	onAddLinkedTask: (
 		sourceId: TaskId,
@@ -1059,91 +1103,79 @@ function buildBaseNodes(
 	const nodes: Node[] = [];
 
 	for (const projected of projection.nodes) {
-		if (projected.kind === "container-expanded") {
-			const bounds = computeExpandedContainerBoundsFromDoc(
-				doc,
-				projected.task.id,
-				fallback,
-			) ?? {
-				x: projected.task.layout?.position?.x ?? 0,
-				y: projected.task.layout?.position?.y ?? 0,
-				width: CONTAINER_MIN_WIDTH,
-				height: CONTAINER_MIN_HEIGHT,
-			};
-			// Stored manual size acts as a minimum — descendants can still
-			// grow the box, but the user can claim extra room.
-			const storedWidth = projected.task.layout?.width ?? 0;
-			const storedHeight = projected.task.layout?.height ?? 0;
+		if (projected.kind === "group-expanded") {
+			const group = projected.group;
+			// Bounds derive from member positions (matching the drop hit-test).
+			// groupBoundsFromMembers only returns null for a missing group.
+			const bounds = groupBoundsFromMembers(doc, group.id);
+			if (!bounds) continue;
+			// Stored manual size acts as a minimum — members can still grow the
+			// box, but the user can claim extra room.
+			const storedWidth = group.layout?.width ?? 0;
+			const storedHeight = group.layout?.height ?? 0;
 			const finalWidth = Math.max(bounds.width, storedWidth);
 			const finalHeight = Math.max(bounds.height, storedHeight);
-			const containerId = projected.task.id;
-			const data: ContainerNodeData = {
-				title: projected.task.title,
+			const data: GroupNodeData = {
+				name: group.name,
+				number: groupNumbers[group.id] ?? "",
 				rollup: null,
 				collapsed: false,
-				onToggle: () => onToggleContainer(containerId),
-				entries: [],
-				exits: [],
+				onToggle: () => onToggleGroup(group.id),
 				dropTarget: false,
 				justCreated: false,
-				onResizeEnd: (size) => onResizeContainer(containerId, size),
+				onResizeEnd: (size) => onResizeGroup(group.id, size),
 				minWidth: bounds.width,
 				minHeight: bounds.height,
-				onDelete: () => onDeleteTask(containerId),
+				onDelete: () => onDeleteGroup(group.id),
 			};
 			nodes.push({
-				id: projected.task.id,
-				type: "containerExpanded",
+				id: group.id,
+				type: "groupExpanded",
 				position: { x: bounds.x, y: bounds.y },
 				data: data as unknown as Record<string, unknown>,
 				width: finalWidth,
 				height: finalHeight,
-				// Sit BELOW descendant leaves so children remain fully selectable
-				// (the previous "container above with pointer-events: none body"
-				// trick was fragile for nested cases). The header strip is
-				// outside the leaf area, so it's still clickable for collapse +
-				// drag. Selection on the container itself works via React Flow's
-				// hit-testing of the bordered frame around the children.
+				// Sit BELOW member leaves so they remain fully selectable. The
+				// header strip is outside the member area, so it's still clickable
+				// for collapse + drag.
 				//
 				// Depth-based: nested groups paint ABOVE their parent group so an
 				// inner frame/header is never hidden behind the outer one.
-				zIndex: CONTAINER_BASE_Z + getAncestors(doc, projected.task.id).length,
+				zIndex: GROUP_BASE_Z + getGroupAncestors(doc, group.id).length,
 				draggable: true,
 				selectable: true,
 				focusable: true,
 			});
-		} else if (projected.kind === "container-collapsed") {
-			const pos = projected.task.layout?.position ??
-				fallback[projected.task.id] ?? { x: 0, y: 0 };
-			const ports = portsFor(doc, projected.task.id);
-			const containerId = projected.task.id;
-			const baseData: ContainerNodeData = {
-				title: projected.task.title,
+		} else if (projected.kind === "group-collapsed") {
+			const group = projected.group;
+			const pos = group.layout?.position ??
+				fallback[group.id] ?? { x: 0, y: 0 };
+			const baseData: GroupNodeData = {
+				name: group.name,
+				number: groupNumbers[group.id] ?? "",
 				rollup: projected.rollup,
 				collapsed: true,
-				onToggle: () => onToggleContainer(containerId),
-				entries: ports.entries,
-				exits: ports.exits,
+				onToggle: () => onToggleGroup(group.id),
 				dropTarget: false,
 				justCreated: false,
-				onResizeEnd: (size) => onResizeContainer(containerId, size),
+				onResizeEnd: (size) => onResizeGroup(group.id, size),
 				minWidth: COLLAPSED_CARD_WIDTH,
-				onDelete: () => onDeleteTask(containerId),
+				onDelete: () => onDeleteGroup(group.id),
 			};
-			const autoHeight = containerCollapsedHeight(baseData);
-			const data: ContainerNodeData = { ...baseData, minHeight: autoHeight };
-			const storedWidth = projected.task.layout?.width ?? 0;
-			const storedHeight = projected.task.layout?.height ?? 0;
+			const autoHeight = groupCollapsedHeight(baseData);
+			const data: GroupNodeData = { ...baseData, minHeight: autoHeight };
+			const storedWidth = group.layout?.width ?? 0;
+			const storedHeight = group.layout?.height ?? 0;
 			nodes.push({
-				id: containerId,
-				type: "containerCollapsed",
+				id: group.id,
+				type: "groupCollapsed",
 				position: pos,
 				data: data as unknown as Record<string, unknown>,
 				width: Math.max(COLLAPSED_CARD_WIDTH, storedWidth),
 				height: Math.max(autoHeight, storedHeight),
-				// Same depth-based stacking as expanded containers — a collapsed
-				// inner group still paints above its parent group's body.
-				zIndex: CONTAINER_BASE_Z + getAncestors(doc, containerId).length,
+				// Same depth-based stacking as expanded groups — a collapsed inner
+				// group still paints above its parent group's body.
+				zIndex: GROUP_BASE_Z + getGroupAncestors(doc, group.id).length,
 			});
 		} else {
 			pushLeafNode(
@@ -1167,7 +1199,7 @@ function buildBaseNodes(
 // stays cheap when only one or two nodes change.
 function applyNodeOverlays(
 	baseNodes: Node[],
-	dragHoverContainerId: TaskId | null,
+	dragHoverGroupId: GroupId | null,
 	recentlyCreated: ReadonlySet<TaskId>,
 	editingNodeId: TaskId | null,
 	mcResult: MonteCarloResult | null,
@@ -1204,19 +1236,12 @@ function applyNodeOverlays(
 			};
 			return { ...n, data: data as unknown as Record<string, unknown> };
 		}
-		if (n.type === "containerExpanded" || n.type === "containerCollapsed") {
-			const containerId = n.id as TaskId;
-			const baseData = n.data as unknown as ContainerNodeData;
-			const dropTarget = dragHoverContainerId === containerId;
-			const just = recentlyCreated.has(containerId);
-			if (baseData.dropTarget === dropTarget && baseData.justCreated === just) {
-				return n;
-			}
-			const data: ContainerNodeData = {
-				...baseData,
-				dropTarget,
-				justCreated: just,
-			};
+		if (n.type === "groupExpanded" || n.type === "groupCollapsed") {
+			const groupId = n.id as GroupId;
+			const baseData = n.data as unknown as GroupNodeData;
+			const dropTarget = dragHoverGroupId === groupId;
+			if (baseData.dropTarget === dropTarget) return n;
+			const data: GroupNodeData = { ...baseData, dropTarget };
 			return { ...n, data: data as unknown as Record<string, unknown> };
 		}
 		return n;
@@ -1266,7 +1291,7 @@ function pushLeafNode(
 		data: data as unknown as Record<string, unknown>,
 		width: TASK_WIDTH,
 		height: TASK_HEIGHT,
-		// Leaves sit above every container body and every edge, no matter how
+		// Leaves sit above every group body and every edge, no matter how
 		// deeply nested — they must always be visible and interactive.
 		zIndex: LEAF_Z,
 	});
@@ -1302,112 +1327,17 @@ function buildEdges(
 			id: edge.id,
 			source: edge.source,
 			target: edge.target,
-			sourceHandle: edge.sourceInterfaceId,
-			targetHandle: edge.targetInterfaceId,
 			type: reactFlowType,
 			animated: edge.critical || onCycle,
 			style,
 			data: { onCycle },
-			// Sit above every container body (containers stack by nesting depth
-			// starting at CONTAINER_BASE_Z) but below leaf task nodes, so an edge
-			// passing through a group is never visually hidden while leaves still
-			// paint on top of the edge stroke.
+			// Sit above every group body (groups stack by nesting depth starting
+			// at GROUP_BASE_Z) but below leaf task nodes, so an edge passing
+			// through a group is never visually hidden while leaves still paint on
+			// top of the edge stroke.
 			zIndex: EDGE_Z,
 		};
 	});
-}
-
-// Project doc → ports for the collapsed container node, sorted by id so the
-// rendered order is stable across re-renders.
-function portsFor(
-	doc: PertDoc,
-	containerId: TaskId,
-): { entries: ContainerPort[]; exits: ContainerPort[] } {
-	const bucket = doc.interfacesByContainerId[containerId] ?? {};
-	const entries: ContainerPort[] = [];
-	const exits: ContainerPort[] = [];
-	for (const iface of Object.values(bucket)) {
-		const port: ContainerPort = { id: iface.id, label: iface.label };
-		if (iface.kind === "entry") entries.push(port);
-		else exits.push(port);
-	}
-	entries.sort((a, b) => a.id.localeCompare(b.id));
-	exits.sort((a, b) => a.id.localeCompare(b.id));
-	return { entries, exits };
-}
-
-// Bounding box around every visible leaf descendant of a container, in flow
-// coordinates. Returns null when nothing is positioned yet.
-function computeExpandedContainerBoundsFromDoc(
-	doc: PertDoc,
-	containerId: TaskId,
-	fallback: ReturnType<typeof fallbackGridLayout>,
-): { x: number; y: number; width: number; height: number } | null {
-	const queue: TaskId[] = [containerId];
-	const seen = new Set<TaskId>([containerId]);
-	let minX = Number.POSITIVE_INFINITY;
-	let minY = Number.POSITIVE_INFINITY;
-	let maxX = Number.NEGATIVE_INFINITY;
-	let maxY = Number.NEGATIVE_INFINITY;
-	let anyDescendant = false;
-	while (queue.length > 0) {
-		const current = queue.shift() as TaskId;
-		for (const t of Object.values(doc.tasksById)) {
-			if ((t.parentId ?? null) !== current) continue;
-			if (seen.has(t.id)) continue;
-			seen.add(t.id);
-			queue.push(t.id);
-			anyDescendant = true;
-			if (t.kind === "container") continue;
-			const pos = t.layout?.position ?? fallback[t.id] ?? { x: 0, y: 0 };
-			minX = Math.min(minX, pos.x);
-			minY = Math.min(minY, pos.y);
-			maxX = Math.max(maxX, pos.x + TASK_WIDTH);
-			maxY = Math.max(maxY, pos.y + TASK_HEIGHT);
-		}
-	}
-	if (!anyDescendant || !Number.isFinite(minX)) {
-		const ownPos = doc.tasksById[containerId]?.layout?.position ?? {
-			x: 0,
-			y: 0,
-		};
-		return {
-			x: ownPos.x,
-			y: ownPos.y,
-			width: CONTAINER_MIN_WIDTH,
-			height: CONTAINER_MIN_HEIGHT,
-		};
-	}
-	const padX = CONTAINER_PADDING_X;
-	const padTop = CONTAINER_PADDING_TOP;
-	const padBottom = CONTAINER_PADDING_BOTTOM;
-	const width = Math.max(maxX - minX + padX * 2, CONTAINER_MIN_WIDTH);
-	const height = Math.max(
-		maxY - minY + padTop + padBottom,
-		CONTAINER_MIN_HEIGHT,
-	);
-	return {
-		x: minX - padX,
-		y: minY - padTop,
-		width,
-		height,
-	};
-}
-
-// Public-style helper for the collapse handler — same bounds, but returns
-// just the top-left we want to anchor the collapsed card at.
-function computeExpandedContainerBounds(
-	doc: PertDoc,
-	containerId: TaskId,
-): { x: number; y: number } | null {
-	const fallback = fallbackGridLayout(doc);
-	const bounds = computeExpandedContainerBoundsFromDoc(
-		doc,
-		containerId,
-		fallback,
-	);
-	if (!bounds) return null;
-	return { x: bounds.x, y: bounds.y };
 }
 
 // Detects tasks that have just appeared in the doc since the previous render
@@ -1497,24 +1427,32 @@ function useAutoLayout(
 	doc: PertDoc,
 	changeDoc: (mutate: (d: PertDoc) => void) => void,
 	spacing: LayoutSpacing,
-	collapsed: ReadonlySet<TaskId>,
+	collapsed: ReadonlySet<GroupId>,
 ) {
 	useEffect(() => {
-		const tasks = Object.values(doc.tasksById);
-		const missing = tasks.filter(
-			(t) => t.kind !== "container" && !t.layout?.position,
+		const tasksMissing = Object.values(doc.tasksById).some(
+			(t) => !t.layout?.position,
 		);
-		if (missing.length === 0) return;
+		const groupsMissing = Object.values(doc.groupsById).some(
+			(g) => !g.layout?.position,
+		);
+		if (!tasksMissing && !groupsMissing) return;
 		let cancelled = false;
 		computeLayout(doc, { spacing, collapsed }).then((positions) => {
 			if (cancelled) return;
 			changeDoc((d) => {
 				for (const task of Object.values(d.tasksById)) {
-					if (task.kind === "container") continue;
 					if (task.layout?.position) continue;
 					const pos = positions[task.id];
 					if (!pos) continue;
 					task.layout = { ...(task.layout ?? {}), position: pos };
+				}
+				// Anchor collapsed / empty groups that have no stored position yet.
+				for (const group of Object.values(d.groupsById)) {
+					if (group.layout?.position) continue;
+					const pos = positions[group.id];
+					if (!pos) continue;
+					group.layout = { ...(group.layout ?? {}), position: pos };
 				}
 			});
 		});
@@ -1525,7 +1463,7 @@ function useAutoLayout(
 }
 
 // Continuous auto-layout. When enabled, every structural doc change (new
-// node / edge, reparent, collapse toggle, kind switch) re-runs ELK and
+// node / edge, re-group, collapse toggle, kind switch) re-runs ELK and
 // commits the resulting positions. To keep the user oriented, we capture
 // the *screen* position of the currently selected node before laying out,
 // then pan the viewport so the same node lands at the same screen pixel
@@ -1541,17 +1479,19 @@ function useContinuousLayout(
 	doc: PertDoc,
 	changeDoc: (mutate: (d: PertDoc) => void) => void,
 	spacing: LayoutSpacing,
-	collapsed: ReadonlySet<TaskId>,
+	collapsed: ReadonlySet<GroupId>,
 	enabled: boolean,
 ) {
 	const reactFlow = useReactFlow();
 	const structuralKey = useMemo(() => {
 		const tasks = Object.values(doc.tasksById)
+			.map((t) => `${t.id}|${t.groupId ?? ""}|${t.kind}`)
+			.sort()
+			.join(",");
+		const groups = Object.values(doc.groupsById)
 			.map(
-				(t) =>
-					`${t.id}|${t.parentId ?? ""}|${t.kind}|${
-						collapsed.has(t.id) ? "c" : "e"
-					}`,
+				(g) =>
+					`${g.id}|${g.parentGroupId ?? ""}|${collapsed.has(g.id) ? "c" : "e"}`,
 			)
 			.sort()
 			.join(",");
@@ -1559,7 +1499,7 @@ function useContinuousLayout(
 			.map((d) => `${d.from.taskId ?? "*"}->${d.to.taskId ?? "*"}`)
 			.sort()
 			.join(",");
-		return `${tasks}::${deps}::${spacing}`;
+		return `${tasks}::${groups}::${deps}::${spacing}`;
 	}, [doc, collapsed, spacing]);
 
 	// structuralKey stands in for doc/changeDoc/spacing/collapsed/reactFlow —
@@ -1595,15 +1535,13 @@ function useContinuousLayout(
 				collapsed,
 			});
 			if (cancelled) return;
-			// Apply positions. Expanded containers derive their position from
-			// children, so only leaves + collapsed containers need updating.
-			// Skip writes when the computed position is effectively unchanged —
-			// an Automerge change of N positions is O(N) and was firing for
-			// every task on every structural edit, even when ELK returned the
-			// same layout it had last time.
+			// Apply positions. Expanded groups derive their box from member
+			// bounds, so writing their position is harmless. Skip writes when the
+			// computed position is effectively unchanged — an Automerge change of
+			// N positions is O(N) and was firing for every node on every
+			// structural edit, even when ELK returned the same layout as before.
 			changeDoc((d) => {
 				for (const task of Object.values(d.tasksById)) {
-					if (task.kind === "container" && !collapsed.has(task.id)) continue;
 					const pos = positions[task.id];
 					if (!pos) continue;
 					const current = task.layout?.position;
@@ -1615,6 +1553,19 @@ function useContinuousLayout(
 						continue;
 					}
 					task.layout = { ...(task.layout ?? {}), position: pos };
+				}
+				for (const group of Object.values(d.groupsById)) {
+					const pos = positions[group.id];
+					if (!pos) continue;
+					const current = group.layout?.position;
+					if (
+						current &&
+						Math.abs(current.x - pos.x) < 0.5 &&
+						Math.abs(current.y - pos.y) < 0.5
+					) {
+						continue;
+					}
+					group.layout = { ...(group.layout ?? {}), position: pos };
 				}
 			});
 			// After the new positions land, pan the viewport so the pinned
@@ -1646,7 +1597,7 @@ function createTask(
 	changeDoc: (mutate: (d: PertDoc) => void) => void,
 	kind: Task["kind"],
 	position: { x: number; y: number },
-	parentId: TaskId | null,
+	groupId: GroupId | null,
 	onCreated?: (id: TaskId) => void,
 ) {
 	const id = newId("task");
@@ -1654,13 +1605,7 @@ function createTask(
 		const base: Task = {
 			id,
 			kind,
-			title:
-				kind === "milestone"
-					? "New milestone"
-					: kind === "container"
-						? "New container"
-						: "New task",
-			parentId,
+			title: kind === "milestone" ? "New milestone" : "New task",
 			layout: { position: { x: position.x, y: position.y } },
 		};
 		if (kind === "task") {
@@ -1672,7 +1617,9 @@ function createTask(
 			};
 		}
 		d.tasksById[id] = base;
-		if (kind === "container") ensureContainerInterfaces(d, id);
+		if (groupId && d.groupsById[groupId]) {
+			assignTaskToGroupMutation(d, { taskId: id, groupId });
+		}
 	});
 	onCreated?.(id);
 }
@@ -1682,20 +1629,12 @@ function removeTaskFromDoc(
 	taskId: TaskId,
 ) {
 	changeDoc((d) => {
-		const wasContainer = d.tasksById[taskId]?.kind === "container";
 		delete d.tasksById[taskId];
 		for (const [depId, dep] of Object.entries(d.dependenciesById)) {
 			if (dep.from.taskId === taskId || dep.to.taskId === taskId) {
 				delete d.dependenciesById[depId];
 			}
 		}
-		// Orphan any direct children — promote to top-level. (We never delete a
-		// container's children silently — destructive cascades belong on a
-		// confirmation flow we don't have yet.)
-		for (const t of Object.values(d.tasksById)) {
-			if (t.parentId === taskId) t.parentId = null;
-		}
-		if (wasContainer) removeContainerInterfaces(d, taskId);
 	});
 }
 

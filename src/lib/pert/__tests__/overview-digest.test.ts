@@ -6,7 +6,7 @@ import {
 	MAX_DIGEST_CHARS,
 	MAX_OUTLINE_ITEMS,
 } from "../overview-digest";
-import type { Estimate, PertDoc, Task, TaskKind } from "../types";
+import type { Estimate, Group, PertDoc, Task, TaskKind } from "../types";
 import { createEmptyPertDoc } from "../types";
 
 function task(
@@ -17,16 +17,29 @@ function task(
 		id,
 		kind: opts.kind ?? "task",
 		title: opts.title ?? id,
-		parentId: opts.parentId ?? null,
+		groupId: opts.groupId ?? null,
 		estimate: opts.estimate,
 		status: opts.status,
 		progress: opts.progress,
-		key: opts.key,
+		numberOverride: opts.numberOverride,
 	};
 }
 
-function buildDoc(tasks: Task[], title = "Test project"): PertDoc {
+function group(
+	id: string,
+	name: string,
+	parentGroupId: string | null = null,
+): Group {
+	return { id, name, parentGroupId, order: 0 };
+}
+
+function buildDoc(
+	tasks: Task[],
+	title = "Test project",
+	groups: Group[] = [],
+): PertDoc {
 	const doc = createEmptyPertDoc(title);
+	for (const g of groups) doc.groupsById[g.id] = g;
 	for (const t of tasks) doc.tasksById[t.id] = t;
 	return doc;
 }
@@ -46,40 +59,61 @@ describe("buildProjectDigest", () => {
 	it("includes the title, key figures and a task outline", () => {
 		const doc = buildDoc(
 			[
-				task("c", { kind: "container", title: "Phase 1" }),
-				task("t1", { title: "Design", estimate: est, parentId: "c" }),
+				task("t1", { title: "Design", estimate: est, groupId: "c" }),
 				task("m", { kind: "milestone", title: "Kickoff" }),
 			],
 			"My plan",
+			[group("c", "Phase 1")],
 		);
 		const d = digestOf(doc);
 		expect(d).toContain("# My plan");
 		expect(d).toContain("## Key figures");
+		expect(d).toContain("- Groups: 1");
 		expect(d).toContain("## Task outline");
+		expect(d).toContain("Phase 1");
 		expect(d).toContain("Design");
 		expect(d).toContain("Kickoff");
 		expect(d).toContain("milestone");
 	});
 
-	it("indents children under their parent container", () => {
-		const doc = buildDoc([
-			task("c", { kind: "container", title: "Parent" }),
-			task("t1", { title: "Child", estimate: est, parentId: "c" }),
-		]);
+	it("never drops tasks whose group is in a parentGroupId cycle", () => {
+		// x → y → x: neither group is reachable from the root walk. Both groups
+		// and their member tasks must still appear in the outline.
+		const doc = buildDoc(
+			[
+				task("tx", { title: "In X", estimate: est, groupId: "x" }),
+				task("ty", { title: "In Y", estimate: est, groupId: "y" }),
+			],
+			"Cyclic",
+			[group("x", "Group X", "y"), group("y", "Group Y", "x")],
+		);
 		const d = digestOf(doc);
-		// Child line is indented (two spaces) relative to the top-level container.
-		expect(d).toMatch(/\n- \[?.*Parent/);
+		expect(d).toContain("Group X");
+		expect(d).toContain("Group Y");
+		expect(d).toContain("In X");
+		expect(d).toContain("In Y");
+	});
+
+	it("indents member tasks under their group", () => {
+		const doc = buildDoc(
+			[task("t1", { title: "Child", estimate: est, groupId: "c" })],
+			"Test project",
+			[group("c", "Parent")],
+		);
+		const d = digestOf(doc);
+		// The group header sits at the top level; its member is indented (2 spaces).
+		expect(d).toMatch(/\n- \*\*.*Parent/);
 		expect(d).toMatch(/\n {2}- .*Child/);
 	});
 
-	it("promotes tasks with a dangling parentId so none are dropped", () => {
+	it("lists tasks with a dangling groupId at the root so none are dropped", () => {
 		const doc = buildDoc([
 			task("root", { title: "Root task", estimate: est }),
-			// parentId points at a task that doesn't exist — unreachable from root.
+			// groupId points at a group that doesn't exist — treated as ungrouped.
 			task("orphan", {
 				title: "Orphan task",
 				estimate: est,
-				parentId: "missing-parent",
+				groupId: "missing-group",
 			}),
 		]);
 		const d = digestOf(doc);
@@ -114,7 +148,7 @@ describe("buildProjectDigest", () => {
 			task(`t${i}`, { estimate: est }),
 		);
 		const d = digestOf(buildDoc(tasks));
-		expect(d).toContain("more tasks (outline truncated)");
+		expect(d).toContain("more items (outline truncated)");
 		expect(d).toContain("and 25 more");
 	});
 
@@ -133,7 +167,7 @@ describe("buildProjectDigest", () => {
 		const arbTask = fc.record({
 			id: fc.uuid(),
 			title: fc.string({ maxLength: 300 }),
-			kind: fc.constantFrom<TaskKind>("task", "milestone", "container"),
+			kind: fc.constantFrom<TaskKind>("task", "milestone"),
 		});
 		fc.assert(
 			fc.property(fc.array(arbTask, { maxLength: 300 }), (raw) => {

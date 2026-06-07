@@ -6,8 +6,8 @@ import { ExportProjectButton } from "./export-button";
 const SAMPLE_DOC = (() => {
 	const d = createEmptyPertDoc("Q3 launch plan");
 	d.tasksById = {
-		t1: { id: "t1", kind: "task", title: "Design", parentId: null },
-		m1: { id: "m1", kind: "milestone", title: "Review", parentId: null },
+		t1: { id: "t1", kind: "task", title: "Design" },
+		m1: { id: "m1", kind: "milestone", title: "Review" },
 	};
 	return d;
 })();

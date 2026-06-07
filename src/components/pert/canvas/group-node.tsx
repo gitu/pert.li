@@ -6,68 +6,58 @@ import {
 	ZapIcon,
 } from "lucide-react";
 import { memo } from "react";
-import type { ContainerRollup } from "#/lib/pert/projection";
+import type { GroupRollup } from "#/lib/pert/projection";
 import { cn } from "#/lib/utils";
 import { NodeDeleteButton } from "./node-delete-button";
 
-// Two related node renderings for a container task:
-//  - "container-collapsed" — single card with a port rail down each side
-//    (entries on the left, exits on the right). Cross-boundary edges attach
-//    to specific ports by id so the user can see *which* interface a
-//    collapsed edge is using.
-//  - "container-expanded" — translucent labelled panel that sits behind its
-//    descendants on the canvas so they read as a group. Descendants are
-//    still ordinary React Flow nodes; the panel is just a visual wrapper.
+// Two related node renderings for a group:
+//  - "group-collapsed" — a single card showing the group's WBS number + name
+//    and its rolled-up schedule stats. A single default target handle (left)
+//    and source handle (right) let cross-boundary edges attach when members
+//    are hidden inside it.
+//  - "group-expanded" — a translucent labelled panel that sits behind its
+//    member tasks so they read as a group. Members are ordinary React Flow
+//    nodes; the panel is just a visual wrapper.
 
-export type ContainerPort = { id: string; label: string };
-
-export type ContainerNodeData = {
-	title: string;
-	rollup: ContainerRollup | null;
+export type GroupNodeData = {
+	name: string;
+	// Derived WBS number ("1", "1.2"); "" when the group has no number.
+	number: string;
+	rollup: GroupRollup | null;
 	collapsed: boolean;
 	onToggle: () => void;
-	// Sorted by interface id so the rendered order is stable across renders.
-	// Empty array means the container has no interfaces of that side yet —
-	// the node still renders one unlabeled handle so edges can attach.
-	entries: ContainerPort[];
-	exits: ContainerPort[];
-	// True while the user is dragging a leaf over this container. Renders
-	// a drop-target ring + glow.
+	// True while the user is dragging a task over this group. Renders a
+	// drop-target ring + glow.
 	dropTarget?: boolean;
-	// True for ~2.4s right after the task is added to the doc. Drives a
-	// brief CSS pulse so the user notices the new node.
+	// True for ~2.4s right after the group is added. Drives a brief CSS pulse.
 	justCreated?: boolean;
-	// Fires when the user finishes a resize drag. The canvas persists the
-	// stored size to Task.layout.width/height; subsequent renders honour it
-	// as a minimum (descendants can still grow the box larger).
+	// Fires when the user finishes a resize drag. The canvas persists the size
+	// to Group.layout.width/height; later renders honour it as a minimum.
 	onResizeEnd?: (size: { width: number; height: number }) => void;
-	// Minimum size the resizer should enforce. Defaults are computed by the
-	// canvas based on the auto-fit bounds + port rail.
 	minWidth?: number;
 	minHeight?: number;
-	// Called when the user confirms the on-node delete button. Two-click
-	// confirm is handled inside NodeDeleteButton.
+	// Called when the user confirms the on-node delete button (two-click
+	// confirm handled inside NodeDeleteButton). Deleting promotes members.
 	onDelete?: () => void;
 };
 
-const PORT_GAP = 26;
-const PORT_HEADER_OFFSET = 40;
-// Match the task / milestone card width so a collapsed container reads as
-// a peer of its siblings on the canvas, not an oversized chrome element.
-export const COLLAPSED_CARD_WIDTH = 200;
+// Match the task / milestone card width so a collapsed group reads as a peer
+// of its siblings on the canvas, not an oversized chrome element.
+export const COLLAPSED_CARD_WIDTH = 220;
 
-// Height needed to fit the larger port rail of the two sides. Used by the
-// canvas builder so React Flow allocates enough space, and again here for the
-// inline style on the card container.
-export function containerCollapsedHeight(data: ContainerNodeData): number {
-	const sides = Math.max(data.entries.length || 1, data.exits.length || 1);
-	const base = 96; // header + meta + progress
-	const extra = Math.max(0, sides - 1) * PORT_GAP;
-	return base + extra;
+// Fixed height for the collapsed card — header + meta + progress. No port rail
+// any more, so it's a constant.
+export function groupCollapsedHeight(_data: GroupNodeData): number {
+	return 96;
+}
+
+function label(number: string, name: string, fallback: string): string {
+	const display = name || fallback;
+	return number ? `${number} ${display}` : display;
 }
 
 function CollapsedImpl(props: NodeProps) {
-	const data = props.data as unknown as ContainerNodeData;
+	const data = props.data as unknown as GroupNodeData;
 	const rollup = data.rollup;
 	const critical = rollup?.hasCritical ?? false;
 	const allDone =
@@ -77,10 +67,10 @@ function CollapsedImpl(props: NodeProps) {
 		(rollup?.inProgressCount ?? 0) > 0 ||
 		((rollup?.completedCount ?? 0) > 0 && !allDone);
 	const progress = Math.round(rollup?.progress ?? 0);
-	const minHeight = containerCollapsedHeight(data);
+	const minHeight = groupCollapsedHeight(data);
 	return (
 		<div
-			data-testid={`container-collapsed-${props.id}`}
+			data-testid={`group-collapsed-${props.id}`}
 			data-critical={critical}
 			style={{ minHeight, width: "100%" }}
 			data-just-created={data.justCreated || undefined}
@@ -113,19 +103,25 @@ function CollapsedImpl(props: NodeProps) {
 				<NodeDeleteButton
 					onDelete={data.onDelete}
 					alwaysVisible={props.selected}
-					testId={`container-delete-${props.id}`}
+					testId={`group-delete-${props.id}`}
 				/>
 			)}
-			<InterfaceRail ports={data.entries} side="left" />
-			<InterfaceRail ports={data.exits} side="right" />
-			{/* Expand affordance mirrors NodeDeleteButton: absolute top-left,
-			    hidden until hover (or always visible when the node is selected
-			    so touch users can still reach it). Single click expands —
-			    no double-click required. */}
+			{/* Single default in/out handles so rerouted collapsed edges attach. */}
+			<Handle
+				type="target"
+				position={Position.Left}
+				className="!h-2.5 !w-2.5 !rounded-full !border-2 !border-background !bg-muted-foreground"
+			/>
+			<Handle
+				type="source"
+				position={Position.Right}
+				className="!h-2.5 !w-2.5 !rounded-full !border-2 !border-background !bg-muted-foreground"
+			/>
+			{/* Expand affordance: single click expands. */}
 			<button
 				type="button"
-				aria-label="Expand container"
-				data-testid={`container-toggle-${props.id}`}
+				aria-label="Expand group"
+				data-testid={`group-toggle-${props.id}`}
 				className={cn(
 					"nodrag absolute top-1 left-1 z-20 grid size-6 place-items-center rounded-md border border-border bg-background/90 text-muted-foreground shadow-sm transition-opacity hover:text-foreground",
 					props.selected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
@@ -142,9 +138,8 @@ function CollapsedImpl(props: NodeProps) {
 			<div className="flex items-start gap-2">
 				<FolderIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
 				<div className="min-w-0 flex-1">
-					{/* Truncated normally; expands to the full title on hover. */}
 					<div className="truncate text-sm font-semibold group-hover:overflow-visible group-hover:whitespace-normal group-hover:break-words">
-						{data.title || "Container"}
+						{label(data.number, data.name, "Group")}
 					</div>
 					<div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
 						<span>{rollup?.descendantCount ?? 0} tasks</span>
@@ -184,7 +179,7 @@ function CollapsedImpl(props: NodeProps) {
 			{(inFlight || allDone) && (
 				<div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted">
 					<div
-						data-testid={`container-progress-${props.id}`}
+						data-testid={`group-progress-${props.id}`}
 						className={cn(
 							"h-full transition-all",
 							allDone ? "bg-sky-500" : "bg-amber-500",
@@ -197,48 +192,13 @@ function CollapsedImpl(props: NodeProps) {
 	);
 }
 
-// Render one column of handles, evenly spaced down the side of the card. Each
-// handle gets its `interfaceId` as the React Flow handle id so collapsed edges
-// can attach to the correct port. When the container has no interfaces on this
-// side yet (legacy data the backfill missed), still render a single unlabeled
-// handle so edges have something to attach to.
-function InterfaceRail({
-	ports,
-	side,
-}: {
-	ports: ContainerPort[];
-	side: "left" | "right";
-}) {
-	const handleType = side === "left" ? "target" : "source";
-	const position = side === "left" ? Position.Left : Position.Right;
-	const list = ports.length > 0 ? ports : [{ id: "__default__", label: "" }];
-	return (
-		<>
-			{list.map((port, i) => (
-				<Handle
-					key={port.id}
-					id={port.id === "__default__" ? undefined : port.id}
-					type={handleType}
-					position={position}
-					style={{ top: PORT_HEADER_OFFSET + i * PORT_GAP }}
-					className="!h-2.5 !w-2.5 !rounded-full !border-2 !border-background !bg-muted-foreground"
-					title={port.label || undefined}
-				/>
-			))}
-		</>
-	);
-}
-
 function ExpandedImpl(props: NodeProps) {
-	const data = props.data as unknown as ContainerNodeData;
+	const data = props.data as unknown as GroupNodeData;
 	const width = props.width ?? 320;
 	const height = props.height ?? 200;
-	// Children now sit at a higher zIndex (canvas buildNodes), so the
-	// container body can take pointer events normally for selection + resize.
-	// The header strip is the drag handle.
 	return (
 		<div
-			data-testid={`container-expanded-${props.id}`}
+			data-testid={`group-expanded-${props.id}`}
 			data-just-created={data.justCreated || undefined}
 			className={cn(
 				"group rounded-lg border-2 border-dashed border-foreground/25 bg-foreground/[0.04] shadow-sm transition-colors dark:bg-foreground/[0.02]",
@@ -263,20 +223,17 @@ function ExpandedImpl(props: NodeProps) {
 				<NodeDeleteButton
 					onDelete={data.onDelete}
 					alwaysVisible={props.selected}
-					testId={`container-delete-${props.id}`}
+					testId={`group-delete-${props.id}`}
 				/>
 			)}
 			<div
-				data-drag-handle="container-header"
+				data-drag-handle="group-header"
 				className="flex cursor-move items-center gap-1.5 border-b border-dashed bg-card/80 px-2 py-1 text-xs font-medium backdrop-blur-sm"
 			>
 				<button
 					type="button"
-					aria-label="Collapse container"
-					data-testid={`container-toggle-${props.id}`}
-					// nodrag tells React Flow not to start a node-drag when the
-					// pointer goes down on this button, so the collapse toggle
-					// still works once the container itself is draggable.
+					aria-label="Collapse group"
+					data-testid={`group-toggle-${props.id}`}
 					className="nodrag grid size-5 place-items-center rounded text-muted-foreground hover:bg-accent"
 					onClick={(e) => {
 						e.stopPropagation();
@@ -286,17 +243,16 @@ function ExpandedImpl(props: NodeProps) {
 					<ChevronDownIcon className="size-3.5" />
 				</button>
 				<FolderIcon className="size-3.5 text-muted-foreground" />
-				{/* Truncated normally; expands to the full title on hover. */}
 				<span className="truncate group-hover:overflow-visible group-hover:whitespace-normal group-hover:break-words">
-					{data.title || "Container"}
+					{label(data.number, data.name, "Group")}
 				</span>
 			</div>
 		</div>
 	);
 }
 
-export const ContainerCollapsedNode = memo(CollapsedImpl);
-export const ContainerExpandedNode = memo(ExpandedImpl);
+export const GroupCollapsedNode = memo(CollapsedImpl);
+export const GroupExpandedNode = memo(ExpandedImpl);
 
 function fmt(n: number): string {
 	const snapped = Math.abs(n) < 1e-6 ? 0 : n;

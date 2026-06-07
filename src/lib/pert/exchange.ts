@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type {
-	ContainerInterface,
 	Dependency,
 	DependencyType,
+	Group,
 	PertDoc,
 	ProjectCalendar,
 	Task,
@@ -14,13 +14,13 @@ import { createEmptyPertDoc } from "./types";
 // instances (or as the on-the-wire payload for `importProject`). Each task
 // carries its own predecessor list inline (`dependsOn`) so the file reads
 // top-down — a reader can understand any one task without cross-referencing
-// a separate edge table. Container interfaces are similarly co-located on
-// the container they belong to.
+// a separate edge table. Groups are listed separately and tasks reference
+// their group by `groupId`.
 //
-// Layout state (node positions, container collapse), derived analytics
-// (CPM ES/EF, Monte Carlo), and per-user view state (selection, history
-// cursor) are intentionally stripped — re-import re-runs ELK auto-layout
-// so the canvas opens at a sensible default.
+// Layout state (node positions, group collapse), derived analytics (CPM
+// ES/EF, Monte Carlo), the auto WBS numbers, and per-user view state are
+// intentionally stripped — re-import re-runs ELK auto-layout and re-derives
+// numbering so the canvas opens at a sensible default.
 //
 // The matching JSON Schema lives at `src/lib/pert/exchange.schema.json` and
 // must be kept in sync with the Zod definitions below — there's a test in
@@ -33,7 +33,7 @@ export const EXCHANGE_MIME_TYPE = "application/json" as const;
 export const EXCHANGE_SCHEMA_URL =
 	"https://pert.li/schemas/v1/exchange.schema.json" as const;
 
-const taskKindSchema = z.enum(["task", "milestone", "container"]);
+const taskKindSchema = z.enum(["task", "milestone"]);
 const estimateUnitSchema = z.enum(["hour", "day", "week"]);
 const taskStatusSchema = z.enum(["not_started", "in_progress", "completed"]);
 const dependencyTypeSchema = z.enum([
@@ -42,7 +42,6 @@ const dependencyTypeSchema = z.enum([
 	"finish_to_finish",
 	"start_to_finish",
 ]);
-const interfaceKindSchema = z.enum(["entry", "exit"]);
 
 const estimateSchema = z.object({
 	optimistic: z.number().nonnegative(),
@@ -52,40 +51,36 @@ const estimateSchema = z.object({
 });
 
 // A single predecessor entry. The owning task is the successor; this entry
-// names what it waits on. `taskId` and `interfaceId` are mutually exclusive
-// — exactly one must be set. `type` defaults to "finish_to_start" on import.
+// names what it waits on by `taskId`. `type` defaults to "finish_to_start" on
+// import.
 //
 // Storage-internal dependency ids are NOT part of the exchange contract —
-// importers synthesize fresh ids per project, so round-trip stability of a
-// random `dep_<hex>` string has no semantic meaning.
+// importers synthesize fresh ids per project.
 //
-// `lagDays` is also intentionally absent: there's no GUI control to set it,
-// so user-created projects don't carry lags. The CPM engine still honours
-// lag internally — it just doesn't survive a round-trip through this format.
-const dependsOnEntrySchema = z
-	.object({
-		taskId: z.string().min(1).optional(),
-		interfaceId: z.string().min(1).optional(),
-		type: dependencyTypeSchema.optional(),
-	})
-	.refine(
-		(d) => (d.taskId ? 1 : 0) + (d.interfaceId ? 1 : 0) === 1,
-		"each dependsOn entry must set exactly one of taskId / interfaceId",
-	);
+// `lagDays` is intentionally absent: there's no GUI control to set it, so
+// user-created projects don't carry lags. The CPM engine still honours lag
+// internally — it just doesn't survive a round-trip through this format.
+const dependsOnEntrySchema = z.object({
+	taskId: z.string().min(1),
+	type: dependencyTypeSchema.optional(),
+});
 
-const interfaceEntrySchema = z.object({
+const groupExchangeSchema = z.object({
 	id: z.string().min(1),
-	kind: interfaceKindSchema,
-	label: z.string(),
-	taskRef: z.string().optional(),
+	name: z.string(),
+	parentGroupId: z.string().nullable(),
+	order: z.number().optional(),
 });
 
 const taskExchangeSchema = z.object({
 	id: z.string().min(1),
 	kind: taskKindSchema,
 	title: z.string(),
-	parentId: z.string().nullable(),
-	key: z.string().optional(),
+	// The group this task belongs to (references `groups[].id`).
+	groupId: z.string().nullable().optional(),
+	// Manual WBS-number override. The auto number is re-derived on import.
+	numberOverride: z.string().optional(),
+	order: z.number().optional(),
 	estimate: estimateSchema.optional(),
 	notes: z.string().optional(),
 	status: taskStatusSchema.optional(),
@@ -95,9 +90,6 @@ const taskExchangeSchema = z.object({
 	tags: z.array(z.string()).optional(),
 	confidence: z.number().min(0).max(1).optional(),
 	dependsOn: z.array(dependsOnEntrySchema).optional(),
-	// Only meaningful when kind === "container" — defines the entry/exit
-	// ports descendants can wire to.
-	interfaces: z.array(interfaceEntrySchema).optional(),
 });
 
 const calendarExchangeSchema = z.object({
@@ -119,14 +111,15 @@ export const pertExchangeSchema = z.object({
 	schemaVersion: z.literal(EXCHANGE_SCHEMA_VERSION),
 	exportedAt: z.string(),
 	title: z.string(),
+	groups: z.array(groupExchangeSchema).optional(),
 	tasks: z.array(taskExchangeSchema),
 	calendar: calendarExchangeSchema.optional(),
 });
 
 export type PertExchange = z.infer<typeof pertExchangeSchema>;
 export type TaskExchange = z.infer<typeof taskExchangeSchema>;
+export type GroupExchange = z.infer<typeof groupExchangeSchema>;
 export type DependsOnEntry = z.infer<typeof dependsOnEntrySchema>;
-export type InterfaceEntry = z.infer<typeof interfaceEntrySchema>;
 export type CalendarExchange = z.infer<typeof calendarExchangeSchema>;
 
 // ── Serialize ───────────────────────────────────────────────────────────────
@@ -146,35 +139,52 @@ export function toExchange(
 	const depsBySuccessor = new Map<TaskId, Dependency[]>();
 	for (const dep of Object.values(doc.dependenciesById)) {
 		const successor = dep.to.taskId;
-		if (!successor) continue; // unattached dep — drop silently
+		// Both endpoints must reference a task. A dep missing either side is
+		// malformed/legacy — drop it rather than emit an invalid `taskId: ""`
+		// that fails the exchange schema (taskId minLength 1).
+		if (!successor || !dep.from.taskId) continue;
 		const bucket = depsBySuccessor.get(successor) ?? [];
 		bucket.push(dep);
 		depsBySuccessor.set(successor, bucket);
 	}
+	const groups = Object.values(doc.groupsById).map(groupToExchange);
 	return {
 		format: EXCHANGE_FORMAT_ID,
 		schemaVersion: EXCHANGE_SCHEMA_VERSION,
 		exportedAt,
 		title: doc.title,
+		...(groups.length > 0 ? { groups } : {}),
 		tasks: Object.values(doc.tasksById).map((t) =>
-			taskToExchange(t, depsBySuccessor.get(t.id), doc),
+			taskToExchange(t, depsBySuccessor.get(t.id)),
 		),
 		calendar: doc.calendar ? calendarToExchange(doc.calendar) : undefined,
+	};
+}
+
+function groupToExchange(group: Group): GroupExchange {
+	return {
+		id: group.id,
+		name: group.name,
+		parentGroupId: group.parentGroupId ?? null,
+		...(group.order !== undefined ? { order: group.order } : {}),
 	};
 }
 
 function taskToExchange(
 	task: Task,
 	incomingDeps: Dependency[] | undefined,
-	doc: PertDoc,
 ): TaskExchange {
 	const out: TaskExchange = {
 		id: task.id,
 		kind: task.kind,
 		title: task.title,
-		parentId: task.parentId,
 	};
-	if (task.key !== undefined) out.key = task.key;
+	if (task.groupId !== undefined && task.groupId !== null) {
+		out.groupId = task.groupId;
+	}
+	if (task.numberOverride !== undefined)
+		out.numberOverride = task.numberOverride;
+	if (task.order !== undefined) out.order = task.order;
 	if (task.estimate) {
 		out.estimate = {
 			optimistic: task.estimate.optimistic,
@@ -196,33 +206,14 @@ function taskToExchange(
 	if (incomingDeps && incomingDeps.length > 0) {
 		out.dependsOn = incomingDeps.map(depToEntry);
 	}
-	if (task.kind === "container") {
-		const interfaces = doc.interfacesByContainerId[task.id];
-		if (interfaces) {
-			const list = Object.values(interfaces).map(interfaceToEntry);
-			if (list.length > 0) out.interfaces = list;
-		}
-	}
 	return out;
 }
 
 function depToEntry(dep: Dependency): DependsOnEntry {
-	const out: DependsOnEntry = {};
-	if (dep.from.taskId !== undefined) out.taskId = dep.from.taskId;
-	if (dep.from.interfaceId !== undefined)
-		out.interfaceId = dep.from.interfaceId;
+	const out: DependsOnEntry = { taskId: dep.from.taskId ?? "" };
 	// Default type — drop from output to keep files compact.
 	if (dep.type !== "finish_to_start") out.type = dep.type;
 	return out;
-}
-
-function interfaceToEntry(iface: ContainerInterface): InterfaceEntry {
-	return {
-		id: iface.id,
-		kind: iface.kind,
-		label: iface.label,
-		...(iface.taskRef !== undefined ? { taskRef: iface.taskRef } : {}),
-	};
 }
 
 function calendarToExchange(cal: ProjectCalendar): CalendarExchange {
@@ -288,21 +279,16 @@ export function fromExchange(
 	const doc = createEmptyPertDoc(
 		titleOverride && titleOverride.length > 0 ? titleOverride : exchange.title,
 	);
+	for (const [index, g] of (exchange.groups ?? []).entries()) {
+		doc.groupsById[g.id] = {
+			id: g.id,
+			name: g.name,
+			parentGroupId: g.parentGroupId ?? null,
+			order: g.order ?? index,
+		};
+	}
 	for (const t of exchange.tasks) {
 		doc.tasksById[t.id] = taskFromExchange(t);
-		if (t.kind === "container" && t.interfaces && t.interfaces.length > 0) {
-			const bucket: Record<string, ContainerInterface> = {};
-			for (const iface of t.interfaces) {
-				bucket[iface.id] = {
-					id: iface.id,
-					containerId: t.id,
-					kind: iface.kind,
-					label: iface.label,
-					...(iface.taskRef !== undefined ? { taskRef: iface.taskRef } : {}),
-				};
-			}
-			doc.interfacesByContainerId[t.id] = bucket;
-		}
 	}
 	for (const t of exchange.tasks) {
 		if (!t.dependsOn) continue;
@@ -342,9 +328,10 @@ function taskFromExchange(t: TaskExchange): Task {
 		id: t.id,
 		kind: t.kind,
 		title: t.title,
-		parentId: t.parentId,
 	};
-	if (t.key !== undefined) task.key = t.key;
+	if (t.groupId !== undefined && t.groupId !== null) task.groupId = t.groupId;
+	if (t.numberOverride !== undefined) task.numberOverride = t.numberOverride;
+	if (t.order !== undefined) task.order = t.order;
 	if (t.estimate) task.estimate = { ...t.estimate };
 	if (t.notes !== undefined) task.notes = t.notes;
 	if (t.status !== undefined) task.status = t.status;
@@ -365,13 +352,7 @@ function entryToDep(entry: DependsOnEntry, successorId: TaskId): Dependency {
 	const toPort = type.endsWith("_start") ? "start" : "finish";
 	return {
 		id: freshDepId(),
-		from: {
-			...(entry.taskId !== undefined ? { taskId: entry.taskId } : {}),
-			...(entry.interfaceId !== undefined
-				? { interfaceId: entry.interfaceId }
-				: {}),
-			port: fromPort,
-		},
+		from: { taskId: entry.taskId, port: fromPort },
 		to: { taskId: successorId, port: toPort },
 		type,
 	};
@@ -383,7 +364,7 @@ export type ExchangeSummary = {
 	title: string;
 	taskCount: number;
 	milestoneCount: number;
-	containerCount: number;
+	groupCount: number;
 	dependencyCount: number;
 	hasCalendar: boolean;
 };
@@ -391,19 +372,17 @@ export type ExchangeSummary = {
 export function summarizeExchange(exchange: PertExchange): ExchangeSummary {
 	let taskCount = 0;
 	let milestoneCount = 0;
-	let containerCount = 0;
 	let dependencyCount = 0;
 	for (const t of exchange.tasks) {
-		if (t.kind === "task") taskCount += 1;
-		else if (t.kind === "milestone") milestoneCount += 1;
-		else if (t.kind === "container") containerCount += 1;
+		if (t.kind === "milestone") milestoneCount += 1;
+		else taskCount += 1;
 		dependencyCount += t.dependsOn?.length ?? 0;
 	}
 	return {
 		title: exchange.title,
 		taskCount,
 		milestoneCount,
-		containerCount,
+		groupCount: exchange.groups?.length ?? 0,
 		dependencyCount,
 		hasCalendar: !!exchange.calendar,
 	};

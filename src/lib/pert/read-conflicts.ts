@@ -1,18 +1,18 @@
 import * as Automerge from "@automerge/automerge";
 import type { TaskConflicts, TaskFieldConflict } from "./conflicts";
-import type { Estimate, PertDoc, TaskId } from "./types";
+import type { Estimate, GroupId, PertDoc, TaskId } from "./types";
 
 // Surface concurrent writes Automerge has merged on a per-task basis. The
 // `getConflicts` API returns a map keyed by op id from the *parent* object,
 // asked for a specific prop. We probe the fields the user actually cares
-// about: title, estimate, parentId, notes.
+// about: title, estimate, groupId, notes.
 //
 // Automerge's merge already picks a "winning" value deterministically. The
 // conflicts map only has more than one entry when peers wrote concurrently
 // to the same field. We treat anything > 1 as a conflict the user should
 // know about.
 
-const PROBED_FIELDS = ["title", "estimate", "parentId", "notes"] as const;
+const PROBED_FIELDS = ["title", "estimate", "groupId", "notes"] as const;
 
 export function readTaskConflicts(
 	doc: PertDoc,
@@ -62,12 +62,12 @@ function toFieldConflict(
 					value: v.value as Estimate | undefined,
 				})),
 			};
-		case "parentId":
+		case "groupId":
 			return {
 				field,
 				values: values.map((v) => ({
 					opId: v.opId,
-					value: (v.value as TaskId | null | undefined) ?? null,
+					value: (v.value as GroupId | null | undefined) ?? null,
 				})),
 			};
 		case "notes":

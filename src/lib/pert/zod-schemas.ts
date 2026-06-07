@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type {
-	ContainerInterface,
 	Dependency,
 	Estimate,
+	Group,
 	PertDoc,
 	ProjectCalendar,
 	Task,
@@ -36,11 +36,20 @@ export const estimate = z
 		path: ["pessimistic"],
 	}) satisfies z.ZodType<Estimate>;
 
-export const taskKind = z.enum(["task", "milestone", "container"]);
+export const taskKind = z.enum(["task", "milestone"]);
 
 export const layout = z.object({
 	position: z.object({ x: z.number(), y: z.number() }).optional(),
-	collapsed: z.boolean().optional(),
+	width: z.number().optional(),
+	height: z.number().optional(),
+});
+
+export const group: z.ZodType<Group> = z.object({
+	id: z.string().min(1),
+	name: z.string(),
+	parentGroupId: z.string().nullable(),
+	order: z.number(),
+	layout: layout.optional(),
 });
 
 export const taskStatus = z.enum(["not_started", "in_progress", "completed"]);
@@ -49,8 +58,9 @@ export const task: z.ZodType<Task> = z.object({
 	id: z.string().min(1),
 	kind: taskKind,
 	title: z.string(),
-	parentId: z.string().nullable(),
-	key: z.string().optional(),
+	groupId: z.string().nullable().optional(),
+	numberOverride: z.string().optional(),
+	order: z.number().optional(),
 	estimate: estimate.optional(),
 	notes: z.string().optional(),
 	layout: layout.optional(),
@@ -80,7 +90,6 @@ export const dependencyPort = z.enum(["start", "finish"]);
 
 export const dependencyEndpoint = z.object({
 	taskId: z.string().optional(),
-	interfaceId: z.string().optional(),
 	port: dependencyPort.optional(),
 });
 
@@ -99,24 +108,14 @@ export const dependency: z.ZodType<Dependency> = z
 		type: dependencyType,
 		lagDays: z.number().optional(),
 	})
-	.refine((d) => d.from.taskId || d.from.interfaceId, {
-		message: "from must reference a task or interface",
+	.refine((d) => d.from.taskId, {
+		message: "from must reference a task",
 		path: ["from"],
 	})
-	.refine((d) => d.to.taskId || d.to.interfaceId, {
-		message: "to must reference a task or interface",
+	.refine((d) => d.to.taskId, {
+		message: "to must reference a task",
 		path: ["to"],
 	});
-
-export const interfaceKind = z.enum(["entry", "exit"]);
-
-export const containerInterface: z.ZodType<ContainerInterface> = z.object({
-	id: z.string().min(1),
-	containerId: z.string().min(1),
-	kind: interfaceKind,
-	label: z.string(),
-	taskRef: z.string().optional(),
-});
 
 export const viewKind = z.enum(["network", "timeline", "table", "matrix"]);
 
@@ -180,11 +179,8 @@ export const pertDoc: z.ZodType<PertDoc> = z.object({
 	schemaVersion: z.literal(1),
 	title: z.string(),
 	tasksById: z.record(z.string(), task),
+	groupsById: z.record(z.string(), group),
 	dependenciesById: z.record(z.string(), dependency),
-	interfacesByContainerId: z.record(
-		z.string(),
-		z.record(z.string(), containerInterface),
-	),
 	viewsById: z.record(z.string(), viewState),
 	calendar: projectCalendar.optional(),
 	workPlan: workPlan.optional(),

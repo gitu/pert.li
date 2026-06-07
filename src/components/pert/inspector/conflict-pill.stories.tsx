@@ -19,7 +19,6 @@ function seedDoc(): PertDoc {
 		id: "T",
 		kind: "task",
 		title: "Original",
-		parentId: null,
 		estimate: est(1, 2, 4),
 	};
 	return d;

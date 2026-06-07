@@ -15,26 +15,24 @@ import { createEmptyPertDoc, type PertDoc } from "#/lib/pert/types";
 
 function richDoc(): PertDoc {
 	const d = createEmptyPertDoc("Q3 launch");
+	d.groupsById = {
+		g1: { id: "g1", name: "Phase 1", parentGroupId: null, order: 0 },
+	};
 	d.tasksById = {
-		c1: {
-			id: "c1",
-			kind: "container",
-			title: "Phase 1",
-			parentId: null,
-			// Layout should be stripped on export.
-			layout: { position: { x: 100, y: 50 }, collapsed: true },
-		},
 		t1: {
 			id: "t1",
 			kind: "task",
 			title: "Design",
-			parentId: "c1",
-			key: "P1.A",
+			groupId: "g1",
+			numberOverride: "P1.A",
+			order: 0,
 			estimate: { optimistic: 1, mostLikely: 3, pessimistic: 5, unit: "day" },
 			notes: "watch out for handoff",
 			status: "in_progress",
 			progress: 40,
 			actualStart: "2026-04-01",
+			// Layout should be stripped on export.
+			layout: { position: { x: 100, y: 50 } },
 			metadata: {
 				tags: ["design", "phase-1"],
 				confidence: 0.8,
@@ -46,7 +44,8 @@ function richDoc(): PertDoc {
 			id: "m1",
 			kind: "milestone",
 			title: "Design review",
-			parentId: "c1",
+			groupId: "g1",
+			order: 1,
 		},
 	};
 	d.dependenciesById = {
@@ -56,17 +55,6 @@ function richDoc(): PertDoc {
 			to: { taskId: "m1", port: "start" },
 			type: "finish_to_start",
 			lagDays: 2,
-		},
-	};
-	d.interfacesByContainerId = {
-		c1: {
-			i1: {
-				id: "i1",
-				containerId: "c1",
-				kind: "entry",
-				label: "Inbound brief",
-				taskRef: "t1",
-			},
 		},
 	};
 	d.calendar = {
@@ -93,11 +81,22 @@ describe("toExchange", () => {
 		expect(ex.exportedAt).toBe("2026-05-25T00:00:00Z");
 	});
 
-	it("strips layout (positions, collapse state)", () => {
+	it("strips layout (positions)", () => {
 		const ex = toExchange(richDoc());
-		const t = ex.tasks.find((t) => t.id === "c1");
+		const t = ex.tasks.find((t) => t.id === "t1");
 		expect(t).toBeDefined();
 		expect((t as unknown as Record<string, unknown>).layout).toBeUndefined();
+	});
+
+	it("emits groups as a top-level array and references them via groupId", () => {
+		const ex = toExchange(richDoc());
+		expect(ex.groups).toEqual([
+			{ id: "g1", name: "Phase 1", parentGroupId: null, order: 0 },
+		]);
+		const t1 = ex.tasks.find((t) => t.id === "t1");
+		expect(t1?.groupId).toBe("g1");
+		expect(t1?.numberOverride).toBe("P1.A");
+		expect(t1?.order).toBe(0);
 	});
 
 	it("strips internal metadata.sourceRefs but preserves tags + confidence", () => {
@@ -140,8 +139,8 @@ describe("toExchange", () => {
 	it("keeps explicit non-default dep types", () => {
 		const d = createEmptyPertDoc("p");
 		d.tasksById = {
-			a: { id: "a", kind: "task", title: "A", parentId: null },
-			b: { id: "b", kind: "task", title: "B", parentId: null },
+			a: { id: "a", kind: "task", title: "A" },
+			b: { id: "b", kind: "task", title: "B" },
 		};
 		d.dependenciesById = {
 			d1: {
@@ -156,21 +155,29 @@ describe("toExchange", () => {
 		expect(b?.dependsOn?.[0].type).toBe("start_to_start");
 	});
 
-	it("co-locates container interfaces on the container task", () => {
-		const ex = toExchange(richDoc());
-		const c1 = ex.tasks.find((t) => t.id === "c1");
-		expect(c1?.interfaces).toEqual([
-			{ id: "i1", kind: "entry", label: "Inbound brief", taskRef: "t1" },
-		]);
-		// Leaf tasks never get an interfaces array.
-		const t1 = ex.tasks.find((t) => t.id === "t1");
-		expect(t1?.interfaces).toBeUndefined();
+	it('drops a malformed dependency missing its `from` task (never emits taskId: "")', () => {
+		const d = createEmptyPertDoc("p");
+		d.tasksById = { b: { id: "b", kind: "task", title: "B" } };
+		d.dependenciesById = {
+			bad: {
+				id: "bad",
+				from: { port: "finish" }, // no taskId
+				to: { taskId: "b", port: "start" },
+				type: "finish_to_start",
+			},
+		};
+		const ex = toExchange(d);
+		// The dep is dropped rather than producing an invalid `taskId: ""` that
+		// the exchange schema (taskId minLength 1) would reject.
+		expect(ex.tasks.find((t) => t.id === "b")?.dependsOn).toBeUndefined();
+		expect(parseExchange(serializeExchange(d)).ok).toBe(true);
 	});
 
-	it("omits empty calendar and undefined estimate", () => {
+	it("omits empty groups/calendar and undefined estimate", () => {
 		const empty = createEmptyPertDoc("p");
 		const ex = toExchange(empty);
 		expect(ex.calendar).toBeUndefined();
+		expect(ex.groups).toBeUndefined();
 		expect(ex.tasks).toEqual([]);
 		// The format no longer has a top-level dependencies key at all.
 		expect(
@@ -222,26 +229,19 @@ describe("parseExchange", () => {
 		expect(res.ok).toBe(false);
 	});
 
-	it("rejects a dependsOn entry that names both taskId and interfaceId", () => {
+	it("rejects a task whose kind is no longer part of the model", () => {
 		const res = parseExchange({
 			format: EXCHANGE_FORMAT_ID,
 			schemaVersion: 1,
 			exportedAt: "x",
 			title: "p",
-			tasks: [
-				{
-					id: "t1",
-					kind: "task",
-					title: "T",
-					parentId: null,
-					dependsOn: [{ taskId: "a", interfaceId: "b" }],
-				},
-			],
+			// "container" was removed from TaskKind in the groups refactor.
+			tasks: [{ id: "t1", kind: "container", title: "T" }],
 		});
 		expect(res.ok).toBe(false);
 	});
 
-	it("rejects a dependsOn entry that names neither taskId nor interfaceId", () => {
+	it("rejects a dependsOn entry that omits taskId", () => {
 		const res = parseExchange({
 			format: EXCHANGE_FORMAT_ID,
 			schemaVersion: 1,
@@ -252,8 +252,7 @@ describe("parseExchange", () => {
 					id: "t1",
 					kind: "task",
 					title: "T",
-					parentId: null,
-					dependsOn: [{ lagDays: 2 }],
+					dependsOn: [{ type: "finish_to_start" }],
 				},
 			],
 		});
@@ -266,9 +265,7 @@ describe("parseExchange", () => {
 			schemaVersion: 1,
 			exportedAt: "x",
 			title: "p",
-			tasks: [
-				{ id: "t1", kind: "task", title: "T", parentId: null, progress: 200 },
-			],
+			tasks: [{ id: "t1", kind: "task", title: "T", progress: 200 }],
 		});
 		expect(res.ok).toBe(false);
 		if (!res.ok) expect(res.error).toContain("tasks.0.progress");
@@ -287,14 +284,17 @@ describe("round-trip", () => {
 		const rebuilt = fromExchange(parsed.exchange);
 
 		expect(rebuilt.title).toBe(original.title);
-		// Tasks: keys preserved, layout dropped.
+		// Groups round-trip verbatim.
+		expect(rebuilt.groupsById.g1).toEqual(original.groupsById.g1);
+		// Tasks: groupId + numberOverride preserved, layout dropped.
 		for (const id of Object.keys(original.tasksById)) {
 			const a = original.tasksById[id];
 			const b = rebuilt.tasksById[id];
 			expect(b).toBeDefined();
 			expect(b.title).toBe(a.title);
 			expect(b.kind).toBe(a.kind);
-			expect(b.parentId).toBe(a.parentId);
+			expect(b.groupId ?? null).toBe(a.groupId ?? null);
+			expect(b.numberOverride).toBe(a.numberOverride);
 			expect(b.layout).toBeUndefined();
 			if (a.metadata?.sourceRefs) {
 				// sourceRefs deliberately not exported.
@@ -315,10 +315,6 @@ describe("round-trip", () => {
 		expect(rebuiltDep.to).toEqual(original.dependenciesById.dep_a.to);
 		expect(rebuiltDep.type).toBe(original.dependenciesById.dep_a.type);
 		expect(rebuiltDep.lagDays).toBeUndefined();
-		// Interfaces re-grouped under their container.
-		expect(rebuilt.interfacesByContainerId.c1?.i1).toEqual(
-			original.interfacesByContainerId.c1.i1,
-		);
 		// Calendar preserved verbatim.
 		expect(rebuilt.calendar).toEqual(original.calendar);
 	});
@@ -330,12 +326,11 @@ describe("round-trip", () => {
 			exportedAt: "x",
 			title: "p",
 			tasks: [
-				{ id: "a", kind: "task", title: "A", parentId: null },
+				{ id: "a", kind: "task", title: "A" },
 				{
 					id: "b",
 					kind: "task",
 					title: "B",
-					parentId: null,
 					dependsOn: [{ taskId: "a" }],
 				},
 			],
@@ -357,12 +352,11 @@ describe("round-trip", () => {
 			exportedAt: "x",
 			title: "p",
 			tasks: [
-				{ id: "a", kind: "task", title: "A", parentId: null },
+				{ id: "a", kind: "task", title: "A" },
 				{
 					id: "b",
 					kind: "task",
 					title: "B",
-					parentId: null,
 					dependsOn: [{ taskId: "a", type: "start_to_finish" }],
 				},
 			],
@@ -373,6 +367,24 @@ describe("round-trip", () => {
 		expect(deps).toHaveLength(1);
 		expect(deps[0].from.port).toBe("start");
 		expect(deps[0].to.port).toBe("finish");
+	});
+
+	it("rebuilds nested groups from the groups array", () => {
+		const ex = parseExchange({
+			format: EXCHANGE_FORMAT_ID,
+			schemaVersion: 1,
+			exportedAt: "x",
+			title: "p",
+			groups: [
+				{ id: "outer", name: "Outer", parentGroupId: null, order: 0 },
+				{ id: "inner", name: "Inner", parentGroupId: "outer", order: 0 },
+			],
+			tasks: [{ id: "a", kind: "task", title: "A", groupId: "inner" }],
+		});
+		if (!ex.ok) throw new Error(ex.error);
+		const doc = fromExchange(ex.exchange);
+		expect(doc.groupsById.inner.parentGroupId).toBe("outer");
+		expect(doc.tasksById.a.groupId).toBe("inner");
 	});
 
 	it("respects a title override on import", () => {
@@ -389,13 +401,13 @@ describe("round-trip", () => {
 });
 
 describe("summarizeExchange", () => {
-	it("counts tasks, milestones, containers, and inline deps", () => {
+	it("counts tasks, milestones, groups, and inline deps", () => {
 		const summary = summarizeExchange(toExchange(richDoc()));
 		expect(summary).toEqual({
 			title: "Q3 launch",
 			taskCount: 1,
 			milestoneCount: 1,
-			containerCount: 1,
+			groupCount: 1,
 			dependencyCount: 1,
 			hasCalendar: true,
 		});
@@ -440,10 +452,9 @@ describe("JSON Schema artifact (exchange.schema.json)", () => {
 			"TaskStatus",
 			"EstimateUnit",
 			"DependencyType",
-			"InterfaceKind",
 			"Estimate",
 			"DependsOnEntry",
-			"InterfaceEntry",
+			"Group",
 			"Task",
 			"Calendar",
 		]) {
@@ -451,12 +462,13 @@ describe("JSON Schema artifact (exchange.schema.json)", () => {
 		}
 	});
 
-	it("requires exactly one of taskId / interfaceId on DependsOnEntry", () => {
-		const dep = defs.DependsOnEntry as { oneOf: Array<{ required: string[] }> };
-		expect(dep.oneOf).toEqual([
-			{ required: ["taskId"] },
-			{ required: ["interfaceId"] },
-		]);
+	it("requires taskId on DependsOnEntry and forbids extra fields", () => {
+		const dep = defs.DependsOnEntry as {
+			required: string[];
+			additionalProperties: boolean;
+		};
+		expect(dep.required).toEqual(["taskId"]);
+		expect(dep.additionalProperties).toBe(false);
 	});
 
 	it("does NOT define a top-level 'dependencies' property", () => {

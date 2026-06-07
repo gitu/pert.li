@@ -7,29 +7,23 @@ import type { EditOp } from "../operations";
 import type { ProviderName } from "../provider";
 import {
 	type AddDependencyArgs,
-	type AddInterfaceArgs,
 	type AddTaskArgs,
 	addDependencyMutation,
-	addInterfaceMutation,
 	addTaskMutation,
+	assignTaskToGroupMutation,
+	createGroupMutation,
+	deleteGroupMutation,
 	listDocuments,
-	type MoveTaskArgs,
-	moveTaskMutation,
 	newId,
-	type PinDependencyArgs,
-	pinDependencyMutation,
 	type RemoveDependencyArgs,
-	type RemoveInterfaceArgs,
 	type RemoveTaskArgs,
 	readDocument,
 	removeDependencyMutation,
-	removeInterfaceMutation,
 	removeTaskMutation,
+	renameGroupMutation,
 	type SetActualDatesArgs,
 	type SetDependencyArgs,
 	type SetEstimateArgs,
-	type SetInterfaceArgs,
-	type SetKeyArgs,
 	type SetKindArgs,
 	type SetNotesArgs,
 	type SetProgressArgs,
@@ -38,12 +32,12 @@ import {
 	setActualDatesMutation,
 	setDependencyMutation,
 	setEstimateMutation,
-	setInterfaceMutation,
-	setKeyMutation,
+	setGroupParentMutation,
 	setKindMutation,
 	setNotesMutation,
 	setProgressMutation,
 	setStatusMutation,
+	setTaskNumberMutation,
 	setTitleMutation,
 	summarizeProject,
 } from "../tool-mutators";
@@ -87,7 +81,11 @@ const EXECUTORS: Record<string, Executor> = {
 	set_title: (doc, args) =>
 		setTitleMutation(doc, args as unknown as SetTitleArgs),
 	set_kind: (doc, args) => setKindMutation(doc, args as unknown as SetKindArgs),
-	set_key: (doc, args) => setKeyMutation(doc, args as unknown as SetKeyArgs),
+	set_task_number: (doc, args) =>
+		setTaskNumberMutation(
+			doc,
+			args as unknown as { taskId: string; number: string | null },
+		),
 	set_notes: (doc, args) =>
 		setNotesMutation(doc, args as unknown as SetNotesArgs),
 	set_estimate: (doc, args) =>
@@ -98,8 +96,11 @@ const EXECUTORS: Record<string, Executor> = {
 		setProgressMutation(doc, args as unknown as SetProgressArgs),
 	set_actual_dates: (doc, args) =>
 		setActualDatesMutation(doc, args as unknown as SetActualDatesArgs),
-	move_task: (doc, args) =>
-		moveTaskMutation(doc, args as unknown as MoveTaskArgs),
+	move_task_to_group: (doc, args) =>
+		assignTaskToGroupMutation(
+			doc,
+			args as unknown as { taskId: string; groupId: string | null },
+		),
 	add_dependency: (doc, args) =>
 		addDependencyMutation(doc, args as unknown as AddDependencyArgs),
 	set_dependency: (doc, args) =>
@@ -108,14 +109,27 @@ const EXECUTORS: Record<string, Executor> = {
 		removeDependencyMutation(doc, args as unknown as RemoveDependencyArgs),
 	remove_task: (doc, args) =>
 		removeTaskMutation(doc, args as unknown as RemoveTaskArgs),
-	add_interface: (doc, args) =>
-		addInterfaceMutation(doc, args as unknown as AddInterfaceArgs),
-	remove_interface: (doc, args) =>
-		removeInterfaceMutation(doc, args as unknown as RemoveInterfaceArgs),
-	set_interface: (doc, args) =>
-		setInterfaceMutation(doc, args as unknown as SetInterfaceArgs),
-	pin_dependency: (doc, args) =>
-		pinDependencyMutation(doc, args as unknown as PinDependencyArgs),
+	create_group: (doc, args) => {
+		const r = createGroupMutation(
+			doc,
+			args as unknown as { name?: string; parentGroupId?: string | null },
+		);
+		return r.ok ? { id: r.id } : r;
+	},
+	rename_group: (doc, args) =>
+		renameGroupMutation(
+			doc,
+			args as unknown as { groupId: string; name: string },
+		),
+	set_group_parent: (doc, args) =>
+		setGroupParentMutation(
+			doc,
+			args as unknown as { groupId: string; parentGroupId: string | null },
+		),
+	delete_group: (doc, args) => {
+		const r = deleteGroupMutation(doc, args as unknown as { groupId: string });
+		return r.ok ? { ok: true as const } : r;
+	},
 	// propose_changes: apply the batch to the doc and synthesise the summary the
 	// real client returns. In the live app these auto-apply only once a work
 	// plan is approved; for evals we always apply so multi-op trajectories land.
@@ -145,19 +159,18 @@ const EXECUTORS: Record<string, Executor> = {
 			"remove_task",
 			"set_title",
 			"set_kind",
-			"set_key",
+			"set_task_number",
 			"set_notes",
 			"set_estimate",
 			"set_status",
 			"set_progress",
 			"set_actual_dates",
-			"move_task",
+			"move_task_to_group",
 		]);
 		const depOps = new Set([
 			"add_dependency",
 			"remove_dependency",
 			"set_dependency",
-			"pin_dependency",
 		]);
 		return {
 			ok: true as const,

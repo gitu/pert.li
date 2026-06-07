@@ -8,9 +8,9 @@ import {
 	shortDependencyType,
 	toggleDependencyMutation,
 } from "#/lib/pert/matrix";
+import { computeNumbering } from "#/lib/pert/numbering";
 import { computeSchedule } from "#/lib/pert/schedule";
 import { projectDocStore, selectionStore, selectTask } from "#/lib/pert/store";
-import { parseKeySegments } from "#/lib/pert/task-key";
 import type { PertDoc, Task } from "#/lib/pert/types";
 import { cn } from "#/lib/utils";
 
@@ -47,20 +47,21 @@ export function MatrixView({ projectId, doc }: MatrixViewProps) {
 		return new Set(scheduleResult.schedule.criticalTaskIds);
 	}, [scheduleResult]);
 
-	// Optional grouping: when on, tasks are re-sorted by their dotted key
-	// (parseKeySegments → lexicographic) and visual borders mark the
+	// Optional grouping: when on, tasks are re-sorted by their derived WBS
+	// number (numeric-aware dotted compare) and visual borders mark the
 	// boundary between adjacent groups on both axes. Cells stay indexed by
 	// task id (via the buildDependencyMatrix lookup) so we can permute the
 	// row + column order without re-running the builder.
+	const numbers = useMemo(() => computeNumbering(doc), [doc]);
 	const [grouped, setGrouped] = useState(false);
 	const taskOrder = useMemo(
-		() => orderTasks(model.tasks, grouped),
-		[model.tasks, grouped],
+		() => orderTasks(model.tasks, grouped, numbers.tasks),
+		[model.tasks, grouped, numbers.tasks],
 	);
 	const groupBoundaries = useMemo(() => {
 		if (!grouped) return new Set<number>();
-		return computeGroupBoundaries(taskOrder);
-	}, [grouped, taskOrder]);
+		return computeGroupBoundaries(taskOrder, numbers.tasks);
+	}, [grouped, taskOrder, numbers.tasks]);
 
 	const tasks = taskOrder;
 	const cellIndexById = useMemo(() => {
@@ -162,9 +163,9 @@ export function MatrixView({ projectId, doc }: MatrixViewProps) {
 											title={row.title || row.id}
 											data-testid={`matrix-row-${row.id}`}
 										>
-											{row.key && (
+											{numbers.tasks[row.id] && (
 												<span className="mr-1 font-mono text-[9px] text-muted-foreground">
-													{row.key}
+													{numbers.tasks[row.id]}
 												</span>
 											)}
 											{criticalSet.has(row.id) ? "⚡ " : ""}
@@ -196,24 +197,45 @@ export function MatrixView({ projectId, doc }: MatrixViewProps) {
 	);
 }
 
-// Sort a flat task list by its dotted `key` (e.g. M1.A → ["M1","A"]) so
-// adjacent rows share a prefix; tasks without a key go last, alphabetised.
-// Returns a new array — never mutates `tasks`.
-function orderTasks(tasks: Task[], grouped: boolean): Task[] {
+// Split a WBS number ("1.2.3") into segments. Segments stay STRINGS because a
+// task's number can be a free-form override (e.g. "M1.A"), not just digits. An
+// empty number yields an empty array (sorts last).
+function numberSegments(n: string): string[] {
+	if (!n) return [];
+	return n.split(".").filter((s) => s.length > 0);
+}
+
+// Numeric-aware segment compare: "2" < "10" when both are numbers, otherwise a
+// locale compare so non-numeric overrides ("M1") still order sensibly.
+function compareSegment(a: string, b: string): number {
+	const an = Number(a);
+	const bn = Number(b);
+	if (Number.isFinite(an) && Number.isFinite(bn) && a !== "" && b !== "") {
+		if (an !== bn) return an - bn;
+	}
+	return a.localeCompare(b, undefined, { numeric: true });
+}
+
+// Sort a flat task list by its derived WBS number (e.g. "1.2") so adjacent rows
+// share a prefix; tasks without a number go last, alphabetised. Returns a new
+// array — never mutates `tasks`.
+function orderTasks(
+	tasks: Task[],
+	grouped: boolean,
+	numbers: Record<string, string>,
+): Task[] {
 	if (!grouped) return tasks;
 	const annotated = tasks.map((t, i) => ({
 		t,
 		idx: i,
-		segs: parseKeySegments(t.key),
+		segs: numberSegments(numbers[t.id] ?? ""),
 	}));
 	annotated.sort((a, b) => {
-		// Empty keys to the end so the labelled groups read first.
+		// Empty numbers to the end so the labelled groups read first.
 		if (a.segs.length === 0 && b.segs.length > 0) return 1;
 		if (b.segs.length === 0 && a.segs.length > 0) return -1;
 		for (let i = 0; i < Math.min(a.segs.length, b.segs.length); i++) {
-			const cmp = a.segs[i].localeCompare(b.segs[i], undefined, {
-				numeric: true,
-			});
+			const cmp = compareSegment(a.segs[i], b.segs[i]);
 			if (cmp !== 0) return cmp;
 		}
 		if (a.segs.length !== b.segs.length) {
@@ -226,15 +248,19 @@ function orderTasks(tasks: Task[], grouped: boolean): Task[] {
 	return annotated.map((a) => a.t);
 }
 
-// Indices where the *first segment* of the dotted key changes between
-// adjacent tasks. Used to draw a heavier border between groups on the
-// matrix axes. The 0th index is never a boundary (no preceding row).
-function computeGroupBoundaries(tasks: Task[]): Set<number> {
+// Indices where the *top-level* group (first WBS segment) changes between
+// adjacent tasks. Used to draw a heavier border between groups on the matrix
+// axes. The 0th index is never a boundary (no preceding row). Compares the
+// first segment as a string so non-numeric overrides bucket correctly.
+function computeGroupBoundaries(
+	tasks: Task[],
+	numbers: Record<string, string>,
+): Set<number> {
 	const out = new Set<number>();
+	const firstSeg = (id: string): string =>
+		numberSegments(numbers[id] ?? "")[0] ?? "";
 	for (let i = 1; i < tasks.length; i++) {
-		const prev = parseKeySegments(tasks[i - 1].key)[0] ?? "";
-		const curr = parseKeySegments(tasks[i].key)[0] ?? "";
-		if (prev !== curr) out.add(i);
+		if (firstSeg(tasks[i - 1].id) !== firstSeg(tasks[i].id)) out.add(i);
 	}
 	return out;
 }
@@ -266,7 +292,7 @@ function MatrixHeader({
 					title={
 						grouped
 							? "Stop grouping; restore alphabetical order"
-							: "Sort tasks by their dotted key and draw group boundaries"
+							: "Sort tasks by their WBS number and draw group boundaries"
 					}
 				>
 					<LayersIcon className="size-3.5" />

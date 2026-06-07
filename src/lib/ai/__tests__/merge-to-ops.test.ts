@@ -27,7 +27,6 @@ function leaf(id: string, title: string, e?: Estimate): Task {
 		id,
 		kind: "task",
 		title,
-		parentId: null,
 		estimate: e ?? est(1, 2, 3),
 	};
 }
@@ -77,7 +76,6 @@ describe("mergeSelectionToOps", () => {
 			id: "C",
 			kind: "task",
 			title: "Charlie",
-			parentId: null,
 			estimate: est(2, 4, 6),
 			notes: "added on branch",
 			status: "in_progress",
@@ -113,6 +111,28 @@ describe("mergeSelectionToOps", () => {
 		const ops = mergeSelectionToOps(resolveAll(merge.changes, "branch"));
 		expect(ops).toEqual([{ op: "remove_task", taskId: "B" }]);
 	});
+
+	it("translates a groupId change into move_task_to_group", () => {
+		const base = build(leaf("A", "Alpha"));
+		const main = clone(base);
+		const branch = build({ ...leaf("A", "Alpha"), groupId: "g1" });
+		const merge = computeMerge({ base, main, branch });
+		const ops = mergeSelectionToOps(resolveAll(merge.changes, "branch"));
+		expect(ops).toEqual([
+			{ op: "move_task_to_group", taskId: "A", groupId: "g1" },
+		]);
+	});
+
+	it("translates a numberOverride change into set_task_number", () => {
+		const base = build(leaf("A", "Alpha"));
+		const main = clone(base);
+		const branch = build({ ...leaf("A", "Alpha"), numberOverride: "M1.A" });
+		const merge = computeMerge({ base, main, branch });
+		const ops = mergeSelectionToOps(resolveAll(merge.changes, "branch"));
+		expect(ops).toEqual([
+			{ op: "set_task_number", taskId: "A", number: "M1.A" },
+		]);
+	});
 });
 
 // Build a dependency. Default finish-to-start, the same shape addDependency
@@ -137,12 +157,8 @@ function withDeps(doc: PertDoc, ...deps: Dependency[]): PertDoc {
 	return doc;
 }
 
-function container(id: string, title: string): Task {
-	return { id, kind: "container", title, parentId: null };
-}
-
-function child(id: string, title: string, parentId: string): Task {
-	return { id, kind: "task", title, parentId, estimate: est(1, 2, 3) };
+function child(id: string, title: string, groupId: string): Task {
+	return { id, kind: "task", title, groupId, estimate: est(1, 2, 3) };
 }
 
 // Asserts no dependency in the doc points at a task that no longer exists — the
@@ -222,28 +238,21 @@ describe("planMergeOps", () => {
 		expect(r.dropped).toEqual([]);
 	});
 
-	it("drops set_dependency/pin_dependency follow-ups orphaned by a dropped add", () => {
+	it("drops set_dependency follow-ups orphaned by a dropped add", () => {
 		const doc = build(leaf("A", "Alpha")); // no B → the add can't land
 		const ops: EditOp[] = [
 			{ op: "add_dependency", id: "ab", fromTaskId: "A", toTaskId: "B" },
 			{ op: "set_dependency", dependencyId: "ab", lagDays: 5 },
-			{
-				op: "pin_dependency",
-				dependencyId: "ab",
-				side: "from",
-				interfaceId: "i1",
-			},
 		];
 		const r = planMergeOps(ops, doc);
 		expect(r.ops).toEqual([]);
 		expect(r.dropped.map((o) => o.op)).toEqual([
 			"add_dependency",
 			"set_dependency",
-			"pin_dependency",
 		]);
 	});
 
-	it("keeps set_dependency/pin_dependency follow-ups when the add lands", () => {
+	it("keeps set_dependency follow-ups when the add lands", () => {
 		const doc = build(leaf("A", "Alpha"), leaf("B", "Beta"));
 		const ops: EditOp[] = [
 			{ op: "add_dependency", id: "ab", fromTaskId: "A", toTaskId: "B" },
@@ -254,7 +263,7 @@ describe("planMergeOps", () => {
 		expect(r.dropped).toEqual([]);
 	});
 
-	it("drops set_dependency/pin_dependency when remove_task cascades the dep", () => {
+	it("drops set_dependency when remove_task cascades the dep", () => {
 		const doc = withDeps(
 			build(leaf("A", "Alpha"), leaf("B", "Beta")),
 			dep("ab", "A", "B"),
@@ -354,24 +363,24 @@ describe("dropped-task merges", () => {
 		expectNoDanglingDeps(applied);
 	});
 
-	// 4. Branch drops a container; its children are re-parented to the root.
-	it("merges a dropped container and keeps its re-parented children", () => {
-		const base = build(
-			container("P", "Parent"),
-			child("A", "Alpha", "P"),
-			child("B", "Beta", "P"),
-		);
+	// 4. Branch deletes a group; its members are ungrouped. The merge sees this
+	// as a groupId field change on each member (groups themselves aren't diffed).
+	it("merges members ungrouped on the branch via move_task_to_group", () => {
+		const base = build(child("A", "Alpha", "P"), child("B", "Beta", "P"));
 		const main = clone(base);
-		// Deleting P in the branch re-parents the children to null.
+		// Deleting group P in the branch ungroups the members (groupId → null).
 		const branch = build(
-			{ ...child("A", "Alpha", "P"), parentId: null },
-			{ ...child("B", "Beta", "P"), parentId: null },
+			{ ...child("A", "Alpha", "P"), groupId: null },
+			{ ...child("B", "Beta", "P"), groupId: null },
 		);
-		const { applied, results } = runMerge(base, main, branch);
+		const { ops, applied, results } = runMerge(base, main, branch);
+		expect(ops).toEqual([
+			{ op: "move_task_to_group", taskId: "A", groupId: null },
+			{ op: "move_task_to_group", taskId: "B", groupId: null },
+		]);
 		expect(results.every((r) => r.ok)).toBe(true);
-		expect(applied.tasksById.P).toBeUndefined();
-		expect(applied.tasksById.A.parentId).toBeNull();
-		expect(applied.tasksById.B.parentId).toBeNull();
+		expect(applied.tasksById.A.groupId).toBeNull();
+		expect(applied.tasksById.B.groupId).toBeNull();
 	});
 
 	// 5. Both sides dropped the same task — a no-op merge.

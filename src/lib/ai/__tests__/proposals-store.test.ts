@@ -17,14 +17,12 @@ function seed(): PertDoc {
 		id: "A",
 		kind: "task",
 		title: "A",
-		parentId: null,
 		estimate: { optimistic: 1, mostLikely: 2, pessimistic: 3, unit: "day" },
 	};
 	d.tasksById.B = {
 		id: "B",
 		kind: "task",
 		title: "B",
-		parentId: null,
 		estimate: { optimistic: 2, mostLikely: 4, pessimistic: 6, unit: "day" },
 	};
 	return d;
@@ -240,17 +238,16 @@ describe("proposals store", () => {
 		expect(live.tasksById.A.title).toBe("A"); // other rows untouched
 	});
 
-	it("applyProposalRow copies the interface bucket when an added task is a container", () => {
+	it("applyProposalRow copies the group an added task belongs to", () => {
 		const live = seed();
 		const ops: EditOp[] = [
-			{ op: "add_task", id: "C", title: "Container", kind: "container" },
+			{ op: "create_group", id: "G", name: "Backend" },
+			{ op: "add_task", id: "C", title: "Leaf", groupId: "G" },
 		];
 		const { proposal } = createProposal(live, "test", ops);
-		// applyOperations seeded default Entry/Exit interfaces on the proposed
-		// doc — sanity-check that.
-		expect(
-			Object.keys(proposal.proposedDoc.interfacesByContainerId.C ?? {}),
-		).not.toHaveLength(0);
+		// The proposed doc has the group + grouped task.
+		expect(proposal.proposedDoc.groupsById.G).toBeDefined();
+		expect(proposal.proposedDoc.tasksById.C.groupId).toBe("G");
 
 		const changeDoc = (mutate: (d: PertDoc) => void) => mutate(live);
 		applyProposalRow(
@@ -258,23 +255,19 @@ describe("proposals store", () => {
 			{ type: "task-added", taskId: "C" },
 			changeDoc,
 		);
-		expect(live.tasksById.C?.kind).toBe("container");
-		expect(Object.keys(live.interfacesByContainerId.C ?? {})).not.toHaveLength(
-			0,
-		);
+		expect(live.tasksById.C?.groupId).toBe("G");
+		// The group came along so the task isn't orphaned from a missing group.
+		expect(live.groupsById.G?.name).toBe("Backend");
 	});
 
-	it("applyProposalRow drops the interface bucket when removing a container", () => {
+	it("applyProposalRow removes a task and its touching deps", () => {
 		const live = seed();
-		// Promote A to a container with interfaces, then propose removing it.
-		live.tasksById.A.kind = "container";
-		live.interfacesByContainerId.A = {
-			if_default: {
-				id: "if_default",
-				containerId: "A",
-				kind: "entry",
-				label: "input",
-			},
+		// A has an outgoing dependency; proposing its removal should cascade.
+		live.dependenciesById.ab = {
+			id: "ab",
+			from: { taskId: "A", port: "finish" },
+			to: { taskId: "B", port: "start" },
+			type: "finish_to_start",
 		};
 		const ops: EditOp[] = [{ op: "remove_task", taskId: "A" }];
 		const { proposal } = createProposal(live, "test", ops);
@@ -285,7 +278,7 @@ describe("proposals store", () => {
 			changeDoc,
 		);
 		expect(live.tasksById.A).toBeUndefined();
-		expect(live.interfacesByContainerId.A).toBeUndefined();
+		expect(live.dependenciesById.ab).toBeUndefined();
 	});
 
 	it("applyProposalRow refuses to apply a dependency row whose endpoints aren't present yet", () => {
@@ -320,44 +313,40 @@ describe("proposals store", () => {
 		expect(live.dependenciesById.ca?.from.taskId).toBe("C");
 	});
 
-	it("applyProposalRow pulls in missing ancestor containers when applying a nested added task", () => {
+	it("applyProposalRow pulls in a missing ancestor group when applying a nested added task", () => {
 		const live = seed();
 		const ops: EditOp[] = [
-			{ op: "add_task", id: "phase", title: "Phase 1", kind: "container" },
-			{ op: "add_task", id: "child", title: "Wireframes", parentId: "phase" },
+			{ op: "create_group", id: "phase", name: "Phase 1" },
+			{ op: "add_task", id: "child", title: "Wireframes", groupId: "phase" },
 		];
 		const { proposal } = createProposal(live, "test", ops);
 		const changeDoc = (mutate: (d: PertDoc) => void) => mutate(live);
 		// Apply ONLY the child row — before the fix this landed the child with
-		// a dangling parentId, making it invisible on the nested canvas.
+		// a dangling groupId, making it render ungrouped.
 		applyProposalRow(
 			proposal.id,
 			{ type: "task-added", taskId: "child" },
 			changeDoc,
 		);
 		expect(live.tasksById.child).toBeDefined();
-		expect(live.tasksById.child.parentId).toBe("phase");
-		// The ancestor container came along, including its interface bucket.
-		expect(live.tasksById.phase?.kind).toBe("container");
-		expect(
-			Object.keys(live.interfacesByContainerId.phase ?? {}),
-		).not.toHaveLength(0);
-		// The diff refresh consumed both rows → proposal evicted.
+		expect(live.tasksById.child.groupId).toBe("phase");
+		// The group came along.
+		expect(live.groupsById.phase?.name).toBe("Phase 1");
+		// The diff refresh consumed the remaining rows → proposal evicted.
 		expect(getProposal(proposal.id)).toBeNull();
 	});
 
-	it("applyProposalRow pulls in a multi-level ancestor chain", () => {
+	it("applyProposalRow pulls in a multi-level ancestor group chain", () => {
 		const live = seed();
 		const ops: EditOp[] = [
-			{ op: "add_task", id: "outer", title: "Outer", kind: "container" },
+			{ op: "create_group", id: "outer", name: "Outer" },
 			{
-				op: "add_task",
+				op: "create_group",
 				id: "inner",
-				title: "Inner",
-				kind: "container",
-				parentId: "outer",
+				name: "Inner",
+				parentGroupId: "outer",
 			},
-			{ op: "add_task", id: "leaf", title: "Leaf", parentId: "inner" },
+			{ op: "add_task", id: "leaf", title: "Leaf", groupId: "inner" },
 		];
 		const { proposal } = createProposal(live, "test", ops);
 		const changeDoc = (mutate: (d: PertDoc) => void) => mutate(live);
@@ -366,24 +355,23 @@ describe("proposals store", () => {
 			{ type: "task-added", taskId: "leaf" },
 			changeDoc,
 		);
-		expect(live.tasksById.leaf?.parentId).toBe("inner");
-		expect(live.tasksById.inner?.parentId).toBe("outer");
-		expect(live.tasksById.outer?.parentId).toBeNull();
+		expect(live.tasksById.leaf?.groupId).toBe("inner");
+		expect(live.groupsById.inner?.parentGroupId).toBe("outer");
+		expect(live.groupsById.outer?.parentGroupId).toBeNull();
 	});
 
-	it("applyProposalRow refuses a dependency whose endpoint has become a container since the proposal was staged", () => {
+	it("applyProposalRow refuses a dependency whose endpoint task has been removed since staging", () => {
 		const live = seed();
-		// Stage a normal dep against a live doc where both endpoints are
-		// leaf tasks — proposal validates and stores it.
+		// Stage a normal dep against a live doc where both endpoints exist —
+		// proposal validates and stores it.
 		const ops: EditOp[] = [
 			{ op: "add_dependency", fromTaskId: "A", toTaskId: "B", id: "ab" },
 		];
 		const { proposal } = createProposal(live, "test", ops);
 		expect(proposal.proposedDoc.dependenciesById.ab).toBeDefined();
-		// But between staging and apply, someone promoted A to a container.
-		// The apply-row guard refuses the dep because container endpoints
-		// aren't valid in this model — matching addDependencyMutation.
-		live.tasksById.A.kind = "container";
+		// But between staging and apply, someone deleted task A. The apply-row
+		// guard refuses the dep because its endpoint no longer exists.
+		delete live.tasksById.A;
 		const changeDoc = (mutate: (d: PertDoc) => void) => mutate(live);
 		applyProposalRow(
 			proposal.id,

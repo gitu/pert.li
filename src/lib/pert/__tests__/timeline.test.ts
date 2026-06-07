@@ -26,7 +26,7 @@ function leaf(
 	title: string,
 	e: Estimate | undefined = est(1, 2, 3),
 ): Task {
-	return { id, kind: "task", title, parentId: null, estimate: e };
+	return { id, kind: "task", title, estimate: e };
 }
 
 describe("buildTimelineModel", () => {
@@ -76,12 +76,19 @@ describe("buildTimelineModel", () => {
 		expect(model.lanes.map((l) => l.taskId)).toEqual(["A", "B", "Z"]);
 	});
 
-	it("hides containers and includes milestones", () => {
-		const doc = build(
-			leaf("L", "Leaf"),
-			{ id: "M", kind: "milestone", title: "Mile", parentId: null },
-			{ id: "C", kind: "container", title: "Group", parentId: null },
-		);
+	it("includes both tasks and milestones; groups produce no lanes", () => {
+		const doc = build(leaf("L", "Leaf"), {
+			id: "M",
+			kind: "milestone",
+			title: "Mile",
+		});
+		// A group is not a task — it never shows up as a timeline lane.
+		doc.groupsById.g = {
+			id: "g",
+			name: "Group",
+			parentGroupId: null,
+			order: 0,
+		};
 		const model = buildTimelineModel(doc, computeSchedule(doc));
 		const kinds = model.lanes.map((l) => l.kind).sort();
 		expect(kinds).toEqual(["milestone", "task"]);
@@ -92,22 +99,27 @@ describe("buildTimelineModel", () => {
 			id: "M",
 			kind: "milestone",
 			title: "Kickoff",
-			parentId: null,
 		});
 		const model = buildTimelineModel(doc, computeSchedule(doc));
 		expect(model.axisMax).toBe(1);
 		expect(model.projectDuration).toBe(0);
 	});
 
-	it("carries the task key through onto the lane (omitted when blank)", () => {
-		const a: Task = { ...leaf("A", "A"), key: "M1.A" };
+	it("carries the task's groupId through onto the lane (omitted when ungrouped)", () => {
+		const a: Task = { ...leaf("A", "A"), groupId: "g1" };
 		const b: Task = leaf("B", "B");
 		const doc = build(a, b);
+		doc.groupsById.g1 = {
+			id: "g1",
+			name: "Group 1",
+			parentGroupId: null,
+			order: 0,
+		};
 		const model = buildTimelineModel(doc, computeSchedule(doc));
 		const laneA = model.lanes.find((l) => l.taskId === "A");
 		const laneB = model.lanes.find((l) => l.taskId === "B");
-		expect(laneA?.key).toBe("M1.A");
-		expect(laneB?.key).toBeUndefined();
+		expect(laneA?.groupId).toBe("g1");
+		expect(laneB?.groupId).toBeUndefined();
 	});
 
 	it("forwards critical flag from the schedule", () => {

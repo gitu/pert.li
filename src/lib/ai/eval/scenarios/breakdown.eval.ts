@@ -23,9 +23,7 @@ describe.skipIf(!isProviderConfigured())("eval: project breakdown", () => {
 				});
 
 				assertValidArgs(run);
-				const tasks = Object.values(run.finalDoc.tasksById).filter(
-					(t) => t.kind !== "container",
-				).length;
+				const tasks = Object.keys(run.finalDoc.tasksById).length;
 				const deps = Object.keys(run.finalDoc.dependenciesById).length;
 				return tasks >= 3 && deps >= 1;
 			},

@@ -9,13 +9,13 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "#/components/ui/button";
+import {
+	buildGroupTree,
+	countRowsInGroup,
+	type KeyGroupNode,
+} from "#/lib/pert/group-tree";
 import { computeSchedule } from "#/lib/pert/schedule";
 import { selectionStore, selectTask } from "#/lib/pert/store";
-import {
-	countRowsInGroup,
-	groupTasksByKey,
-	type KeyGroupNode,
-} from "#/lib/pert/task-key";
 import {
 	buildTimelineModel,
 	type TimelineLane,
@@ -61,13 +61,13 @@ export function TimelineView({ projectId, doc }: TimelineViewProps) {
 		s.projectId === projectId ? s.taskId : null,
 	);
 
-	// Optional grouping: nests lanes under header rows derived from each
-	// task's dotted key (M1, M1.API, M1.API.foo …). Off by default so the
-	// strip stays time-ordered for users who don't use keys.
+	// Optional grouping: nests lanes under header rows for the group each task
+	// belongs to. Off by default so the strip stays time-ordered for users who
+	// don't use groups.
 	const [grouped, setGrouped] = useState(false);
 	const rows = useMemo(
-		() => buildRows(model.lanes, grouped),
-		[model.lanes, grouped],
+		() => buildRows(doc, model.lanes, grouped),
+		[doc, model.lanes, grouped],
 	);
 
 	const scrollRef = useRef<HTMLDivElement>(null);
@@ -121,7 +121,7 @@ export function TimelineView({ projectId, doc }: TimelineViewProps) {
 						title={
 							grouped
 								? "Stop grouping; restore start-day order"
-								: "Nest lanes under headers derived from their dotted keys"
+								: "Nest lanes under headers for the group each task belongs to"
 						}
 					>
 						<LayersIcon className="size-3.5" />
@@ -225,6 +225,7 @@ type HeaderRow = {
 	type: "header";
 	depth: number;
 	label: string;
+	number: string;
 	path: string;
 	count: number;
 };
@@ -237,14 +238,18 @@ type TimelineRow = HeaderRow | LaneRow;
 
 // When grouping is off we still want a single LaneRow per lane (depth 0,
 // no headers) so the renderer can stay row-list-driven. When grouping is on
-// we delegate to `groupTasksByKey` (the same helper the table uses) and
+// we delegate to `buildGroupTree` (the same helper the table uses) and
 // flatten the resulting tree depth-first: header for the group, then its
 // own rows, then recurse into children.
-function buildRows(lanes: TimelineLane[], grouped: boolean): TimelineRow[] {
+function buildRows(
+	doc: PertDoc,
+	lanes: TimelineLane[],
+	grouped: boolean,
+): TimelineRow[] {
 	if (!grouped) {
 		return lanes.map((lane) => ({ type: "lane", depth: 0, lane }));
 	}
-	const tree = groupTasksByKey(lanes);
+	const tree = buildGroupTree(doc, lanes);
 	const rows: TimelineRow[] = [];
 	for (const node of tree) flattenNode(node, 0, rows);
 	return rows;
@@ -259,6 +264,7 @@ function flattenNode(
 		type: "header",
 		depth,
 		label: node.label,
+		number: node.number,
 		path: node.path,
 		count: countRowsInGroup(node),
 	});
@@ -471,7 +477,7 @@ function HeaderLabel({ row }: { row: HeaderRow }) {
 			style={{ height: HEADER_HEIGHT, paddingLeft: 8 + indent }}
 		>
 			<span className="truncate font-mono normal-case tracking-normal">
-				{row.label}
+				{row.number ? `${row.number} ${row.label}` : row.label}
 			</span>
 			<span className="text-muted-foreground/70">({row.count})</span>
 		</div>

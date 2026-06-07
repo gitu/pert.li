@@ -15,9 +15,8 @@ const RULES: Rule[] = [
 		message: "A task can't depend on itself.",
 	},
 	{
-		test: /cannot depend (?:on|from) container/i,
-		message:
-			"You can't link directly to a container — pick a specific task inside it.",
+		test: /would create a group cycle/i,
+		message: "A group can't be nested inside itself or one of its descendants.",
 	},
 	{
 		test: /would create a cycle|is a cycle|cycle in the hierarchy/i,
@@ -38,20 +37,12 @@ const RULES: Rule[] = [
 		message: "Something with that id already exists.",
 	},
 	{
-		test: /(?:is not a container|not a container)/i,
-		message: "That target isn't a container.",
-	},
-	{
-		test: /\bcontainer .* not found|parent .* not found/i,
-		message: "I couldn't find that container — it may have been deleted.",
+		test: /\bgroup .* not found/i,
+		message: "I couldn't find that group — it may have been deleted.",
 	},
 	{
 		test: /\bdependency .* not found/i,
 		message: "That dependency no longer exists.",
-	},
-	{
-		test: /\binterface .* not found/i,
-		message: "That connection point no longer exists.",
 	},
 	{
 		test: /\bstep .* not found|step \d+ has an empty title/i,

@@ -458,8 +458,8 @@ function compareEntitiesAsFields(
 		for (const f of [
 			"title",
 			"kind",
-			"parentId",
-			"key",
+			"groupId",
+			"numberOverride",
 			"estimate",
 			"notes",
 			"status",
@@ -496,20 +496,6 @@ function compareEntitiesAsFields(
 		const mt = m.to.taskId ?? null;
 		if (bt !== mt) {
 			out.push({ field: "toTaskId", branchValue: bt, mainValue: mt });
-		}
-		const bfi = b.from.interfaceId ?? null;
-		const mfi = m.from.interfaceId ?? null;
-		if (bfi !== mfi) {
-			out.push({
-				field: "fromInterfaceId",
-				branchValue: bfi,
-				mainValue: mfi,
-			});
-		}
-		const bti = b.to.interfaceId ?? null;
-		const mti = m.to.interfaceId ?? null;
-		if (bti !== mti) {
-			out.push({ field: "toInterfaceId", branchValue: bti, mainValue: mti });
 		}
 	}
 	return out;

@@ -1,24 +1,25 @@
+import { newGroupId } from "#/lib/pert/group-mutations";
 import type { PertDoc } from "#/lib/pert/types";
 import { type EditOp, editOpSchema } from "./operations";
 import {
 	addDependencyMutation,
-	addInterfaceMutation,
 	addTaskMutation,
-	moveTaskMutation,
+	assignTaskToGroupMutation,
+	createGroupMutation,
+	deleteGroupMutation,
 	newId,
-	pinDependencyMutation,
 	removeDependencyMutation,
-	removeInterfaceMutation,
 	removeTaskMutation,
+	renameGroupMutation,
 	setActualDatesMutation,
 	setDependencyMutation,
 	setEstimateMutation,
-	setInterfaceMutation,
-	setKeyMutation,
+	setGroupParentMutation,
 	setKindMutation,
 	setNotesMutation,
 	setProgressMutation,
 	setStatusMutation,
+	setTaskNumberMutation,
 	setTitleMutation,
 } from "./tool-mutators";
 
@@ -53,60 +54,48 @@ export function applyOperations(doc: PertDoc, ops: EditOp[]): OpResult[] {
 			doc.dependenciesById[op.id]
 		) {
 			remap.set(op.id, newId("dep"));
+		} else if (op.op === "create_group" && op.id && doc.groupsById[op.id]) {
+			remap.set(op.id, newGroupId());
 		}
 	}
 	const remapped = remap.size > 0 ? ops.map((op) => remapOp(op, remap)) : ops;
 
-	// Pre-scan 2: container ids this batch will add. add_task ops may
-	// forward-reference them as parentId (children are often emitted before
-	// their parent container).
-	const pendingContainerIds = new Set<string>();
+	// Pre-scan 2: group ids this batch will create. add_task / move_task_to_group
+	// ops may forward-reference them as groupId (a group's tasks are often
+	// emitted before, or after, the create_group op).
+	const pendingGroupIds = new Set<string>();
 	for (const op of remapped) {
 		if (op == null || typeof op !== "object") continue;
-		if (op.op === "add_task" && op.id && (op.kind ?? "task") === "container") {
-			pendingContainerIds.add(op.id);
-		}
+		if (op.op === "create_group" && op.id) pendingGroupIds.add(op.id);
 	}
 
 	const results: OpResult[] = [];
 	for (let i = 0; i < remapped.length; i++) {
-		results.push(runOpSafe(doc, remapped[i], i, pendingContainerIds));
+		results.push(runOpSafe(doc, remapped[i], i, pendingGroupIds));
 	}
 
-	// Post-batch normalisation: a task whose parent op failed (or whose
-	// forward references form a cycle) would be invisible on the nested
-	// canvas. Re-root it instead so the user still sees what was added.
-	const addedTaskIds: string[] = [];
+	// Post-batch normalisation: a task that forward-referenced a group whose
+	// create_group op ultimately failed would carry a dangling groupId. The
+	// renderers treat that as ungrouped already, but clear it so the doc stays
+	// clean. We key off the RESULTS (every successful add_task reports its id,
+	// whether explicit or generated) so default-id tasks are covered too.
 	for (let i = 0; i < remapped.length; i++) {
 		const op = remapped[i];
+		if (op == null || typeof op !== "object" || op.op !== "add_task") continue;
 		const r = results[i];
-		if (op == null || typeof op !== "object") continue;
-		if (op.op === "add_task" && r.ok && r.id) addedTaskIds.push(r.id);
-	}
-	for (const id of addedTaskIds) {
-		const task = doc.tasksById[id];
+		if (!r.ok || !r.id) continue;
+		const task = doc.tasksById[r.id];
 		if (!task) continue;
-		if (hasBrokenParentChain(doc, id)) task.parentId = null;
+		const gid = task.groupId ?? null;
+		if (gid && !doc.groupsById[gid]) {
+			// Ungroup it — and drop the now-meaningless ordering, matching
+			// assignTaskToGroupMutation's ungroup behaviour.
+			task.groupId = null;
+			delete task.order;
+		}
 	}
 
 	return results;
-}
-
-// Walks parentId up from `id`; broken = a missing ancestor, a cycle, or an
-// ancestor that isn't a container (possible when a later op in the same batch
-// demotes a parent via set_kind — only containers may have children).
-function hasBrokenParentChain(doc: PertDoc, id: string): boolean {
-	const seen = new Set<string>([id]);
-	let cursor = doc.tasksById[id]?.parentId ?? null;
-	while (cursor) {
-		if (seen.has(cursor)) return true;
-		const parent = doc.tasksById[cursor];
-		if (!parent) return true;
-		if (parent.kind !== "container") return true;
-		seen.add(cursor);
-		cursor = parent.parentId ?? null;
-	}
-	return false;
 }
 
 // Rewrites every entity-id reference in an op through the collision remap.
@@ -124,23 +113,23 @@ function remapOp(op: EditOp, remap: Map<string, string>): EditOp {
 			return {
 				...op,
 				id: op.id ? id(op.id) : op.id,
-				parentId: idOrNull(op.parentId),
+				groupId: idOrNull(op.groupId),
 			};
 		case "remove_task":
 		case "set_title":
 		case "set_kind":
-		case "set_key":
+		case "set_task_number":
 		case "set_notes":
 		case "set_estimate":
 		case "set_status":
 		case "set_progress":
 		case "set_actual_dates":
 			return { ...op, taskId: id(op.taskId) };
-		case "move_task":
+		case "move_task_to_group":
 			return {
 				...op,
 				taskId: id(op.taskId),
-				parentId: op.parentId === null ? null : id(op.parentId),
+				groupId: op.groupId === null ? null : id(op.groupId),
 			};
 		case "add_dependency":
 			return {
@@ -152,21 +141,20 @@ function remapOp(op: EditOp, remap: Map<string, string>): EditOp {
 		case "remove_dependency":
 		case "set_dependency":
 			return { ...op, dependencyId: id(op.dependencyId) };
-		case "pin_dependency":
-			return { ...op, dependencyId: id(op.dependencyId) };
-		case "add_interface":
+		case "create_group":
 			return {
 				...op,
-				containerId: id(op.containerId),
-				taskRef: idOrNull(op.taskRef),
+				id: op.id ? id(op.id) : op.id,
+				parentGroupId: idOrNull(op.parentGroupId),
 			};
-		case "remove_interface":
-			return { ...op, containerId: id(op.containerId) };
-		case "set_interface":
+		case "rename_group":
+		case "delete_group":
+			return { ...op, groupId: id(op.groupId) };
+		case "set_group_parent":
 			return {
 				...op,
-				containerId: id(op.containerId),
-				taskRef: idOrNull(op.taskRef),
+				groupId: id(op.groupId),
+				parentGroupId: op.parentGroupId === null ? null : id(op.parentGroupId),
 			};
 		default:
 			// Object with an unrecognised `op` — leave it for runOpSafe to reject.
@@ -188,7 +176,7 @@ function runOpSafe(
 	doc: PertDoc,
 	op: EditOp,
 	index: number,
-	pendingContainerIds: ReadonlySet<string>,
+	pendingGroupIds: ReadonlySet<string>,
 ): OpResult {
 	// op may be null/primitive (unvalidated client input) — read the
 	// discriminator defensively so this label line never throws.
@@ -212,7 +200,7 @@ function runOpSafe(
 		};
 	}
 	try {
-		return runOp(doc, parsed.data, index, pendingContainerIds);
+		return runOp(doc, parsed.data, index, pendingGroupIds);
 	} catch (err) {
 		const message =
 			err instanceof Error ? err.message : `non-Error thrown: ${String(err)}`;
@@ -224,7 +212,7 @@ function runOp(
 	doc: PertDoc,
 	op: EditOp,
 	index: number,
-	pendingContainerIds: ReadonlySet<string>,
+	pendingGroupIds: ReadonlySet<string>,
 ): OpResult {
 	switch (op.op) {
 		case "add_task": {
@@ -233,11 +221,11 @@ function runOp(
 				{
 					title: op.title,
 					kind: op.kind,
-					parentId: op.parentId,
+					groupId: op.groupId,
 					estimate: op.estimate,
 				},
 				op.id,
-				{ pendingContainerIds },
+				{ pendingGroupIds },
 			);
 			if ("id" in r) return { op: op.op, index, ok: true, id: r.id };
 			return { op: op.op, index, ok: false, error: r.error };
@@ -254,8 +242,11 @@ function runOp(
 			const r = setKindMutation(doc, { taskId: op.taskId, kind: op.kind });
 			return toResult(op.op, index, r);
 		}
-		case "set_key": {
-			const r = setKeyMutation(doc, { taskId: op.taskId, key: op.key });
+		case "set_task_number": {
+			const r = setTaskNumberMutation(doc, {
+				taskId: op.taskId,
+				number: op.number,
+			});
 			return toResult(op.op, index, r);
 		}
 		case "set_notes": {
@@ -294,10 +285,10 @@ function runOp(
 			});
 			return toResult(op.op, index, r);
 		}
-		case "move_task": {
-			const r = moveTaskMutation(doc, {
+		case "move_task_to_group": {
+			const r = assignTaskToGroupMutation(doc, {
 				taskId: op.taskId,
-				parentId: op.parentId,
+				groupId: op.groupId,
 			});
 			return toResult(op.op, index, r);
 		}
@@ -328,42 +319,31 @@ function runOp(
 			});
 			return toResult(op.op, index, r);
 		}
-		case "pin_dependency": {
-			const r = pinDependencyMutation(doc, {
-				dependencyId: op.dependencyId,
-				side: op.side,
-				interfaceId: op.interfaceId,
+		case "create_group": {
+			const r = createGroupMutation(doc, {
+				id: op.id,
+				name: op.name,
+				parentGroupId: op.parentGroupId,
 			});
-			return toResult(op.op, index, r);
-		}
-		case "add_interface": {
-			const r = addInterfaceMutation(
-				doc,
-				{
-					containerId: op.containerId,
-					kind: op.kind,
-					label: op.label,
-					taskRef: op.taskRef,
-				},
-				op.id,
-			);
-			if ("id" in r) return { op: op.op, index, ok: true, id: r.id };
+			if (r.ok) return { op: op.op, index, ok: true, id: r.id };
 			return { op: op.op, index, ok: false, error: r.error };
 		}
-		case "remove_interface": {
-			const r = removeInterfaceMutation(doc, {
-				containerId: op.containerId,
-				interfaceId: op.interfaceId,
+		case "rename_group": {
+			const r = renameGroupMutation(doc, {
+				groupId: op.groupId,
+				name: op.name,
 			});
 			return toResult(op.op, index, r);
 		}
-		case "set_interface": {
-			const r = setInterfaceMutation(doc, {
-				containerId: op.containerId,
-				interfaceId: op.interfaceId,
-				label: op.label,
-				taskRef: op.taskRef,
+		case "set_group_parent": {
+			const r = setGroupParentMutation(doc, {
+				groupId: op.groupId,
+				parentGroupId: op.parentGroupId,
 			});
+			return toResult(op.op, index, r);
+		}
+		case "delete_group": {
+			const r = deleteGroupMutation(doc, { groupId: op.groupId });
 			return toResult(op.op, index, r);
 		}
 	}

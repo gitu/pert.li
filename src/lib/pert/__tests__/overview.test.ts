@@ -12,11 +12,11 @@ function task(
 		id,
 		kind: opts.kind ?? "task",
 		title: opts.title ?? id,
-		parentId: opts.parentId ?? null,
+		groupId: opts.groupId ?? null,
 		estimate: opts.estimate,
 		status: opts.status,
 		progress: opts.progress,
-		key: opts.key,
+		numberOverride: opts.numberOverride,
 	};
 }
 
@@ -48,42 +48,36 @@ describe("computeProjectOverview", () => {
 		const o = computeProjectOverview(createEmptyPertDoc("empty"));
 		expect(o.taskCount).toBe(0);
 		expect(o.milestoneCount).toBe(0);
-		expect(o.containerCount).toBe(0);
+		expect(o.groupCount).toBe(0);
 		expect(o.dependencyCount).toBe(0);
-		expect(o.interfaceCount).toBe(0);
 		expect(o.progressPct).toBe(0);
 		expect(o.status).toEqual({ notStarted: 0, inProgress: 0, completed: 0 });
 		expect(o.schedule.ok).toBe(true);
 	});
 
-	it("counts tasks, milestones and containers separately", () => {
+	it("counts tasks, milestones and groups separately", () => {
 		const doc = buildDoc([
-			task("c", { kind: "container" }),
-			task("t1", { estimate: est, parentId: "c" }),
+			task("t1", { estimate: est, groupId: "g" }),
 			task("t2", { estimate: est }),
 			task("m1", { kind: "milestone" }),
 		]);
+		doc.groupsById.g = { id: "g", name: "G", parentGroupId: null, order: 0 };
 		const o = computeProjectOverview(doc);
 		expect(o.taskCount).toBe(2);
 		expect(o.milestoneCount).toBe(1);
-		expect(o.containerCount).toBe(1);
+		expect(o.groupCount).toBe(1);
 	});
 
-	it("counts dependencies and container interfaces", () => {
+	it("counts dependencies", () => {
 		const doc = buildDoc(
 			[task("a", { estimate: est }), task("b", { estimate: est })],
 			[ftsDep("d1", "a", "b")],
 		);
-		doc.interfacesByContainerId.c = {
-			i1: { id: "i1", containerId: "c", kind: "entry", label: "in" },
-			i2: { id: "i2", containerId: "c", kind: "exit", label: "out" },
-		};
 		const o = computeProjectOverview(doc);
 		expect(o.dependencyCount).toBe(1);
-		expect(o.interfaceCount).toBe(2);
 	});
 
-	it("breaks down status across leaf tasks", () => {
+	it("breaks down status across all tasks (tasks + milestones)", () => {
 		const doc = buildDoc([
 			task("a", { estimate: est, status: "completed" }),
 			task("b", { estimate: est, status: "in_progress", progress: 50 }),
@@ -140,7 +134,7 @@ describe("computeProjectOverview", () => {
 	// Property tests — invariants that must hold for any doc.
 	const arbTask = fc.record({
 		id: fc.uuid(),
-		kind: fc.constantFrom<TaskKind>("task", "milestone", "container"),
+		kind: fc.constantFrom<TaskKind>("task", "milestone"),
 		status: fc.constantFrom("not_started", "in_progress", "completed"),
 		progress: fc.integer({ min: 0, max: 100 }),
 	});
@@ -167,9 +161,8 @@ describe("computeProjectOverview", () => {
 				for (const n of [
 					o.taskCount,
 					o.milestoneCount,
-					o.containerCount,
+					o.groupCount,
 					o.dependencyCount,
-					o.interfaceCount,
 				]) {
 					expect(n).toBeGreaterThanOrEqual(0);
 				}

@@ -4,9 +4,11 @@
 // a prompt — the server never reconstructs the doc. Bounded so a 5000-task
 // plan can't blow the model's context (and the operator's bill).
 
+import { getChildGroups, getTasksInGroup } from "./hierarchy";
+import { computeNumbering, type NumberingResult } from "./numbering";
 import type { ProjectOverview } from "./overview";
 import { expected, statusOf } from "./schedule";
-import type { PertDoc, Task, TaskId } from "./types";
+import type { GroupId, PertDoc, Task } from "./types";
 
 // Caps. The outline is the unbounded part of the doc, so cap item count, per-
 // title length, and the final string. Exported so the server-side input
@@ -26,7 +28,7 @@ export function buildProjectDigest(
 	lines.push("## Key figures");
 	lines.push(`- Tasks: ${overview.taskCount}`);
 	lines.push(`- Milestones: ${overview.milestoneCount}`);
-	lines.push(`- Containers: ${overview.containerCount}`);
+	lines.push(`- Groups: ${overview.groupCount}`);
 	lines.push(`- Dependencies: ${overview.dependencyCount}`);
 	if (overview.schedule.ok) {
 		lines.push(
@@ -49,13 +51,14 @@ export function buildProjectDigest(
 	lines.push("");
 
 	lines.push("## Task outline");
+	const numbers = computeNumbering(doc);
 	const entries = flattenOutline(doc);
-	for (const { task, depth } of entries.slice(0, MAX_OUTLINE_ITEMS)) {
-		lines.push(outlineLine(task, depth));
+	for (const entry of entries.slice(0, MAX_OUTLINE_ITEMS)) {
+		lines.push(outlineLine(entry, numbers));
 	}
 	if (entries.length > MAX_OUTLINE_ITEMS) {
 		lines.push(
-			`…and ${entries.length - MAX_OUTLINE_ITEMS} more tasks (outline truncated)`,
+			`…and ${entries.length - MAX_OUTLINE_ITEMS} more items (outline truncated)`,
 		);
 	}
 
@@ -65,46 +68,61 @@ export function buildProjectDigest(
 		: digest;
 }
 
-// Pre-order traversal (parents before children) with depth, so the outline
-// reads as an indented tree. Top-level items are parentId == null.
-function flattenOutline(doc: PertDoc): Array<{ task: Task; depth: number }> {
-	const byParent = new Map<TaskId | null, Task[]>();
-	for (const t of Object.values(doc.tasksById)) {
-		const key = t.parentId ?? null;
-		const arr = byParent.get(key);
-		if (arr) arr.push(t);
-		else byParent.set(key, [t]);
-	}
-	const out: Array<{ task: Task; depth: number }> = [];
-	const seen = new Set<TaskId>();
-	const walk = (parentId: TaskId | null, depth: number) => {
-		for (const task of byParent.get(parentId) ?? []) {
-			// Guard against a malformed parent cycle (shouldn't happen, but a
-			// digest builder must never infinite-loop).
-			if (seen.has(task.id)) continue;
-			seen.add(task.id);
-			out.push({ task, depth });
-			walk(task.id, depth + 1);
+type OutlineEntry =
+	| { kind: "group"; id: GroupId; name: string; depth: number }
+	| { kind: "task"; task: Task; depth: number };
+
+// Pre-order traversal of the group tree (group header, then its member tasks,
+// then nested groups), so the outline reads as an indented WBS tree. Ungrouped
+// tasks are listed at the root so the digest never silently drops real scope.
+function flattenOutline(doc: PertDoc): OutlineEntry[] {
+	const out: OutlineEntry[] = [];
+	const visited = new Set<GroupId>();
+	const emitGroup = (group: { id: GroupId; name: string }, depth: number) => {
+		visited.add(group.id);
+		out.push({ kind: "group", id: group.id, name: group.name, depth });
+		for (const task of getTasksInGroup(doc, group.id)) {
+			out.push({ kind: "task", task, depth: depth + 1 });
 		}
+		walk(group.id, depth + 1);
 	};
+	function walk(parentGroupId: GroupId | null, depth: number): void {
+		for (const group of getChildGroups(doc, parentGroupId)) {
+			if (visited.has(group.id)) continue; // cycle guard
+			emitGroup(group, depth);
+		}
+	}
 	walk(null, 0);
-	// Promote any task unreachable from the root — a dangling parentId (parent
-	// missing) or a parentId cycle — to the top level, so the digest never
-	// silently drops real scope. Mirrors the orphan handling in layout.ts.
+	// Promote any group unreachable from the root (a parentGroupId cycle) so its
+	// members aren't silently dropped. Sorted for a deterministic digest.
+	const orphans = Object.values(doc.groupsById)
+		.filter((g) => !visited.has(g.id))
+		.sort(
+			(a, b) => (a.order ?? 0) - (b.order ?? 0) || a.id.localeCompare(b.id),
+		);
+	for (const group of orphans) {
+		if (visited.has(group.id)) continue;
+		emitGroup(group, 0);
+	}
+	// Tasks with no group (or a dangling groupId) are listed at the root.
 	for (const task of Object.values(doc.tasksById)) {
-		if (seen.has(task.id)) continue;
-		seen.add(task.id);
-		out.push({ task, depth: 0 });
-		walk(task.id, 1);
+		const gid = task.groupId ?? null;
+		if (gid && doc.groupsById[gid]) continue;
+		out.push({ kind: "task", task, depth: 0 });
 	}
 	return out;
 }
 
-function outlineLine(t: Task, depth: number): string {
-	const indent = "  ".repeat(depth);
+function outlineLine(entry: OutlineEntry, numbers: NumberingResult): string {
+	const indent = "  ".repeat(entry.depth);
+	if (entry.kind === "group") {
+		const number = numbers.groups[entry.id];
+		const prefix = number ? `${number} ` : "";
+		return `${indent}- **${prefix}${clampTitle(entry.name)}**`;
+	}
+	const t = entry.task;
 	const bits: string[] = [];
 	if (t.kind === "milestone") bits.push("milestone");
-	else if (t.kind === "container") bits.push("container");
 	const exp = expected(t.estimate);
 	if (t.kind === "task" && exp > 0) bits.push(`${formatDays(exp)}d`);
 	const status = statusOf(t);
@@ -112,8 +130,9 @@ function outlineLine(t: Task, depth: number): string {
 	else if (status === "in_progress")
 		bits.push(t.progress ? `in progress ${t.progress}%` : "in progress");
 	const suffix = bits.length ? ` (${bits.join(", ")})` : "";
-	const key = t.key ? `[${t.key}] ` : "";
-	return `${indent}- ${key}${clampTitle(t.title)}${suffix}`;
+	const number = numbers.tasks[t.id];
+	const prefix = number ? `${number} ` : "";
+	return `${indent}- ${prefix}${clampTitle(t.title)}${suffix}`;
 }
 
 function clampTitle(title: string): string {

@@ -47,55 +47,55 @@ import { applyProposal, stageProposal } from "#/lib/ai/proposals-store";
 import { withToolLogging } from "#/lib/ai/tool-log";
 import {
 	addDependencyMutation,
-	addInterfaceMutation,
 	addTaskMutation,
+	assignTaskToGroupMutation,
+	createGroupMutation,
+	deleteGroupMutation,
 	listDocuments,
-	moveTaskMutation,
-	pinDependencyMutation,
 	readDocument,
 	removeDependencyMutation,
-	removeInterfaceMutation,
 	removeTaskMutation,
+	renameGroupMutation,
 	setActualDatesMutation,
 	setDependencyMutation,
 	setEstimateMutation,
-	setInterfaceMutation,
-	setKeyMutation,
+	setGroupParentMutation,
 	setKindMutation,
 	setNotesMutation,
 	setProgressMutation,
 	setStatusMutation,
+	setTaskNumberMutation,
 	setTitleMutation,
 	summarizeProject,
 } from "#/lib/ai/tool-mutators";
 import { withInputValidation } from "#/lib/ai/tool-validate";
 import {
 	addDependencyTool,
-	addInterfaceTool,
 	addTaskTool,
 	askChoiceTool,
 	createBranchTool,
+	createGroupTool,
 	createWorkPlanTool,
+	deleteGroupTool,
 	getWorkPlanTool,
 	listDocumentsTool,
 	moveChatTool,
-	moveTaskTool,
-	pinDependencyTool,
+	moveTaskToGroupTool,
 	proposeChangesTool,
 	readDocumentTool,
 	readProjectTool,
 	removeDependencyTool,
-	removeInterfaceTool,
 	removeTaskTool,
+	renameGroupTool,
 	setActualDatesTool,
 	setDependencyTool,
 	setEstimateTool,
-	setInterfaceTool,
-	setKeyTool,
+	setGroupParentTool,
 	setKindTool,
 	setNotesTool,
 	setProgressTool,
 	setStatusTool,
+	setTaskNumberTool,
 	setTitleTool,
 	updateWorkPlanTool,
 } from "#/lib/ai/tools";
@@ -746,12 +746,12 @@ function BoundChatPanel({
 					});
 					return result;
 				}),
-				setKeyTool.client((args) => {
+				setTaskNumberTool.client((args) => {
 					const active = getEditableDoc(projectId);
 					if ("error" in active) return active;
-					let result: ReturnType<typeof setKeyMutation> = { ok: true };
+					let result: ReturnType<typeof setTaskNumberMutation> = { ok: true };
 					active.changeDoc((d) => {
-						result = setKeyMutation(d, args);
+						result = setTaskNumberMutation(d, args);
 					});
 					return result;
 				}),
@@ -764,12 +764,14 @@ function BoundChatPanel({
 					});
 					return result;
 				}),
-				moveTaskTool.client((args) => {
+				moveTaskToGroupTool.client((args) => {
 					const active = getEditableDoc(projectId);
 					if ("error" in active) return active;
-					let result: ReturnType<typeof moveTaskMutation> = { ok: true };
+					let result: ReturnType<typeof assignTaskToGroupMutation> = {
+						ok: true,
+					};
 					active.changeDoc((d) => {
-						result = moveTaskMutation(d, args);
+						result = assignTaskToGroupMutation(d, args);
 					});
 					return result;
 				}),
@@ -809,41 +811,50 @@ function BoundChatPanel({
 					});
 					return result;
 				}),
-				addInterfaceTool.client((args) => {
+				createGroupTool.client((args) => {
 					const active = getEditableDoc(projectId);
 					if ("error" in active) return active;
-					let result: ReturnType<typeof addInterfaceMutation> = { id: "" };
+					let createdId: string | null = null;
+					let error = "no active project";
 					active.changeDoc((d) => {
-						result = addInterfaceMutation(d, args);
+						const r = createGroupMutation(d, args);
+						if (r.ok) createdId = r.id;
+						else error = r.error;
+					});
+					return createdId !== null
+						? { id: createdId }
+						: { ok: false as const, error };
+				}),
+				renameGroupTool.client((args) => {
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
+					let result: ReturnType<typeof renameGroupMutation> = { ok: true };
+					active.changeDoc((d) => {
+						result = renameGroupMutation(d, args);
 					});
 					return result;
 				}),
-				removeInterfaceTool.client((args) => {
+				setGroupParentTool.client((args) => {
 					const active = getEditableDoc(projectId);
 					if ("error" in active) return active;
-					let result: ReturnType<typeof removeInterfaceMutation> = { ok: true };
+					let result: ReturnType<typeof setGroupParentMutation> = { ok: true };
 					active.changeDoc((d) => {
-						result = removeInterfaceMutation(d, args);
+						result = setGroupParentMutation(d, args);
 					});
 					return result;
 				}),
-				setInterfaceTool.client((args) => {
+				deleteGroupTool.client((args) => {
 					const active = getEditableDoc(projectId);
 					if ("error" in active) return active;
-					let result: ReturnType<typeof setInterfaceMutation> = { ok: true };
+					let result: ReturnType<typeof deleteGroupMutation> = {
+						ok: true,
+						promotedTasks: 0,
+						promotedGroups: 0,
+					};
 					active.changeDoc((d) => {
-						result = setInterfaceMutation(d, args);
+						result = deleteGroupMutation(d, args);
 					});
-					return result;
-				}),
-				pinDependencyTool.client((args) => {
-					const active = getEditableDoc(projectId);
-					if ("error" in active) return active;
-					let result: ReturnType<typeof pinDependencyMutation> = { ok: true };
-					active.changeDoc((d) => {
-						result = pinDependencyMutation(d, args);
-					});
-					return result;
+					return result.ok ? { ok: true as const } : result;
 				}),
 				// Branching: forks the bound project via the same server fn as the
 				// "Branch this plan" dialog. Auth/membership checks happen there.

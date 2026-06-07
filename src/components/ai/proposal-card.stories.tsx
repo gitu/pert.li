@@ -17,21 +17,18 @@ function seedDoc(): PertDoc {
 		id: "A",
 		kind: "task",
 		title: "Spike OIDC discovery",
-		parentId: null,
 		estimate: { optimistic: 1, mostLikely: 2, pessimistic: 3, unit: "day" },
 	};
 	d.tasksById.B = {
 		id: "B",
 		kind: "task",
 		title: "Wire callback route",
-		parentId: null,
 		estimate: { optimistic: 1, mostLikely: 2, pessimistic: 4, unit: "day" },
 	};
 	d.tasksById.C = {
 		id: "C",
 		kind: "task",
 		title: "Session refresh",
-		parentId: null,
 		estimate: { optimistic: 2, mostLikely: 3, pessimistic: 5, unit: "day" },
 	};
 	return d;

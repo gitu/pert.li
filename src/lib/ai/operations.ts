@@ -8,7 +8,7 @@ import { z } from "zod";
 // the client builds a "proposed doc" (current cloned + each op applied) to
 // show the user a diff before any of it lands on the live doc.
 
-const taskKindSchema = z.enum(["task", "milestone", "container"]);
+const taskKindSchema = z.enum(["task", "milestone"]);
 const taskStatusSchema = z.enum(["not_started", "in_progress", "completed"]);
 const estimateUnitSchema = z.enum(["hour", "day", "week"]);
 const dependencyTypeSchema = z.enum([
@@ -17,8 +17,6 @@ const dependencyTypeSchema = z.enum([
 	"finish_to_finish",
 	"start_to_finish",
 ]);
-const interfaceKindSchema = z.enum(["entry", "exit"]);
-const dependencySideSchema = z.enum(["from", "to"]);
 
 const estimateSchema = z.object({
 	optimistic: z.number().nonnegative(),
@@ -43,7 +41,7 @@ export const editOpSchema = z.discriminatedUnion("op", [
 		id: z.string().optional(),
 		title: z.string().min(1),
 		kind: taskKindSchema.optional(),
-		parentId: z.string().nullable().optional(),
+		groupId: z.string().nullable().optional(),
 		estimate: estimateSchema.optional(),
 	}),
 	z.object({
@@ -61,9 +59,9 @@ export const editOpSchema = z.discriminatedUnion("op", [
 		kind: taskKindSchema,
 	}),
 	z.object({
-		op: z.literal("set_key"),
+		op: z.literal("set_task_number"),
 		taskId: z.string(),
-		key: z.string().nullable(),
+		number: z.string().nullable(),
 	}),
 	z.object({
 		op: z.literal("set_notes"),
@@ -95,9 +93,9 @@ export const editOpSchema = z.discriminatedUnion("op", [
 		actualFinish: isoDateSchema.nullable().optional(),
 	}),
 	z.object({
-		op: z.literal("move_task"),
+		op: z.literal("move_task_to_group"),
 		taskId: z.string(),
-		parentId: z.string().nullable(),
+		groupId: z.string().nullable(),
 	}),
 	z.object({
 		op: z.literal("add_dependency"),
@@ -117,30 +115,26 @@ export const editOpSchema = z.discriminatedUnion("op", [
 		lagDays: z.number().nullable().optional(),
 	}),
 	z.object({
-		op: z.literal("pin_dependency"),
-		dependencyId: z.string(),
-		side: dependencySideSchema,
-		interfaceId: z.string().nullable(),
-	}),
-	z.object({
-		op: z.literal("add_interface"),
+		op: z.literal("create_group"),
+		// Optional client-provided id so later ops in the same batch (add_task,
+		// move_task_to_group) can reference the group before it's created.
 		id: z.string().optional(),
-		containerId: z.string(),
-		kind: interfaceKindSchema,
-		label: z.string().optional(),
-		taskRef: z.string().nullable().optional(),
+		name: z.string().min(1),
+		parentGroupId: z.string().nullable().optional(),
 	}),
 	z.object({
-		op: z.literal("remove_interface"),
-		containerId: z.string(),
-		interfaceId: z.string(),
+		op: z.literal("rename_group"),
+		groupId: z.string(),
+		name: z.string().min(1),
 	}),
 	z.object({
-		op: z.literal("set_interface"),
-		containerId: z.string(),
-		interfaceId: z.string(),
-		label: z.string().optional(),
-		taskRef: z.string().nullable().optional(),
+		op: z.literal("set_group_parent"),
+		groupId: z.string(),
+		parentGroupId: z.string().nullable(),
+	}),
+	z.object({
+		op: z.literal("delete_group"),
+		groupId: z.string(),
 	}),
 ]);
 

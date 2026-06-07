@@ -1,5 +1,5 @@
 import { useStore } from "@tanstack/react-store";
-import { CircleDotIcon, FolderIcon, ZapIcon } from "lucide-react";
+import { CircleDotIcon, ZapIcon } from "lucide-react";
 import { useMemo } from "react";
 import {
 	buildTaskListRows,
@@ -82,11 +82,11 @@ function TaskCard({
 				<div className="flex items-start gap-2">
 					<KindIcon kind={row.kind} critical={row.critical} />
 					<div className="min-w-0 flex-1">
-						{row.key && (
-							<div className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground">
-								{row.key}
-							</div>
-						)}
+						<div className="text-[10px] font-mono uppercase tracking-wide text-muted-foreground">
+							{row.number || (
+								<span className="text-muted-foreground/60">—</span>
+							)}
+						</div>
 						<div className="truncate text-sm font-medium">
 							{row.title || "Untitled task"}
 						</div>
@@ -112,8 +112,8 @@ function TaskCard({
 }
 
 function KindIcon({ kind, critical }: { kind: TaskKind; critical: boolean }) {
-	if (kind === "container") {
-		return <FolderIcon className="size-4 shrink-0 text-muted-foreground" />;
+	if (kind === "milestone") {
+		return <CircleDotIcon className="size-4 shrink-0 text-muted-foreground" />;
 	}
 	if (critical) return <ZapIcon className="size-4 shrink-0 text-destructive" />;
 	return <CircleDotIcon className="size-4 shrink-0 text-muted-foreground" />;

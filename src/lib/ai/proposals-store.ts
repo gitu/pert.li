@@ -143,11 +143,11 @@ export function stageProposal(
 			ok: false,
 			error:
 				`None of the ${operations.length} operation(s) could be staged: ${reasons}. ` +
-				"Do NOT send probe or placeholder operations — every operation must reference real task ids " +
-				"(from read_project or from ids you assign in this same batch) or create new tasks. " +
-				"Top-level tasks take parentId: null; there is no task id for the project itself. " +
+				"Do NOT send probe or placeholder operations — every operation must reference real task/group ids " +
+				"(from read_project or from ids you assign in this same batch) or create new tasks/groups. " +
+				"Ungrouped tasks take groupId: null; there is no id for the project itself. " +
 				"If you cannot produce the full import as one batch, call add_task directly for each item " +
-				"(containers first, then children using the returned ids as parentId), then add_dependency for the edges.",
+				"(create_group first, then add_task with the returned groupId), then add_dependency for the edges.",
 		};
 	}
 	return { ok: true, proposal, summary };
@@ -235,31 +235,20 @@ function applyRowMutation(
 		const t = source.tasksById[row.taskId];
 		if (!t) return;
 		if (target.tasksById[row.taskId]) return;
-		// Copy the task plus any ancestor containers the live doc doesn't have
-		// yet. Applying a child row before its parent-container row used to
-		// leave the child's parentId dangling, which makes it invisible on the
-		// nested canvas. Pulling the ancestors in keeps the hierarchy intact;
-		// the rebuilt diff drops their rows automatically.
-		copyTaskWithAncestors(target, source, row.taskId);
+		// Copy the task plus the group (and ancestor groups) it belongs to, if
+		// the live doc doesn't have them yet. Applying a task row before its
+		// group exists would otherwise leave the task's groupId dangling (it'd
+		// render ungrouped). Pulling the groups in keeps membership intact; the
+		// rebuilt diff drops any redundant rows automatically.
+		copyTaskAndGroups(target, source, row.taskId);
 		return;
 	}
 	if (row.type === "task-removed") {
-		const wasContainer = target.tasksById[row.taskId]?.kind === "container";
 		delete target.tasksById[row.taskId];
 		for (const [depId, dep] of Object.entries(target.dependenciesById)) {
 			if (dep.from.taskId === row.taskId || dep.to.taskId === row.taskId) {
 				delete target.dependenciesById[depId];
 			}
-		}
-		for (const t of Object.values(target.tasksById)) {
-			if (t.parentId === row.taskId) t.parentId = null;
-		}
-		// Drop any interface bucket the deleted task owned. Leaving it
-		// behind would orphan interface definitions for a container that
-		// no longer exists (or worse, attach them to a future task that
-		// reuses the same id).
-		if (wasContainer || target.interfacesByContainerId[row.taskId]) {
-			delete target.interfacesByContainerId[row.taskId];
 		}
 		return;
 	}
@@ -278,9 +267,8 @@ function applyRowMutation(
 		}
 		// Guard against partial-apply order: if the user applies a
 		// dependency row before its prerequisite task-added rows, copying
-		// the dep verbatim would point it at tasks that don't exist on
-		// the live doc (or at a container endpoint, which addDependency
-		// rejects). Drop the row silently — the diff will keep showing it
+		// the dep verbatim would point it at tasks that don't exist on the
+		// live doc. Drop the row silently — the diff will keep showing it
 		// until the prerequisites land, then a second click applies it.
 		if (
 			!endpointValid(target, src.from.taskId) ||
@@ -295,45 +283,35 @@ function applyRowMutation(
 	}
 }
 
-// Copies a task from the proposed doc onto the live doc, walking parentId up
-// and copying any ancestor (plus its interface bucket — containers without
-// their Entry/Exit ports would render portless and break pinned deps) that the
-// live doc is missing. Cycle-protected via the `seen` set.
-function copyTaskWithAncestors(
+// Copies a task from the proposed doc onto the live doc, plus the group it
+// belongs to and that group's ancestor groups (so the task doesn't land
+// orphaned from a group the live doc is missing). Cycle-protected via `seen`.
+function copyTaskAndGroups(
 	target: PertDoc,
 	source: PertDoc,
 	taskId: string,
 ): void {
+	const src = source.tasksById[taskId];
+	if (!src) return;
+	if (!target.tasksById[taskId]) {
+		target.tasksById[taskId] = JSON.parse(JSON.stringify(src)) as Task;
+	}
 	const seen = new Set<string>();
-	let cursor: string | null = taskId;
+	let cursor: string | null = src.groupId ?? null;
 	while (cursor && !seen.has(cursor)) {
 		seen.add(cursor);
-		const src: Task | undefined = source.tasksById[cursor];
-		if (!src) break;
-		if (!target.tasksById[cursor]) {
-			target.tasksById[cursor] = JSON.parse(JSON.stringify(src)) as Task;
-			if (src.kind === "container") {
-				const sourceBucket = source.interfacesByContainerId[cursor];
-				if (sourceBucket) {
-					target.interfacesByContainerId[cursor] = JSON.parse(
-						JSON.stringify(sourceBucket),
-					);
-				}
-			}
+		const g = source.groupsById[cursor];
+		if (!g) break;
+		if (!target.groupsById[cursor]) {
+			target.groupsById[cursor] = JSON.parse(JSON.stringify(g));
 		}
-		cursor = src.parentId ?? null;
+		cursor = g.parentGroupId ?? null;
 	}
 }
 
 function endpointValid(doc: PertDoc, taskId: string | undefined): boolean {
 	if (!taskId) return false;
-	const task = doc.tasksById[taskId];
-	if (!task) return false;
-	// Container endpoints aren't valid dep targets in this app's model —
-	// addDependencyMutation rejects them. Mirror that here so user-applied
-	// dep rows don't get into a state the rest of the app considers
-	// invalid.
-	return task.kind !== "container";
+	return Boolean(doc.tasksById[taskId]);
 }
 
 function copyTaskField(dst: Task, src: Task, field: string): void {
@@ -344,12 +322,12 @@ function copyTaskField(dst: Task, src: Task, field: string): void {
 		case "kind":
 			dst.kind = src.kind;
 			return;
-		case "parentId":
-			dst.parentId = src.parentId ?? null;
+		case "groupId":
+			dst.groupId = src.groupId ?? null;
 			return;
-		case "key":
-			if (src.key) dst.key = src.key;
-			else delete dst.key;
+		case "numberOverride":
+			if (src.numberOverride) dst.numberOverride = src.numberOverride;
+			else delete dst.numberOverride;
 			return;
 		case "estimate":
 			if (src.estimate) dst.estimate = JSON.parse(JSON.stringify(src.estimate));

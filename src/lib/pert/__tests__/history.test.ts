@@ -33,7 +33,6 @@ describe("readHistory", () => {
 				id: "A",
 				kind: "task",
 				title: "A",
-				parentId: null,
 			};
 		});
 		doc = Automerge.change(doc, "rename A", (d) => {

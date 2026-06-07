@@ -1,6 +1,6 @@
 import type { DocHandle } from "@automerge/automerge-repo";
 import { Store } from "@tanstack/store";
-import type { PertDoc, TaskId } from "./types";
+import type { GroupId, PertDoc, TaskId } from "./types";
 
 // Single source of truth for what's selected on the active canvas. Lives
 // outside the Automerge doc because selection is per-user, per-tab — sharing
@@ -10,27 +10,40 @@ import type { PertDoc, TaskId } from "./types";
 // inspector ignore stale selections when the user navigates to a different
 // project.
 
+// Selection is a discriminated choice: either a task or a group is selected
+// (or nothing). At most one of `taskId` / `groupId` is non-null. The inspector
+// reads both to decide whether to render the Task form or the Group form.
 export type SelectionState = {
 	projectId: string | null;
 	taskId: TaskId | null;
+	groupId: GroupId | null;
 };
 
 export const selectionStore = new Store<SelectionState>({
 	projectId: null,
 	taskId: null,
+	groupId: null,
 });
 
 export function selectTask(projectId: string, taskId: TaskId | null) {
 	selectionStore.setState((s) =>
-		s.projectId === projectId && s.taskId === taskId
+		s.projectId === projectId && s.taskId === taskId && s.groupId === null
 			? s
-			: { projectId, taskId },
+			: { projectId, taskId, groupId: null },
+	);
+}
+
+export function selectGroup(projectId: string, groupId: GroupId | null) {
+	selectionStore.setState((s) =>
+		s.projectId === projectId && s.groupId === groupId && s.taskId === null
+			? s
+			: { projectId, taskId: null, groupId },
 	);
 }
 
 export function clearSelectionFor(projectId: string) {
 	selectionStore.setState((s) =>
-		s.projectId === projectId ? { projectId, taskId: null } : s,
+		s.projectId === projectId ? { projectId, taskId: null, groupId: null } : s,
 	);
 }
 

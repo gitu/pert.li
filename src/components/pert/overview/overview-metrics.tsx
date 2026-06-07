@@ -28,11 +28,7 @@ export function OverviewMetrics({ overview }: { overview: ProjectOverview }) {
 					label="Milestones"
 					value={overview.milestoneCount}
 				/>
-				<Metric
-					Icon={LayersIcon}
-					label="Containers"
-					value={overview.containerCount}
-				/>
+				<Metric Icon={LayersIcon} label="Groups" value={overview.groupCount} />
 				<Metric
 					Icon={GitBranchIcon}
 					label="Dependencies"

@@ -145,9 +145,9 @@ export function ImportProjectDialog({
 							>
 								{summary.taskCount} task{summary.taskCount === 1 ? "" : "s"} ·{" "}
 								{summary.milestoneCount} milestone
-								{summary.milestoneCount === 1 ? "" : "s"} ·{" "}
-								{summary.containerCount} container
-								{summary.containerCount === 1 ? "" : "s"} ·{" "}
+								{summary.milestoneCount === 1 ? "" : "s"} · {summary.groupCount}{" "}
+								group
+								{summary.groupCount === 1 ? "" : "s"} ·{" "}
 								{summary.dependencyCount} dependency
 								{summary.dependencyCount === 1 ? "" : "ies"}
 								{summary.hasCalendar && " · calendar"}

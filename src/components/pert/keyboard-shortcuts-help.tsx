@@ -70,7 +70,7 @@ export function KeyboardShortcutsHelp({
 							<ul className="space-y-1">
 								{group.rows.map((row) => (
 									<li
-										key={`${group.heading}-${row.label}`}
+										key={`${group.heading}-${row.label}-${row.keys.join("+")}`}
 										className="flex items-baseline justify-between gap-3 text-xs"
 									>
 										<span className="text-foreground/90">{row.label}</span>
@@ -126,7 +126,7 @@ export const CANVAS_SHORTCUTS: ShortcutGroup[] = [
 		rows: [
 			{ label: "Add task at viewport centre", keys: ["n"] },
 			{ label: "Add milestone at viewport centre", keys: ["m"] },
-			{ label: "Add container at viewport centre", keys: ["c"] },
+			{ label: "Add group at viewport centre", keys: ["g"] },
 			{
 				label: "Spawn downstream task (linked) from selection",
 				keys: ["Tab"],
@@ -179,14 +179,14 @@ export const TABLE_SHORTCUTS: ShortcutGroup[] = [
 		],
 	},
 	{
-		heading: "Reparent",
+		heading: "Group",
 		rows: [
 			{
-				label: "Indent under previous row's container",
+				label: "Join the previous row's group",
 				keys: ["Tab"],
 			},
 			{
-				label: "Outdent one level (promote out of container)",
+				label: "Move out to the parent group",
 				keys: ["Shift", "Tab"],
 			},
 		],

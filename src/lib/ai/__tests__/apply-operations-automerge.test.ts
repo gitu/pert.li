@@ -11,11 +11,11 @@ import type { EditOp } from "../operations";
 // failure that crashed work-plan execution.
 
 describe("applyOperations on a live Automerge doc", () => {
-	it("applies a valid add_task batch without throwing", () => {
+	it("applies a valid create_group + add_task batch without throwing", () => {
 		let doc = Automerge.from<PertDoc>(createEmptyPertDoc("repro"));
 		const ops: EditOp[] = [
-			{ op: "add_task", id: "scope", title: "Scope", kind: "container" },
-			{ op: "add_task", id: "feat", title: "Features", parentId: "scope" },
+			{ op: "create_group", id: "scope", name: "Scope" },
+			{ op: "add_task", id: "feat", title: "Features", groupId: "scope" },
 		];
 		let results: ReturnType<typeof applyOperations> = [];
 		expect(() => {
@@ -24,8 +24,8 @@ describe("applyOperations on a live Automerge doc", () => {
 			});
 		}).not.toThrow();
 		expect(results.every((r) => r.ok)).toBe(true);
-		expect(doc.tasksById.scope?.title).toBe("Scope");
-		expect(doc.tasksById.feat?.parentId).toBe("scope");
+		expect(doc.groupsById.scope?.name).toBe("Scope");
+		expect(doc.tasksById.feat?.groupId).toBe("scope");
 	});
 
 	it("does NOT crash the whole change when one op carries an undefined property", () => {
@@ -35,9 +35,9 @@ describe("applyOperations on a live Automerge doc", () => {
 		// plain-JS staging clone but Automerge rejects it on the live proxy.
 		const badOp = { op: "add_task", id: "bad" } as unknown as EditOp;
 		const ops: EditOp[] = [
-			{ op: "add_task", id: "good", title: "Good", kind: "container" },
+			{ op: "create_group", id: "grp", name: "Group" },
 			badOp,
-			{ op: "add_task", id: "good2", title: "Good 2", parentId: "good" },
+			{ op: "add_task", id: "good2", title: "Good 2", groupId: "grp" },
 		];
 		let results: ReturnType<typeof applyOperations> = [];
 		expect(() => {
@@ -46,8 +46,8 @@ describe("applyOperations on a live Automerge doc", () => {
 			});
 		}).not.toThrow();
 		// The valid ops still applied...
-		expect(doc.tasksById.good?.title).toBe("Good");
-		expect(doc.tasksById.good2?.parentId).toBe("good");
+		expect(doc.groupsById.grp?.name).toBe("Group");
+		expect(doc.tasksById.good2?.groupId).toBe("grp");
 		// ...and the bad op surfaced as a failure row, not a thrown exception.
 		const bad = results.find((r) => !r.ok);
 		expect(bad).toBeDefined();
@@ -59,13 +59,13 @@ describe("applyOperations on a live Automerge doc", () => {
 		// before runOpSafe's guard — and abort the whole Automerge change.
 		let doc = Automerge.from<PertDoc>(createEmptyPertDoc("repro"));
 		const ops = [
-			{ op: "add_task", id: "good", title: "Good", kind: "container" },
+			{ op: "create_group", id: "grp", name: "Group" },
 			null,
 			"not-an-op",
 			42,
 			{ id: "no-discriminator", title: "Missing op" },
 			{ op: "totally_unknown", taskId: "x" },
-			{ op: "add_task", id: "good2", title: "Good 2", parentId: "good" },
+			{ op: "add_task", id: "good2", title: "Good 2", groupId: "grp" },
 		] as unknown as EditOp[];
 		let results: ReturnType<typeof applyOperations> = [];
 		expect(() => {
@@ -75,9 +75,9 @@ describe("applyOperations on a live Automerge doc", () => {
 		}).not.toThrow();
 		// One result per input op (index alignment preserved).
 		expect(results).toHaveLength(ops.length);
-		// The two valid container/child ops applied, child still parented.
-		expect(doc.tasksById.good?.title).toBe("Good");
-		expect(doc.tasksById.good2?.parentId).toBe("good");
+		// The two valid group/child ops applied, child still in the group.
+		expect(doc.groupsById.grp?.name).toBe("Group");
+		expect(doc.tasksById.good2?.groupId).toBe("grp");
 		// The five malformed entries each became a failed row.
 		expect(results.filter((r) => !r.ok)).toHaveLength(5);
 	});

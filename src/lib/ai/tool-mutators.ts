@@ -1,20 +1,12 @@
 import { todayIsoDate } from "#/lib/pert/calendar";
-import {
-	createDefaultInterface,
-	ensureContainerInterfaces,
-	newInterfaceId,
-	removeContainerInterfaces,
-} from "#/lib/pert/interfaces";
-import { canReparent } from "#/lib/pert/reparent";
+import { computeNumbering } from "#/lib/pert/numbering";
 import type {
-	ContainerInterface,
 	Dependency,
 	DependencyType,
 	DocumentId,
 	Estimate,
 	EstimateUnit,
-	InterfaceId,
-	InterfaceKind,
+	GroupId,
 	PertDoc,
 	ProjectDocumentKind,
 	Task,
@@ -22,6 +14,18 @@ import type {
 	TaskKind,
 	TaskStatus,
 } from "#/lib/pert/types";
+
+// Group mutators live in the pure engine; re-export them here so the chat
+// client glue and tests have a single import surface for "tool mutators".
+export {
+	assignTaskToGroupMutation,
+	type CreateGroupArgs,
+	createGroupMutation,
+	deleteGroupMutation,
+	renameGroupMutation,
+	setGroupParentMutation,
+	setTaskNumberMutation,
+} from "#/lib/pert/group-mutations";
 
 // Pure mutators for the chat-tool implementations. Each one takes a draft
 // `PertDoc` (the parameter passed by Automerge `change()`) plus typed args,
@@ -42,16 +46,16 @@ export function newId(prefix: string): string {
 export type AddTaskArgs = {
 	title: string;
 	kind?: TaskKind;
-	parentId?: TaskId | null;
+	groupId?: GroupId | null;
 	estimate?: Estimate;
 };
 
 export type AddTaskOptions = {
-	// Ids an enclosing batch will create before it finishes (see
-	// applyOperations). parentId may forward-reference one of them — the AI
-	// often emits children before their parent container in the same
-	// propose_changes batch.
-	pendingContainerIds?: ReadonlySet<string>;
+	// Group ids an enclosing batch will create before it finishes (see
+	// applyOperations). `groupId` may forward-reference one of them — the AI
+	// often emits a group's tasks before (or after) the group itself in the
+	// same propose_changes batch.
+	pendingGroupIds?: ReadonlySet<string>;
 };
 
 export function addTaskMutation(
@@ -67,33 +71,23 @@ export function addTaskMutation(
 	if (d.tasksById[id]) {
 		return { ok: false, error: `task id ${id} already exists` };
 	}
-	// A dangling parentId makes the task invisible on the nested canvas (the
-	// layout only walks parents that exist), so reject unknown parents here
-	// rather than letting them in silently.
-	const parentId = args.parentId ?? null;
-	if (parentId !== null) {
-		const parent = d.tasksById[parentId];
-		if (parent) {
-			if (parent.kind !== "container") {
-				return {
-					ok: false,
-					error: `parent ${parentId} is not a container`,
-				};
-			}
-		} else if (!opts.pendingContainerIds?.has(parentId)) {
-			return {
-				ok: false,
-				error: `parent container ${parentId} not found`,
-			};
-		}
+	// A dangling groupId would render the task as ungrouped; reject unknown
+	// groups here rather than letting them in silently.
+	const groupId = args.groupId ?? null;
+	if (
+		groupId !== null &&
+		!d.groupsById[groupId] &&
+		!opts.pendingGroupIds?.has(groupId)
+	) {
+		return { ok: false, error: `group ${groupId} not found` };
 	}
 	const kind: TaskKind = args.kind ?? "task";
 	const base: Task = {
 		id,
 		kind,
 		title: args.title,
-		parentId,
 	};
+	if (groupId !== null) base.groupId = groupId;
 	if (kind === "task") {
 		base.estimate = args.estimate ?? {
 			optimistic: 1,
@@ -105,7 +99,6 @@ export function addTaskMutation(
 		base.estimate = args.estimate;
 	}
 	d.tasksById[id] = base;
-	if (kind === "container") ensureContainerInterfaces(d, id);
 	return { id };
 }
 
@@ -166,20 +159,6 @@ export function addDependencyMutation(
 	if (!toTask) return { ok: false, error: `task ${args.toTaskId} not found` };
 	if (args.fromTaskId === args.toTaskId)
 		return { ok: false, error: "self-dependency is not allowed" };
-	// Dependencies must reference leaf tasks/milestones, not containers.
-	// Container-to-container edges are inferred by the projection from
-	// leaf-to-leaf edges, so storing a direct container endpoint would
-	// duplicate intent and confuse the projection's rerouting logic.
-	if (fromTask.kind === "container")
-		return {
-			ok: false,
-			error: `cannot depend from container ${args.fromTaskId} — pick a specific leaf inside it`,
-		};
-	if (toTask.kind === "container")
-		return {
-			ok: false,
-			error: `cannot depend on container ${args.toTaskId} — pick a specific leaf inside it`,
-		};
 	for (const dep of Object.values(d.dependenciesById)) {
 		if (
 			dep.from.taskId === args.fromTaskId &&
@@ -218,17 +197,12 @@ export function removeTaskMutation(
 ): { ok: true } | { ok: false; error: string } {
 	const task = d.tasksById[args.taskId];
 	if (!task) return { ok: false, error: `task ${args.taskId} not found` };
-	const wasContainer = task.kind === "container";
 	delete d.tasksById[args.taskId];
 	for (const [depId, dep] of Object.entries(d.dependenciesById)) {
 		if (dep.from.taskId === args.taskId || dep.to.taskId === args.taskId) {
 			delete d.dependenciesById[depId];
 		}
 	}
-	for (const t of Object.values(d.tasksById)) {
-		if (t.parentId === args.taskId) t.parentId = null;
-	}
-	if (wasContainer) removeContainerInterfaces(d, args.taskId);
 	return { ok: true };
 }
 
@@ -246,7 +220,6 @@ export function setKindMutation(
 ): { ok: true } | { ok: false; error: string } {
 	const task = d.tasksById[args.taskId];
 	if (!task) return { ok: false, error: `task ${args.taskId} not found` };
-	const previousKind = task.kind;
 	task.kind = args.kind;
 	if (args.kind === "milestone") delete task.estimate;
 	if (args.kind === "task" && !task.estimate) {
@@ -257,25 +230,6 @@ export function setKindMutation(
 			unit: "day",
 		};
 	}
-	if (args.kind === "container" && previousKind !== "container") {
-		ensureContainerInterfaces(d, args.taskId);
-	} else if (args.kind !== "container" && previousKind === "container") {
-		removeContainerInterfaces(d, args.taskId);
-	}
-	return { ok: true };
-}
-
-export type SetKeyArgs = { taskId: TaskId; key: string | null };
-
-export function setKeyMutation(
-	d: PertDoc,
-	args: SetKeyArgs,
-): { ok: true } | { ok: false; error: string } {
-	const task = d.tasksById[args.taskId];
-	if (!task) return { ok: false, error: `task ${args.taskId} not found` };
-	const trimmed = args.key?.trim() ?? "";
-	if (trimmed.length === 0) delete task.key;
-	else task.key = trimmed;
 	return { ok: true };
 }
 
@@ -289,36 +243,6 @@ export function setNotesMutation(
 	if (!task) return { ok: false, error: `task ${args.taskId} not found` };
 	if (args.notes === null || args.notes === "") delete task.notes;
 	else task.notes = args.notes;
-	return { ok: true };
-}
-
-export type MoveTaskArgs = { taskId: TaskId; parentId: TaskId | null };
-
-export function moveTaskMutation(
-	d: PertDoc,
-	args: MoveTaskArgs,
-): { ok: true } | { ok: false; error: string } {
-	const task = d.tasksById[args.taskId];
-	if (!task) return { ok: false, error: `task ${args.taskId} not found` };
-	const current = task.parentId ?? null;
-	if (current === args.parentId) return { ok: true };
-	if (args.parentId !== null) {
-		const target = d.tasksById[args.parentId];
-		if (!target)
-			return { ok: false, error: `container ${args.parentId} not found` };
-		if (target.kind !== "container")
-			return {
-				ok: false,
-				error: `task ${args.parentId} is not a container`,
-			};
-		if (!canReparent(d, args.taskId, args.parentId))
-			return {
-				ok: false,
-				error:
-					"move would create a cycle in the hierarchy — a container cannot be moved into its own descendant. Check the parent/child direction: the CHILD's parentId points at the CONTAINER, never the other way around.",
-			};
-	}
-	task.parentId = args.parentId;
 	return { ok: true };
 }
 
@@ -417,128 +341,6 @@ export function setActualDatesMutation(
 	return { ok: true };
 }
 
-export type AddInterfaceArgs = {
-	containerId: TaskId;
-	kind: InterfaceKind;
-	label?: string;
-	taskRef?: TaskId | null;
-};
-
-export function addInterfaceMutation(
-	d: PertDoc,
-	args: AddInterfaceArgs,
-	id: InterfaceId = newInterfaceId(),
-): { id: InterfaceId } | { ok: false; error: string } {
-	const container = d.tasksById[args.containerId];
-	if (!container)
-		return { ok: false, error: `task ${args.containerId} not found` };
-	if (container.kind !== "container")
-		return {
-			ok: false,
-			error: `task ${args.containerId} is not a container`,
-		};
-	if (args.taskRef && !d.tasksById[args.taskRef])
-		return { ok: false, error: `task ${args.taskRef} not found` };
-	if (!d.interfacesByContainerId[args.containerId]) {
-		d.interfacesByContainerId[args.containerId] = {};
-	}
-	const iface: ContainerInterface = {
-		...createDefaultInterface(args.containerId, args.kind, id),
-	};
-	if (args.label) iface.label = args.label;
-	if (args.taskRef) iface.taskRef = args.taskRef;
-	d.interfacesByContainerId[args.containerId][id] = iface;
-	return { id };
-}
-
-export type RemoveInterfaceArgs = {
-	containerId: TaskId;
-	interfaceId: InterfaceId;
-};
-
-export function removeInterfaceMutation(
-	d: PertDoc,
-	args: RemoveInterfaceArgs,
-): { ok: true } | { ok: false; error: string } {
-	const bucket = d.interfacesByContainerId[args.containerId];
-	if (!bucket?.[args.interfaceId])
-		return {
-			ok: false,
-			error: `interface ${args.interfaceId} not found on ${args.containerId}`,
-		};
-	delete bucket[args.interfaceId];
-	return { ok: true };
-}
-
-export type SetInterfaceArgs = {
-	containerId: TaskId;
-	interfaceId: InterfaceId;
-	label?: string;
-	taskRef?: TaskId | null;
-};
-
-export function setInterfaceMutation(
-	d: PertDoc,
-	args: SetInterfaceArgs,
-): { ok: true } | { ok: false; error: string } {
-	const iface = d.interfacesByContainerId[args.containerId]?.[args.interfaceId];
-	if (!iface)
-		return {
-			ok: false,
-			error: `interface ${args.interfaceId} not found on ${args.containerId}`,
-		};
-	if (args.label !== undefined) iface.label = args.label;
-	if (args.taskRef !== undefined) {
-		if (args.taskRef === null) {
-			delete iface.taskRef;
-		} else {
-			if (!d.tasksById[args.taskRef])
-				return { ok: false, error: `task ${args.taskRef} not found` };
-			iface.taskRef = args.taskRef;
-		}
-	}
-	return { ok: true };
-}
-
-export type PinDependencyArgs = {
-	dependencyId: string;
-	side: "from" | "to";
-	interfaceId: InterfaceId | null;
-};
-
-// Sets or clears the `interfaceId` hint on one side of an existing dependency.
-// The dep's canonical `taskId` endpoint is unchanged — the interfaceId is the
-// hint the projection uses to decide which port handle a collapsed edge
-// attaches to. Passing null clears the hint.
-export function pinDependencyMutation(
-	d: PertDoc,
-	args: PinDependencyArgs,
-): { ok: true } | { ok: false; error: string } {
-	const dep = d.dependenciesById[args.dependencyId];
-	if (!dep)
-		return { ok: false, error: `dependency ${args.dependencyId} not found` };
-	const endpoint = args.side === "from" ? dep.from : dep.to;
-	if (args.interfaceId === null) {
-		delete endpoint.interfaceId;
-		return { ok: true };
-	}
-	// Verify the interface exists somewhere in the doc before pinning.
-	let found = false;
-	for (const bucket of Object.values(d.interfacesByContainerId)) {
-		if (bucket[args.interfaceId]) {
-			found = true;
-			break;
-		}
-	}
-	if (!found)
-		return {
-			ok: false,
-			error: `interface ${args.interfaceId} not found`,
-		};
-	endpoint.interfaceId = args.interfaceId;
-	return { ok: true };
-}
-
 export type SetDependencyArgs = {
 	dependencyId: string;
 	type?: DependencyType;
@@ -565,12 +367,19 @@ export function setDependencyMutation(
 // model never needs to plan.
 export type ProjectSummary = {
 	title: string;
+	groups: Array<{
+		id: GroupId;
+		name: string;
+		parentGroupId: GroupId | null;
+		number: string;
+	}>;
 	tasks: Array<{
 		id: TaskId;
 		title: string;
 		kind: TaskKind;
-		parentId: TaskId | null;
-		key?: string;
+		groupId: GroupId | null;
+		// Derived WBS number (or the override when set).
+		number: string;
 		estimate?: Estimate;
 		status?: TaskStatus;
 		progress?: number;
@@ -584,15 +393,6 @@ export type ProjectSummary = {
 		toTaskId: TaskId | null;
 		type: DependencyType;
 		lagDays?: number;
-		fromInterfaceId?: InterfaceId;
-		toInterfaceId?: InterfaceId;
-	}>;
-	interfaces: Array<{
-		id: InterfaceId;
-		containerId: TaskId;
-		kind: InterfaceKind;
-		label: string;
-		taskRef?: TaskId;
 	}>;
 	// Manifest of attached source documents — name/kind/size only, never the
 	// full text (that would blow up every project read). The model calls
@@ -659,26 +459,21 @@ export function readDocument(
 }
 
 export function summarizeProject(doc: PertDoc): ProjectSummary {
-	const interfaces: ProjectSummary["interfaces"] = [];
-	for (const bucket of Object.values(doc.interfacesByContainerId)) {
-		for (const iface of Object.values(bucket)) {
-			interfaces.push({
-				id: iface.id,
-				containerId: iface.containerId,
-				kind: iface.kind,
-				label: iface.label,
-				taskRef: iface.taskRef,
-			});
-		}
-	}
+	const numbers = computeNumbering(doc);
 	return {
 		title: doc.title,
+		groups: Object.values(doc.groupsById).map((g) => ({
+			id: g.id,
+			name: g.name,
+			parentGroupId: g.parentGroupId ?? null,
+			number: numbers.groups[g.id] ?? "",
+		})),
 		tasks: Object.values(doc.tasksById).map((t) => ({
 			id: t.id,
 			title: t.title,
 			kind: t.kind,
-			parentId: t.parentId,
-			key: t.key,
+			groupId: t.groupId ?? null,
+			number: numbers.tasks[t.id] ?? "",
 			estimate: t.estimate
 				? {
 						optimistic: t.estimate.optimistic,
@@ -699,10 +494,7 @@ export function summarizeProject(doc: PertDoc): ProjectSummary {
 			toTaskId: d.to.taskId ?? null,
 			type: d.type,
 			lagDays: d.lagDays,
-			fromInterfaceId: d.from.interfaceId,
-			toInterfaceId: d.to.interfaceId,
 		})),
-		interfaces,
 		attachedDocuments: listDocuments(doc).documents,
 	};
 }

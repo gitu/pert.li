@@ -54,7 +54,6 @@ import { useResilientDoc } from "#/lib/automerge/use-resilient-doc";
 import { useActorRegistration } from "#/lib/pert/actor-registry";
 import { diffPertDoc } from "#/lib/pert/diff";
 import { snapshotAt } from "#/lib/pert/history";
-import { ensureContainerInterfaces } from "#/lib/pert/interfaces";
 import {
 	clearActiveProjectDoc,
 	clearLocallyCreated,
@@ -399,12 +398,21 @@ export function PertProjectPanel({
 
 	// Phase 1/2 docs were minted with `{ title, count }` only; back-fill the
 	// Phase 3 maps on first load so the CPM engine sees a well-typed PertDoc.
+	// Pre-groups docs carry tasks with `kind: "container"`, which is no longer
+	// part of TaskKind. They must degrade to plain tasks (per the groups
+	// refactor) so zod boundaries / serialization don't choke on an unknown kind.
+	const hasLegacyContainerKinds =
+		doc !== undefined &&
+		Object.values(doc.tasksById ?? {}).some(
+			(t) => (t as { kind?: string }).kind === "container",
+		);
 	const needsMigration =
 		doc !== undefined &&
 		(!doc.tasksById ||
 			!doc.dependenciesById ||
-			!doc.interfacesByContainerId ||
-			!doc.viewsById);
+			!doc.groupsById ||
+			!doc.viewsById ||
+			hasLegacyContainerKinds);
 	useEffect(() => {
 		// Skip in read-only modes (mobile-readonly, view-mode share). The
 		// next authenticated editor to open the doc runs the migration; a
@@ -414,43 +422,16 @@ export function PertProjectPanel({
 			const legacy = d as unknown as Record<string, unknown>;
 			legacy.tasksById ??= {};
 			legacy.dependenciesById ??= {};
-			legacy.interfacesByContainerId ??= {};
+			legacy.groupsById ??= {};
 			legacy.viewsById ??= {};
+			// Degrade legacy container tasks to plain tasks.
+			const tasks = legacy.tasksById as Record<string, { kind?: string }>;
+			for (const t of Object.values(tasks)) {
+				if (t.kind === "container") t.kind = "task";
+			}
 			if ("count" in legacy) delete legacy.count;
 		});
 	}, [needsMigration, effectiveChangeDoc]);
-
-	// Pre-rework containers were created without default Entry/Exit interfaces.
-	// Backfill them once on first load so cross-boundary edges have a port to
-	// route through when the container collapses. Idempotent — re-runs only
-	// touch containers that are still missing a default.
-	const containersMissingInterfaces =
-		doc?.tasksById && doc.interfacesByContainerId
-			? Object.values(doc.tasksById).filter((t) => {
-					if (t.kind !== "container") return false;
-					const bucket = doc.interfacesByContainerId[t.id];
-					if (!bucket) return true;
-					const kinds = new Set<string>();
-					for (const i of Object.values(bucket)) kinds.add(i.kind);
-					return !kinds.has("entry") || !kinds.has("exit");
-				})
-			: [];
-	const containerBackfillKey = containersMissingInterfaces
-		.map((t) => t.id)
-		.join(",");
-	useEffect(() => {
-		// Same read-only guard as the schema migration above — a view-only
-		// recipient must not write container backfills to the project.
-		if (needsMigration || containerBackfillKey === "" || !effectiveChangeDoc)
-			return;
-		effectiveChangeDoc((d) => {
-			for (const id of containerBackfillKey.split(",")) {
-				if (d.tasksById[id]?.kind === "container") {
-					ensureContainerInterfaces(d, id);
-				}
-			}
-		});
-	}, [needsMigration, containerBackfillKey, effectiveChangeDoc]);
 
 	// Lift the active doc + handle into the cross-pane store so the right
 	// inspector, history drawer, and presence overlays (which live in the

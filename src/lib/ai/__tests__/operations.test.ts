@@ -17,8 +17,8 @@ describe("editOpSchema", () => {
 			{ op: "remove_task", taskId: "A" },
 			{ op: "set_title", taskId: "A", title: "renamed" },
 			{ op: "set_kind", taskId: "A", kind: "milestone" },
-			{ op: "set_key", taskId: "A", key: "M1.A" },
-			{ op: "set_key", taskId: "A", key: null },
+			{ op: "set_task_number", taskId: "A", number: "1.2" },
+			{ op: "set_task_number", taskId: "A", number: null },
 			{ op: "set_notes", taskId: "A", notes: "hello" },
 			{
 				op: "set_estimate",
@@ -35,7 +35,8 @@ describe("editOpSchema", () => {
 				actualStart: "2026-06-01",
 				actualFinish: null,
 			},
-			{ op: "move_task", taskId: "A", parentId: null },
+			{ op: "move_task_to_group", taskId: "A", groupId: null },
+			{ op: "move_task_to_group", taskId: "A", groupId: "g1" },
 			{ op: "add_dependency", fromTaskId: "A", toTaskId: "B" },
 			{ op: "remove_dependency", dependencyId: "ab" },
 			{
@@ -44,20 +45,11 @@ describe("editOpSchema", () => {
 				type: "start_to_start",
 				lagDays: 3,
 			},
-			{
-				op: "pin_dependency",
-				dependencyId: "ab",
-				side: "from",
-				interfaceId: null,
-			},
-			{ op: "add_interface", containerId: "C", kind: "entry" },
-			{ op: "remove_interface", containerId: "C", interfaceId: "if1" },
-			{
-				op: "set_interface",
-				containerId: "C",
-				interfaceId: "if1",
-				label: "rename",
-			},
+			{ op: "create_group", name: "Phase 1" },
+			{ op: "create_group", id: "g1", name: "Phase 1", parentGroupId: null },
+			{ op: "rename_group", groupId: "g1", name: "renamed" },
+			{ op: "set_group_parent", groupId: "g1", parentGroupId: "g0" },
+			{ op: "delete_group", groupId: "g1" },
 		];
 		for (const c of cases) {
 			const result = editOpSchema.safeParse(c);

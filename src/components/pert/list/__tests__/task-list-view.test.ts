@@ -26,7 +26,7 @@ function leaf(
 	title: string,
 	e: Estimate | undefined = est(1, 2, 3),
 ): Task {
-	return { id, kind: "task", title, parentId: null, estimate: e };
+	return { id, kind: "task", title, estimate: e };
 }
 
 describe("buildTaskListRows", () => {
@@ -38,19 +38,50 @@ describe("buildTaskListRows", () => {
 		expect(rows).toEqual([]);
 	});
 
-	it("includes leaf tasks and milestones, drops containers", () => {
+	it("includes every task and milestone — grouped tasks are still rows", () => {
 		const doc = build(
 			leaf("A", "Alpha"),
-			{ id: "M", kind: "milestone", title: "Mile", parentId: null },
-			{ id: "C", kind: "container", title: "Group", parentId: null },
-			leaf("C-child", "Child inside container", est(1, 1, 1)),
+			{ id: "M", kind: "milestone", title: "Mile" },
+			{ ...leaf("G-child", "Child inside group", est(1, 1, 1)), groupId: "G" },
 		);
-		// Move the child under the container; engine still keeps the child as a
-		// leaf row because containers are the only thing the list hides.
-		doc.tasksById["C-child"].parentId = "C";
+		// The group exists; membership doesn't hide a task from the flat list.
+		doc.groupsById.G = {
+			id: "G",
+			name: "Group",
+			parentGroupId: null,
+			order: 0,
+		};
 
 		const rows = buildTaskListRows(doc, computeSchedule(doc));
-		expect(rows.map((r) => r.id).sort()).toEqual(["A", "C-child", "M"]);
+		expect(rows.map((r) => r.id).sort()).toEqual(["A", "G-child", "M"]);
+	});
+
+	it("surfaces group membership and derived WBS number on the row", () => {
+		const doc = build(
+			leaf("A", "Alpha"),
+			{ ...leaf("B", "Beta"), groupId: "G" },
+			{ ...leaf("C", "Cee"), groupId: "G", numberOverride: "9.9" },
+		);
+		doc.groupsById.G = {
+			id: "G",
+			name: "Group",
+			parentGroupId: null,
+			order: 0,
+		};
+		const rows = buildTaskListRows(doc, computeSchedule(doc));
+		const a = rows.find((r) => r.id === "A");
+		const b = rows.find((r) => r.id === "B");
+		const c = rows.find((r) => r.id === "C");
+		// Ungrouped task: no group, no derived number.
+		expect(a?.groupId).toBeNull();
+		expect(a?.number).toBe("");
+		// Grouped task: derived number under group "1".
+		expect(b?.groupId).toBe("G");
+		expect(b?.number).toBe("1.1");
+		expect(b?.numberOverride).toBeUndefined();
+		// Override wins over the derived number and is surfaced for inline edit.
+		expect(c?.number).toBe("9.9");
+		expect(c?.numberOverride).toBe("9.9");
 	});
 
 	it("sorts rows by earliestStart ascending, then by title", () => {
@@ -132,7 +163,6 @@ describe("buildTaskListRows", () => {
 			id: "M",
 			kind: "milestone",
 			title: "Kickoff",
-			parentId: null,
 		});
 		const rows = buildTaskListRows(doc, computeSchedule(doc));
 		expect(rows).toHaveLength(1);
@@ -155,7 +185,6 @@ describe("buildTaskListRows", () => {
 				id: "P",
 				kind: "task",
 				title: "Partial",
-				parentId: null,
 				estimate: est(1, 2, 3),
 				status: "in_progress",
 				progress: 40,
@@ -165,7 +194,6 @@ describe("buildTaskListRows", () => {
 				id: "D",
 				kind: "task",
 				title: "Done",
-				parentId: null,
 				estimate: est(1, 1, 1),
 				status: "completed",
 				progress: 100,

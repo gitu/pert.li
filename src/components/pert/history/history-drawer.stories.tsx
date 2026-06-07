@@ -32,14 +32,12 @@ function seededHistoryDoc(): Automerge.Doc<PertDoc> {
 				id: "A",
 				kind: "task",
 				title: "Design",
-				parentId: null,
 				estimate: { optimistic: 1, mostLikely: 2, pessimistic: 3, unit: "day" },
 			};
 			d.tasksById.B = {
 				id: "B",
 				kind: "task",
 				title: "Build",
-				parentId: null,
 				estimate: { optimistic: 2, mostLikely: 4, pessimistic: 6, unit: "day" },
 			};
 		},

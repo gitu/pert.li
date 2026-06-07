@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 import { TooltipProvider } from "#/components/ui/tooltip";
 import { clearProjectCollapse, setCollapsed } from "#/lib/pert/collapse";
-import { ensureContainerInterfaces } from "#/lib/pert/interfaces";
 import { selectionStore } from "#/lib/pert/store";
 import {
 	createEmptyPertDoc,
@@ -25,7 +24,6 @@ function diamondDoc(): PertDoc {
 		id: "A",
 		kind: "task",
 		title: "Design",
-		parentId: null,
 		estimate: est(1, 2, 3),
 		layout: { position: { x: 40, y: 120 } },
 	};
@@ -33,7 +31,6 @@ function diamondDoc(): PertDoc {
 		id: "B",
 		kind: "task",
 		title: "Build API",
-		parentId: null,
 		estimate: est(2, 4, 6),
 		layout: { position: { x: 320, y: 40 } },
 	};
@@ -41,7 +38,6 @@ function diamondDoc(): PertDoc {
 		id: "C",
 		kind: "task",
 		title: "Build UI",
-		parentId: null,
 		estimate: est(1, 6, 11),
 		layout: { position: { x: 320, y: 200 } },
 	};
@@ -49,7 +45,6 @@ function diamondDoc(): PertDoc {
 		id: "D",
 		kind: "task",
 		title: "Ship",
-		parentId: null,
 		estimate: est(1, 2, 3),
 		layout: { position: { x: 600, y: 120 } },
 	};
@@ -88,7 +83,6 @@ function cycleDoc(): PertDoc {
 		id: "A",
 		kind: "task",
 		title: "Design",
-		parentId: null,
 		estimate: est(1, 2, 3),
 		layout: { position: { x: 60, y: 100 } },
 	};
@@ -96,7 +90,6 @@ function cycleDoc(): PertDoc {
 		id: "B",
 		kind: "task",
 		title: "Build",
-		parentId: null,
 		estimate: est(2, 4, 6),
 		layout: { position: { x: 360, y: 100 } },
 	};
@@ -104,7 +97,6 @@ function cycleDoc(): PertDoc {
 		id: "C",
 		kind: "task",
 		title: "Verify",
-		parentId: null,
 		estimate: est(1, 2, 3),
 		layout: { position: { x: 200, y: 320 } },
 	};
@@ -130,25 +122,24 @@ function cycleDoc(): PertDoc {
 }
 
 function containerDoc(): PertDoc {
-	const d = createEmptyPertDoc("Container demo");
+	const d = createEmptyPertDoc("Group demo");
+	d.groupsById.box = {
+		id: "box",
+		name: "Backend slice",
+		parentGroupId: null,
+		order: 0,
+	};
 	d.tasksById.start = {
 		id: "start",
 		kind: "milestone",
 		title: "Kickoff",
-		parentId: null,
 		layout: { position: { x: 40, y: 160 } },
-	};
-	d.tasksById.box = {
-		id: "box",
-		kind: "container",
-		title: "Backend slice",
-		parentId: null,
 	};
 	d.tasksById["box-api"] = {
 		id: "box-api",
 		kind: "task",
 		title: "REST endpoints",
-		parentId: "box",
+		groupId: "box",
 		estimate: est(2, 4, 8),
 		layout: { position: { x: 280, y: 80 } },
 	};
@@ -156,7 +147,7 @@ function containerDoc(): PertDoc {
 		id: "box-db",
 		kind: "task",
 		title: "Schema migration",
-		parentId: "box",
+		groupId: "box",
 		estimate: est(1, 3, 5),
 		layout: { position: { x: 280, y: 220 } },
 	};
@@ -164,7 +155,6 @@ function containerDoc(): PertDoc {
 		id: "ship",
 		kind: "task",
 		title: "Ship",
-		parentId: null,
 		estimate: est(1, 2, 3),
 		layout: { position: { x: 640, y: 160 } },
 	};
@@ -192,7 +182,6 @@ function containerDoc(): PertDoc {
 		to: { taskId: "ship" },
 		type: "finish_to_start",
 	};
-	ensureContainerInterfaces(d, "box");
 	return d;
 }
 
@@ -286,9 +275,7 @@ export const WithContainer: Story = {
 	},
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(
-			canvas.getByTestId("container-expanded-box"),
-		).toBeInTheDocument();
+		await expect(canvas.getByTestId("group-expanded-box")).toBeInTheDocument();
 		await expect(canvas.getByTestId("task-node-box-api")).toBeInTheDocument();
 	},
 };
@@ -298,28 +285,26 @@ export const WithContainer: Story = {
 // task stays clickable inside both groups.
 function nestedContainerDoc(): PertDoc {
 	const d = createEmptyPertDoc("Nested groups demo");
-	d.tasksById.outer = {
+	d.groupsById.outer = {
 		id: "outer",
-		kind: "container",
-		title: "Outer group",
-		parentId: null,
+		name: "Outer group",
+		parentGroupId: null,
+		order: 0,
 	};
-	d.tasksById.inner = {
+	d.groupsById.inner = {
 		id: "inner",
-		kind: "container",
-		title: "Inner group",
-		parentId: "outer",
+		name: "Inner group",
+		parentGroupId: "outer",
+		order: 0,
 	};
 	d.tasksById.deep = {
 		id: "deep",
 		kind: "task",
 		title: "Deep task",
-		parentId: "inner",
+		groupId: "inner",
 		estimate: est(1, 2, 4),
 		layout: { position: { x: 320, y: 200 } },
 	};
-	ensureContainerInterfaces(d, "outer");
-	ensureContainerInterfaces(d, "inner");
 	return d;
 }
 
@@ -341,7 +326,7 @@ export const CollapseAllContainers: Story = {
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await expect(
-			canvas.getByTestId("container-expanded-outer"),
+			canvas.getByTestId("group-expanded-outer"),
 		).toBeInTheDocument();
 		// Collapse all → both containers render as collapsed cards. (The inner
 		// one is inside a collapsed ancestor, so only the outer card remains
@@ -349,20 +334,20 @@ export const CollapseAllContainers: Story = {
 		await userEvent.click(canvas.getByTestId("toolbar-collapse-all"));
 		await waitFor(async () => {
 			await expect(
-				canvas.getByTestId("container-collapsed-outer"),
+				canvas.getByTestId("group-collapsed-outer"),
 			).toBeInTheDocument();
 		});
-		expect(canvas.queryByTestId("container-expanded-outer")).toBeNull();
+		expect(canvas.queryByTestId("group-expanded-outer")).toBeNull();
 		expect(canvas.queryByTestId("task-node-deep")).toBeNull();
 		// Expand all → back to expanded frames with the deep task visible.
 		await userEvent.click(canvas.getByTestId("toolbar-expand-all"));
 		await waitFor(async () => {
 			await expect(
-				canvas.getByTestId("container-expanded-outer"),
+				canvas.getByTestId("group-expanded-outer"),
 			).toBeInTheDocument();
 		});
 		await expect(
-			canvas.getByTestId("container-expanded-inner"),
+			canvas.getByTestId("group-expanded-inner"),
 		).toBeInTheDocument();
 		await expect(canvas.getByTestId("task-node-deep")).toBeInTheDocument();
 	},
@@ -376,15 +361,15 @@ export const NestedContainers: Story = {
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await expect(
-			canvas.getByTestId("container-expanded-outer"),
+			canvas.getByTestId("group-expanded-outer"),
 		).toBeInTheDocument();
 		await expect(
-			canvas.getByTestId("container-expanded-inner"),
+			canvas.getByTestId("group-expanded-inner"),
 		).toBeInTheDocument();
 		await expect(canvas.getByTestId("task-node-deep")).toBeInTheDocument();
 		// Z-ordering: outer group < inner group < leaf task.
-		const outerZ = nodeZIndex(canvasElement, "container-expanded-outer");
-		const innerZ = nodeZIndex(canvasElement, "container-expanded-inner");
+		const outerZ = nodeZIndex(canvasElement, "group-expanded-outer");
+		const innerZ = nodeZIndex(canvasElement, "group-expanded-inner");
 		const taskZ = nodeZIndex(canvasElement, "task-node-deep");
 		expect(outerZ).toBeLessThan(innerZ);
 		expect(innerZ).toBeLessThan(taskZ);
@@ -407,87 +392,9 @@ export const ContainerCollapsed: Story = {
 	},
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
-		await expect(
-			canvas.getByTestId("container-collapsed-box"),
-		).toBeInTheDocument();
+		await expect(canvas.getByTestId("group-collapsed-box")).toBeInTheDocument();
 		// Descendants hidden, rollup card visible instead.
 		await expect(canvas.queryByTestId("task-node-box-api")).toBeNull();
-	},
-};
-
-function multiInterfaceContainerDoc(): PertDoc {
-	const d = containerDoc();
-	// Replace the default Entry/Exit pair with named fan-in/fan-out ports so
-	// the port rail visibly stretches the card and labels show in the canvas.
-	d.interfacesByContainerId.box = {
-		if_design: {
-			id: "if_design",
-			containerId: "box",
-			kind: "entry",
-			label: "Design",
-			taskRef: "box-api",
-		},
-		if_data: {
-			id: "if_data",
-			containerId: "box",
-			kind: "entry",
-			label: "Data",
-			taskRef: "box-db",
-		},
-		if_api: {
-			id: "if_api",
-			containerId: "box",
-			kind: "exit",
-			label: "API ready",
-			taskRef: "box-api",
-		},
-		if_runtime: {
-			id: "if_runtime",
-			containerId: "box",
-			kind: "exit",
-			label: "Runtime ready",
-		},
-	};
-	return d;
-}
-
-export const ContainerCollapsedMultiInterface: Story = {
-	args: {
-		seed: multiInterfaceContainerDoc(),
-		projectId: "story-canvas-container-multi-interface",
-		collapseOnMount: ["box"],
-	},
-	play: async ({ canvasElement }) => {
-		const canvas = within(canvasElement);
-		const card = await canvas.findByTestId("container-collapsed-box");
-		await expect(card).toBeInTheDocument();
-		// Port labels surface as the handle's `title` attribute (tooltip);
-		// they don't render as visible text on the rail.
-		await expect(within(card).getByTitle("Design")).toBeInTheDocument();
-		await expect(within(card).getByTitle("API ready")).toBeInTheDocument();
-	},
-};
-
-function legacyContainerDoc(): PertDoc {
-	const d = containerDoc();
-	// Simulate a pre-rework doc that never went through `ensureContainerInterfaces`.
-	// The collapsed-card should still render with a single default handle per
-	// side instead of failing to attach the rerouted edges.
-	delete d.interfacesByContainerId.box;
-	return d;
-}
-
-export const ContainerCollapsedLegacy: Story = {
-	args: {
-		seed: legacyContainerDoc(),
-		projectId: "story-canvas-container-legacy",
-		collapseOnMount: ["box"],
-	},
-	play: async ({ canvasElement }) => {
-		const canvas = within(canvasElement);
-		await expect(
-			canvas.getByTestId("container-collapsed-box"),
-		).toBeInTheDocument();
 	},
 };
 
@@ -629,10 +536,12 @@ export const TabSpawnAndSibling: Story = {
 		// inline-edit blur/commit cycle is racy and the click handler is
 		// already covered by the ArrowKeyNavigation story.
 		await userEvent.keyboard("{Enter}");
-		selectionStore.setState({
+		selectionStore.setState((s) => ({
+			...s,
 			projectId: "story-canvas-tab-spawn",
 			taskId: "A",
-		});
+			groupId: null,
+		}));
 
 		dispatchKey({ key: "Tab", shiftKey: true });
 		await waitFor(() => expect(countTaskNodes(canvasElement)).toBe(before + 2));

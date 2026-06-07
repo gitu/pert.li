@@ -4,6 +4,7 @@ import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { TooltipProvider } from "#/components/ui/tooltip";
 import {
 	clearActiveProjectDoc,
+	selectGroup,
 	selectTask,
 	setActiveProjectDoc,
 } from "#/lib/pert/store";
@@ -24,24 +25,23 @@ function StoryHarness({
 	kind,
 	onClose,
 }: {
-	kind: "task" | "container";
+	kind: "task" | "group";
 	onClose: () => void;
 }) {
 	useEffect(() => {
 		const doc = createEmptyPertDoc("Fullscreen dock story");
-		if (kind === "container") {
-			doc.tasksById.C1 = {
-				id: "C1",
-				kind: "container",
-				title: "Milestone container",
-				parentId: null,
+		if (kind === "group") {
+			doc.groupsById.G1 = {
+				id: "G1",
+				name: "Milestone group",
+				parentGroupId: null,
+				order: 0,
 			};
 		} else {
 			doc.tasksById.T1 = {
 				id: "T1",
 				kind: "task",
 				title: "Fullscreen dock demo task",
-				parentId: null,
 				estimate: {
 					optimistic: 1,
 					mostLikely: 3,
@@ -52,7 +52,11 @@ function StoryHarness({
 		}
 		// biome-ignore lint/suspicious/noExplicitAny: story-only mock for changeDoc; the real type is a ChangeFn from Automerge.
 		setActiveProjectDoc(PROJECT_ID, doc, noopChangeDoc as any, null);
-		selectTask(PROJECT_ID, kind === "container" ? "C1" : "T1");
+		if (kind === "group") {
+			selectGroup(PROJECT_ID, "G1");
+		} else {
+			selectTask(PROJECT_ID, "T1");
+		}
 		return () => {
 			selectTask(PROJECT_ID, null);
 			clearActiveProjectDoc(PROJECT_ID);
@@ -98,8 +102,8 @@ export const TaskSelected: Story = {
 	},
 };
 
-export const ContainerSelected: Story = {
-	render: () => <StoryHarness kind="container" onClose={fn()} />,
+export const GroupSelected: Story = {
+	render: () => <StoryHarness kind="group" onClose={fn()} />,
 	play: async ({ canvasElement }) => {
 		const canvas = within(canvasElement);
 		await expect(

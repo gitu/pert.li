@@ -64,8 +64,8 @@ export function findNeighborTaskId(
 }
 
 function isLeafKind(doc: PertDoc, id: TaskId): boolean {
-	const t = doc.tasksById[id];
-	return Boolean(t) && t.kind !== "container";
+	// Every task is now a navigable leaf (groups aren't tasks).
+	return Boolean(doc.tasksById[id]);
 }
 
 function closestByY(

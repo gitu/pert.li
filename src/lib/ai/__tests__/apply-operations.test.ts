@@ -9,14 +9,12 @@ function seed(): PertDoc {
 		id: "A",
 		kind: "task",
 		title: "A",
-		parentId: null,
 		estimate: { optimistic: 1, mostLikely: 2, pessimistic: 3, unit: "day" },
 	};
 	d.tasksById.B = {
 		id: "B",
 		kind: "task",
 		title: "B",
-		parentId: null,
 		estimate: { optimistic: 2, mostLikely: 4, pessimistic: 6, unit: "day" },
 	};
 	return d;
@@ -74,136 +72,107 @@ describe("applyOperations", () => {
 		expect(doc.dependenciesById.ca.from.taskId).toBe("C");
 	});
 
-	describe("nested imports", () => {
-		it("accepts children that forward-reference a container added later in the batch", () => {
+	describe("group imports", () => {
+		it("accepts a task that forward-references a group created later in the batch", () => {
 			const doc = seed();
 			const ops: EditOp[] = [
-				// Child BEFORE its parent container — the model emits this ordering
-				// regularly when importing structured documents.
-				{ op: "add_task", id: "child", title: "Child", parentId: "phase" },
-				{
-					op: "add_task",
-					id: "phase",
-					title: "Phase 1",
-					kind: "container",
-				},
+				// Task BEFORE its group — the model emits this ordering regularly
+				// when importing structured documents.
+				{ op: "add_task", id: "child", title: "Child", groupId: "phase" },
+				{ op: "create_group", id: "phase", name: "Phase 1" },
 			];
 			const results = applyOperations(doc, ops);
 			expect(results.every((r) => r.ok)).toBe(true);
-			expect(doc.tasksById.child.parentId).toBe("phase");
-			expect(doc.tasksById.phase.kind).toBe("container");
+			expect(doc.tasksById.child.groupId).toBe("phase");
+			expect(doc.groupsById.phase.name).toBe("Phase 1");
 		});
 
-		it("rejects add_task with a parentId that exists nowhere (doc or batch)", () => {
+		it("accepts move_task_to_group referencing a group created earlier in the batch", () => {
 			const doc = seed();
 			const results = applyOperations(doc, [
-				{ op: "add_task", id: "child", title: "Child", parentId: "ghost" },
+				{ op: "create_group", id: "phase", name: "Phase 1" },
+				{ op: "move_task_to_group", taskId: "A", groupId: "phase" },
+			]);
+			expect(results.every((r) => r.ok)).toBe(true);
+			expect(doc.tasksById.A.groupId).toBe("phase");
+		});
+
+		it("rejects add_task with a groupId that exists nowhere (doc or batch)", () => {
+			const doc = seed();
+			const results = applyOperations(doc, [
+				{ op: "add_task", id: "child", title: "Child", groupId: "ghost" },
 			]);
 			expect(results[0]).toMatchObject({ ok: false });
 			expect(doc.tasksById.child).toBeUndefined();
 		});
 
-		it("re-roots a child whose forward-referenced parent op failed", () => {
+		it("clears the groupId of a child whose forward-referenced group op failed", () => {
 			const doc = seed();
 			const results = applyOperations(doc, [
-				// Child references a container that the batch *claims* to add…
-				{ op: "add_task", id: "child", title: "Child", parentId: "phase" },
-				// …but the container op itself fails (parent of the container is
-				// bogus), so the child would dangle. The post-batch pass re-roots it.
+				// Child references a group the batch *claims* to create…
+				{ op: "add_task", id: "child", title: "Child", groupId: "phase" },
+				// …but the create op itself fails (bogus parent group), so the
+				// child would dangle. The post-batch pass clears it to null.
 				{
-					op: "add_task",
+					op: "create_group",
 					id: "phase",
-					title: "Phase 1",
-					kind: "container",
-					parentId: "ghost",
+					name: "Phase 1",
+					parentGroupId: "ghost",
 				},
 			]);
 			expect(results[0]).toMatchObject({ ok: true });
 			expect(results[1]).toMatchObject({ ok: false });
 			expect(doc.tasksById.child).toBeDefined();
-			// Visible at the root instead of invisible under a missing parent.
-			expect(doc.tasksById.child.parentId).toBeNull();
+			expect(doc.tasksById.child.groupId).toBeNull();
 		});
 
-		it("re-roots children whose parent gets demoted to a leaf in the same batch", () => {
+		it("nests groups created in the same batch", () => {
 			const doc = seed();
-			applyOperations(doc, [
-				{ op: "add_task", id: "box", title: "Box", kind: "container" },
-				{ op: "add_task", id: "child", title: "Child", parentId: "box" },
-				// Later in the batch the parent stops being a container — only
-				// containers may have children, so the child must be re-rooted.
-				{ op: "set_kind", taskId: "box", kind: "task" },
-			]);
-			expect(doc.tasksById.box.kind).toBe("task");
-			expect(doc.tasksById.child.parentId).toBeNull();
-		});
-
-		it("re-roots tasks whose forward references form a parent cycle", () => {
-			const doc = seed();
-			applyOperations(doc, [
+			const results = applyOperations(doc, [
+				{ op: "create_group", id: "outer", name: "Outer" },
 				{
-					op: "add_task",
-					id: "c1",
-					title: "C1",
-					kind: "container",
-					parentId: "c2",
+					op: "create_group",
+					id: "inner",
+					name: "Inner",
+					parentGroupId: "outer",
 				},
-				{
-					op: "add_task",
-					id: "c2",
-					title: "C2",
-					kind: "container",
-					parentId: "c1",
-				},
+				{ op: "add_task", id: "leaf", title: "Leaf", groupId: "inner" },
 			]);
-			// Both exist; at least one was re-rooted so the chain terminates.
-			expect(doc.tasksById.c1).toBeDefined();
-			expect(doc.tasksById.c2).toBeDefined();
-			const chainTerminates = (id: string): boolean => {
-				const seen = new Set<string>([id]);
-				let cursor = doc.tasksById[id]?.parentId ?? null;
-				while (cursor) {
-					if (seen.has(cursor) || !doc.tasksById[cursor]) return false;
-					seen.add(cursor);
-					cursor = doc.tasksById[cursor].parentId ?? null;
-				}
-				return true;
-			};
-			expect(chainTerminates("c1")).toBe(true);
-			expect(chainTerminates("c2")).toBe(true);
+			expect(results.every((r) => r.ok)).toBe(true);
+			expect(doc.groupsById.inner.parentGroupId).toBe("outer");
+			expect(doc.tasksById.leaf.groupId).toBe("inner");
 		});
 	});
 
 	describe("multiple imports (id collisions)", () => {
 		it("remaps colliding client ids to fresh ids instead of overwriting", () => {
 			const doc = seed();
-			// First import staged a container + child with generic ids.
+			// First import staged a group + task with generic ids.
 			applyOperations(doc, [
-				{ op: "add_task", id: "phase_1", title: "Design", kind: "container" },
-				{ op: "add_task", id: "t1", title: "Wireframes", parentId: "phase_1" },
+				{ op: "create_group", id: "phase_1", name: "Design" },
+				{ op: "add_task", id: "t1", title: "Wireframes", groupId: "phase_1" },
 			]);
 			// Second, independent import uses the SAME generic ids.
 			const results = applyOperations(doc, [
-				{ op: "add_task", id: "phase_1", title: "Backend", kind: "container" },
-				{ op: "add_task", id: "t1", title: "API schema", parentId: "phase_1" },
+				{ op: "create_group", id: "phase_1", name: "Backend" },
+				{ op: "add_task", id: "t1", title: "API schema", groupId: "phase_1" },
 			]);
 			expect(results.every((r) => r.ok)).toBe(true);
-			// First import's tasks are untouched.
-			expect(doc.tasksById.phase_1.title).toBe("Design");
+			// First import's entities are untouched.
+			expect(doc.groupsById.phase_1.name).toBe("Design");
 			expect(doc.tasksById.t1.title).toBe("Wireframes");
-			expect(doc.tasksById.t1.parentId).toBe("phase_1");
-			// Second import's tasks exist under fresh ids, nested correctly.
+			expect(doc.tasksById.t1.groupId).toBe("phase_1");
+			// Second import's entities exist under fresh ids, grouped correctly.
 			const titles = Object.values(doc.tasksById).map((t) => t.title);
-			expect(titles).toContain("Backend");
 			expect(titles).toContain("API schema");
-			const backend = Object.values(doc.tasksById).find(
-				(t) => t.title === "Backend",
+			const backend = Object.values(doc.groupsById).find(
+				(g) => g.name === "Backend",
 			);
 			const apiTask = Object.values(doc.tasksById).find(
 				(t) => t.title === "API schema",
 			);
 			expect(backend?.id).not.toBe("phase_1");
-			expect(apiTask?.parentId).toBe(backend?.id);
+			expect(apiTask?.groupId).toBe(backend?.id);
 		});
 
 		it("remaps dependency references along with the task ids", () => {
@@ -268,12 +237,16 @@ describe("applyOperations", () => {
 			expect(doc.tasksById.A.estimate).toBeUndefined();
 		});
 
-		it("set_key sets and clears via empty string", () => {
+		it("set_task_number sets and clears via null", () => {
 			const doc = seed();
-			applyOperations(doc, [{ op: "set_key", taskId: "A", key: "M1.A" }]);
-			expect(doc.tasksById.A.key).toBe("M1.A");
-			applyOperations(doc, [{ op: "set_key", taskId: "A", key: null }]);
-			expect(doc.tasksById.A.key).toBeUndefined();
+			applyOperations(doc, [
+				{ op: "set_task_number", taskId: "A", number: "M1.A" },
+			]);
+			expect(doc.tasksById.A.numberOverride).toBe("M1.A");
+			applyOperations(doc, [
+				{ op: "set_task_number", taskId: "A", number: null },
+			]);
+			expect(doc.tasksById.A.numberOverride).toBeUndefined();
 		});
 
 		it("set_notes sets and clears", () => {
@@ -337,22 +310,26 @@ describe("applyOperations", () => {
 			expect(results[0]).toMatchObject({ ok: false });
 		});
 
-		it("move_task reparents under a container", () => {
+		it("move_task_to_group assigns and clears a task's group", () => {
 			const doc = seed();
 			applyOperations(doc, [
-				{ op: "add_task", id: "P", title: "Parent", kind: "container" },
-				{ op: "move_task", taskId: "A", parentId: "P" },
+				{ op: "create_group", id: "G", name: "Group" },
+				{ op: "move_task_to_group", taskId: "A", groupId: "G" },
 			]);
-			expect(doc.tasksById.A.parentId).toBe("P");
+			expect(doc.tasksById.A.groupId).toBe("G");
+			applyOperations(doc, [
+				{ op: "move_task_to_group", taskId: "A", groupId: null },
+			]);
+			expect(doc.tasksById.A.groupId).toBeNull();
 		});
 
-		it("move_task rejects non-container parents", () => {
+		it("move_task_to_group rejects an unknown group", () => {
 			const doc = seed();
 			const results = applyOperations(doc, [
-				{ op: "move_task", taskId: "A", parentId: "B" },
+				{ op: "move_task_to_group", taskId: "A", groupId: "ghost" },
 			]);
 			expect(results[0]).toMatchObject({ ok: false });
-			expect(doc.tasksById.A.parentId).toBeNull();
+			expect(doc.tasksById.A.groupId ?? null).toBeNull();
 		});
 
 		it("set_dependency edits type and lag; lagDays=null clears", () => {
@@ -383,83 +360,58 @@ describe("applyOperations", () => {
 			expect(doc.dependenciesById.ab).toBeUndefined();
 		});
 
-		it("remove_task deletes deps and reparents its children", () => {
+		it("remove_task deletes its touching deps", () => {
 			const doc = seed();
 			applyOperations(doc, [
-				{ op: "add_task", id: "P", title: "Parent", kind: "container" },
-				{ op: "move_task", taskId: "A", parentId: "P" },
 				{ op: "add_dependency", fromTaskId: "A", toTaskId: "B", id: "ab" },
-				{ op: "remove_task", taskId: "P" },
+				{ op: "remove_task", taskId: "B" },
 			]);
-			expect(doc.tasksById.P).toBeUndefined();
-			// A is promoted back to top level.
-			expect(doc.tasksById.A.parentId).toBeNull();
-			// A's outgoing dep survives — only deps touching P would be dropped.
-			expect(doc.dependenciesById.ab).toBeDefined();
+			expect(doc.tasksById.B).toBeUndefined();
+			// The dep touching B is cascaded away.
+			expect(doc.dependenciesById.ab).toBeUndefined();
 		});
 
-		it("add_interface / set_interface / remove_interface lifecycle", () => {
+		it("create_group / rename_group / set_group_parent / delete_group lifecycle", () => {
 			const doc = seed();
 			const addResults = applyOperations(doc, [
-				{ op: "add_task", id: "C", title: "Container", kind: "container" },
-				{
-					op: "add_interface",
-					id: "if1",
-					containerId: "C",
-					kind: "entry",
-					label: "input",
-				},
+				{ op: "create_group", id: "g1", name: "Parent" },
+				{ op: "create_group", id: "g2", name: "Child", parentGroupId: "g1" },
 			]);
 			expect(addResults.every((r) => r.ok)).toBe(true);
-			expect(doc.interfacesByContainerId.C?.if1).toBeDefined();
-			expect(doc.interfacesByContainerId.C.if1.label).toBe("input");
+			expect(doc.groupsById.g2.parentGroupId).toBe("g1");
 
 			applyOperations(doc, [
-				{
-					op: "set_interface",
-					containerId: "C",
-					interfaceId: "if1",
-					label: "renamed",
-					taskRef: "A",
-				},
+				{ op: "rename_group", groupId: "g1", name: "Renamed" },
+				{ op: "move_task_to_group", taskId: "A", groupId: "g2" },
 			]);
-			expect(doc.interfacesByContainerId.C.if1.label).toBe("renamed");
-			expect(doc.interfacesByContainerId.C.if1.taskRef).toBe("A");
+			expect(doc.groupsById.g1.name).toBe("Renamed");
+			expect(doc.tasksById.A.groupId).toBe("g2");
 
+			// Promote g2 back to root.
 			applyOperations(doc, [
-				{ op: "remove_interface", containerId: "C", interfaceId: "if1" },
+				{ op: "set_group_parent", groupId: "g2", parentGroupId: null },
 			]);
-			expect(doc.interfacesByContainerId.C.if1).toBeUndefined();
+			expect(doc.groupsById.g2.parentGroupId).toBeNull();
+
+			// Delete g2 → its member task A is promoted (g2 is now a root, so A
+			// becomes ungrouped) and the task survives.
+			applyOperations(doc, [{ op: "delete_group", groupId: "g2" }]);
+			expect(doc.groupsById.g2).toBeUndefined();
+			expect(doc.tasksById.A).toBeDefined();
+			expect(doc.tasksById.A.groupId).toBeNull();
 		});
 
-		it("pin_dependency sets and clears the interface hint", () => {
+		it("set_group_parent rejects a move that would create a cycle", () => {
 			const doc = seed();
 			applyOperations(doc, [
-				{ op: "add_task", id: "C", title: "Container", kind: "container" },
-				{
-					op: "add_interface",
-					id: "if1",
-					containerId: "C",
-					kind: "exit",
-				},
-				{ op: "add_dependency", fromTaskId: "A", toTaskId: "B", id: "ab" },
-				{
-					op: "pin_dependency",
-					dependencyId: "ab",
-					side: "from",
-					interfaceId: "if1",
-				},
+				{ op: "create_group", id: "g1", name: "One" },
+				{ op: "create_group", id: "g2", name: "Two", parentGroupId: "g1" },
 			]);
-			expect(doc.dependenciesById.ab.from.interfaceId).toBe("if1");
-			applyOperations(doc, [
-				{
-					op: "pin_dependency",
-					dependencyId: "ab",
-					side: "from",
-					interfaceId: null,
-				},
+			const results = applyOperations(doc, [
+				{ op: "set_group_parent", groupId: "g1", parentGroupId: "g2" },
 			]);
-			expect(doc.dependenciesById.ab.from.interfaceId).toBeUndefined();
+			expect(results[0]).toMatchObject({ ok: false });
+			expect(doc.groupsById.g1.parentGroupId).toBeNull();
 		});
 
 		it("add_dependency dedupes when the edge already exists", () => {

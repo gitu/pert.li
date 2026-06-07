@@ -5,9 +5,8 @@ import { OverviewMetrics } from "./overview-metrics";
 const base: ProjectOverview = {
 	taskCount: 24,
 	milestoneCount: 4,
-	containerCount: 6,
+	groupCount: 6,
 	dependencyCount: 31,
-	interfaceCount: 8,
 	status: { notStarted: 14, inProgress: 6, completed: 8 },
 	progressPct: 38,
 	schedule: {
@@ -35,9 +34,8 @@ export const Empty: Story = {
 		overview: {
 			taskCount: 0,
 			milestoneCount: 0,
-			containerCount: 0,
+			groupCount: 0,
 			dependencyCount: 0,
-			interfaceCount: 0,
 			status: { notStarted: 0, inProgress: 0, completed: 0 },
 			progressPct: 0,
 			schedule: {
