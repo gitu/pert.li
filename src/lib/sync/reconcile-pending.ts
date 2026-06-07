@@ -29,6 +29,7 @@ export type ReconcileDeps = {
 	// without a real RPC.
 	register: (input: {
 		title: string;
+		description?: string;
 		workspaceId?: string;
 		automergeDocUrl: string;
 	}) => Promise<RegisterResult>;
@@ -61,6 +62,7 @@ export async function processRecord(
 	try {
 		const result = await deps.register({
 			title: record.title,
+			...(record.description ? { description: record.description } : {}),
 			workspaceId: record.workspaceId,
 			automergeDocUrl: record.automergeDocUrl,
 		});

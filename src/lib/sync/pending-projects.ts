@@ -21,6 +21,7 @@ export type PendingStatus =
 export type PendingProject = {
 	localId: string; // uuid; doubles as the route projectId until registered
 	title: string;
+	description?: string; // carried to the server row on registration
 	workspaceId?: string; // unknown offline → server lands it in personal ws
 	automergeDocUrl: AutomergeUrl;
 	createdAt: string; // ISO
