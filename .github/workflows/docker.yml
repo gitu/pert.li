@@ -81,8 +81,16 @@ jobs:
           tags: pert-li:scan
           build-args: |
             APP_VERSION=${{ steps.version.outputs.value }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # type=gha is the fast, same-region warm cache; the registry
+          # `:buildcache` tag is a durable backstop that survives GHA's 10GB
+          # LRU eviction (mode=max exports every layer, incl. the cached
+          # `pnpm install`). The push step below reuses this.
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ steps.img.outputs.name }}:buildcache
+          cache-to: |
+            type=gha,mode=max
+            type=registry,ref=${{ steps.img.outputs.name }}:buildcache,mode=max
 
       # Pre-push gate: the production client bundle must never contain a
       # secret value, and no server-only module may be dragged into a client
@@ -121,7 +129,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.value }}
-          cache-from: type=gha
+          # Full cache hit from the load-for-scan build above (identical
+          # `runner` layers) — no cache-to needed.
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ steps.img.outputs.name }}:buildcache
 
       # ---- Eval image (separate package, matching version tags) -------------
       # Publish the bring-your-own-LLM eval runner (Dockerfile `eval` target) as
@@ -155,8 +167,17 @@ jobs:
           labels: ${{ steps.meta-eval.outputs.labels }}
           build-args: |
             APP_VERSION=${{ steps.version.outputs.value }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # eval is `FROM build`, so the runner `:buildcache` already carries
+          # the shared `build` stage layers (mode=max) — read it for those,
+          # plus the eval package's own buildcache for the extra source/dev-deps
+          # layer it adds on top.
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ steps.img.outputs.name }}:buildcache
+            type=registry,ref=${{ steps.img.outputs.name }}-evals:buildcache
+          cache-to: |
+            type=gha,mode=max
+            type=registry,ref=${{ steps.img.outputs.name }}-evals:buildcache,mode=max
 
   # ---- Deploy ----------------------------------------------------------------
   # Runs only after `build` succeeds (image is on ghcr.io). We do NOT rebuild
