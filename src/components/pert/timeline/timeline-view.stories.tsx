@@ -273,6 +273,40 @@ export const Grouped: Story = {
 	},
 };
 
+export const GroupedCollapse: Story = {
+	args: { doc: keyedDoc(), projectId: "story-timeline-grouped-collapse" },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// Turn grouping on so headers + nested groups materialise.
+		await userEvent.click(await canvas.findByTestId("timeline-group"));
+		// API sub-group (under M1) holds lanes a1 + a2 — both visible to start.
+		await expect(canvas.getByTestId("timeline-lane-a1")).toBeInTheDocument();
+		await expect(canvas.getByTestId("timeline-lane-a2")).toBeInTheDocument();
+
+		// Collapse the API sub-group: its lanes disappear, the header stays.
+		const apiHeader = canvas.getByTestId("timeline-header-API");
+		await expect(apiHeader).toHaveAttribute("aria-expanded", "true");
+		await userEvent.click(apiHeader);
+		await expect(apiHeader).toHaveAttribute("data-collapsed", "true");
+		await expect(apiHeader).toHaveAttribute("aria-expanded", "false");
+		await expect(canvas.queryByTestId("timeline-lane-a1")).toBeNull();
+		await expect(canvas.queryByTestId("timeline-lane-a2")).toBeNull();
+		// The sibling UI group is untouched.
+		await expect(canvas.getByTestId("timeline-lane-b1")).toBeInTheDocument();
+
+		// Expanding restores the lanes.
+		await userEvent.click(apiHeader);
+		await expect(apiHeader).toHaveAttribute("data-collapsed", "false");
+		await expect(canvas.getByTestId("timeline-lane-a1")).toBeInTheDocument();
+
+		// Collapsing a top-level group folds away its nested sub-group too.
+		await userEvent.click(canvas.getByTestId("timeline-header-M1"));
+		await expect(canvas.queryByTestId("timeline-header-API")).toBeNull();
+		await expect(canvas.queryByTestId("timeline-lane-a1")).toBeNull();
+		await expect(canvas.queryByTestId("timeline-lane-m1")).toBeNull();
+	},
+};
+
 export const Cycle: Story = {
 	args: {
 		doc: (() => {
