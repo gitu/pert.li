@@ -136,6 +136,32 @@ describe("proposals store", () => {
 		expect(summary.failures).toEqual([]);
 	});
 
+	it("stages and applies the valid ops while reporting a schema-invalid op as a failure", () => {
+		const live = seed();
+		// A malformed add_task missing its required `title` — the kind of op that
+		// slips through the unvalidated client tool boundary. It must NOT crash the
+		// batch; it should surface as a failure while the valid ops still apply.
+		const ops = [
+			{ op: "add_task", id: "C", title: "Ship" },
+			{ op: "add_task", id: "D" },
+			{ op: "set_title", taskId: "A", title: "Alpha v2" },
+		] as unknown as EditOp[];
+		const result = stageProposal(live, "partial", ops);
+		expect(result.ok).toBe(true);
+		if (!result.ok) return;
+		expect(result.summary.operationsApplied).toBe(2);
+		expect(result.summary.operationsFailed).toBe(1);
+		const failure = result.summary.failures.find((f) => f.op === "add_task");
+		expect(failure?.error).toContain("invalid operation");
+		// Applying against the live doc lands the valid ops and skips the bad one.
+		const changeDoc = (mutate: (d: PertDoc) => void) => mutate(live);
+		const applyResults = applyProposal(result.proposal.id, changeDoc);
+		expect(live.tasksById.C).toBeDefined();
+		expect(live.tasksById.D).toBeUndefined();
+		expect(live.tasksById.A.title).toBe("Alpha v2");
+		expect(applyResults.filter((r) => !r.ok)).toHaveLength(1);
+	});
+
 	it("stageProposal refuses when no operation could be staged and leaves no proposal behind", () => {
 		const live = seed();
 		const result = stageProposal(live, "probe", [

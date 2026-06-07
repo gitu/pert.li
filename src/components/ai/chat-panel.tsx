@@ -63,6 +63,7 @@ import {
 	setTitleMutation,
 	summarizeProject,
 } from "#/lib/ai/tool-mutators";
+import { withInputValidation } from "#/lib/ai/tool-validate";
 import {
 	addDependencyTool,
 	addInterfaceTool,
@@ -972,6 +973,17 @@ function BoundChatPanel({
 					return { ok: true as const, plan: summarizeWorkPlan(plan) };
 				}),
 			]
+				// Validate each tool's args against its own inputSchema before the
+				// handler runs (the @tanstack/ai client path doesn't). propose_changes
+				// is exempt: a strict whole-batch parse would reject the entire
+				// proposal on a single bad op, defeating its per-op tolerance — that
+				// validation lives in applyOperations instead, shared with the diff
+				// preview and the manual Apply path.
+				.map((tool) =>
+					tool.name === proposeChangesTool.name
+						? tool
+						: withInputValidation(tool),
+				)
 				// Every executor gets logging + throw containment (see tool-log.ts):
 				// calls/results/errors land in the devtools console and in
 				// window.__pertliToolLog, and a handler exception becomes an

@@ -1,5 +1,5 @@
 import type { PertDoc } from "#/lib/pert/types";
-import type { EditOp } from "./operations";
+import { type EditOp, editOpSchema } from "./operations";
 import {
 	addDependencyMutation,
 	addInterfaceMutation,
@@ -38,6 +38,13 @@ export function applyOperations(doc: PertDoc, ops: EditOp[]): OpResult[] {
 	// `add_task id=phase_1` silently overwrites the first one's task.
 	const remap = new Map<string, string>();
 	for (const op of ops) {
+		// The propose_changes client path is unvalidated, so a batch entry may be
+		// null, a primitive, or missing its `op` discriminator. Every raw `op.op`
+		// read in this function (the pre-scans, remapOp, and the post-batch
+		// normalisation) would throw on such an entry BEFORE runOpSafe's per-op
+		// guard runs, aborting the whole batch. Skip non-object entries here and
+		// let them fall through to runOpSafe, which records them as failed rows.
+		if (op == null || typeof op !== "object") continue;
 		if (op.op === "add_task" && op.id && doc.tasksById[op.id]) {
 			remap.set(op.id, newId("task"));
 		} else if (
@@ -55,6 +62,7 @@ export function applyOperations(doc: PertDoc, ops: EditOp[]): OpResult[] {
 	// their parent container).
 	const pendingContainerIds = new Set<string>();
 	for (const op of remapped) {
+		if (op == null || typeof op !== "object") continue;
 		if (op.op === "add_task" && op.id && (op.kind ?? "task") === "container") {
 			pendingContainerIds.add(op.id);
 		}
@@ -62,7 +70,7 @@ export function applyOperations(doc: PertDoc, ops: EditOp[]): OpResult[] {
 
 	const results: OpResult[] = [];
 	for (let i = 0; i < remapped.length; i++) {
-		results.push(runOp(doc, remapped[i], i, pendingContainerIds));
+		results.push(runOpSafe(doc, remapped[i], i, pendingContainerIds));
 	}
 
 	// Post-batch normalisation: a task whose parent op failed (or whose
@@ -72,6 +80,7 @@ export function applyOperations(doc: PertDoc, ops: EditOp[]): OpResult[] {
 	for (let i = 0; i < remapped.length; i++) {
 		const op = remapped[i];
 		const r = results[i];
+		if (op == null || typeof op !== "object") continue;
 		if (op.op === "add_task" && r.ok && r.id) addedTaskIds.push(r.id);
 	}
 	for (const id of addedTaskIds) {
@@ -104,6 +113,9 @@ function hasBrokenParentChain(doc: PertDoc, id: string): boolean {
 // Only ids present in the map change; references to pre-existing doc entities
 // pass through untouched.
 function remapOp(op: EditOp, remap: Map<string, string>): EditOp {
+	// Malformed entries (non-object, or an unknown `op` discriminator) pass
+	// through untouched so runOpSafe can report them — never throw here.
+	if (op == null || typeof op !== "object") return op;
 	const id = (v: string): string => remap.get(v) ?? v;
 	const idOrNull = (v: string | null | undefined) =>
 		v == null ? v : (remap.get(v) ?? v);
@@ -156,6 +168,55 @@ function remapOp(op: EditOp, remap: Map<string, string>): EditOp {
 				containerId: id(op.containerId),
 				taskRef: idOrNull(op.taskRef),
 			};
+		default:
+			// Object with an unrecognised `op` — leave it for runOpSafe to reject.
+			return op;
+	}
+}
+
+// Validates one op against editOpSchema, then runs it with a try/catch around
+// the mutator. Two failure modes are contained here so a single bad op never
+// aborts the whole batch (honoring the file-header contract):
+//   1. Schema-invalid ops (the client tool boundary doesn't validate input, so
+//      the model's raw JSON arrives unchecked). An op missing a required field
+//      — e.g. add_task without a title — would otherwise reach the mutator and
+//      assign an `undefined` property, which is legal on the plain-JS staging
+//      clone but throws Automerge's "Cannot assign undefined value" RangeError
+//      on the live change proxy (the work-plan auto-apply crash).
+//   2. Any unexpected throw from the mutator itself.
+function runOpSafe(
+	doc: PertDoc,
+	op: EditOp,
+	index: number,
+	pendingContainerIds: ReadonlySet<string>,
+): OpResult {
+	// op may be null/primitive (unvalidated client input) — read the
+	// discriminator defensively so this label line never throws.
+	const opName =
+		(op != null && typeof op === "object"
+			? (op as { op?: EditOp["op"] }).op
+			: undefined) ?? ("unknown" as EditOp["op"]);
+	const parsed = editOpSchema.safeParse(op);
+	if (!parsed.success) {
+		const reason = parsed.error.issues
+			.map((iss) => {
+				const path = iss.path.join(".");
+				return path ? `${path}: ${iss.message}` : iss.message;
+			})
+			.join("; ");
+		return {
+			op: opName,
+			index,
+			ok: false,
+			error: `invalid operation: ${reason}`,
+		};
+	}
+	try {
+		return runOp(doc, parsed.data, index, pendingContainerIds);
+	} catch (err) {
+		const message =
+			err instanceof Error ? err.message : `non-Error thrown: ${String(err)}`;
+		return { op: opName, index, ok: false, error: message };
 	}
 }
 
