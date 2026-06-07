@@ -80,6 +80,49 @@ const diamondDoc: PertDoc = (() => {
 
 const emptyDoc = createEmptyPertDoc("New project");
 
+// Two real groups plus an ungrouped task, so the table renders both real
+// group headers (selectable / renamable) and the synthetic "(ungrouped)"
+// node (inert) when "Group" is toggled on. The factory below clones a fresh
+// copy per story so the inline-rename / selection plays don't leak state.
+function makeGroupedDoc(): PertDoc {
+	const d = createEmptyPertDoc("Grouped demo");
+	d.groupsById.g1 = {
+		id: "g1",
+		name: "Design phase",
+		parentGroupId: null,
+		order: 0,
+	};
+	d.groupsById.g2 = {
+		id: "g2",
+		name: "Build phase",
+		parentGroupId: null,
+		order: 1,
+	};
+	d.tasksById.A = {
+		id: "A",
+		kind: "task",
+		title: "Wireframes",
+		estimate: est(1, 2, 3),
+		groupId: "g1",
+		order: 0,
+	};
+	d.tasksById.B = {
+		id: "B",
+		kind: "task",
+		title: "Build API",
+		estimate: est(2, 4, 6),
+		groupId: "g2",
+		order: 0,
+	};
+	d.tasksById.C = {
+		id: "C",
+		kind: "task",
+		title: "Loose end",
+		estimate: est(1, 1, 2),
+	};
+	return d;
+}
+
 // Read-only stage: renders the list without wiring the projectDocStore, so
 // the quick-add row and inline edits stay hidden. Mirrors the mobile
 // read-only mode and the marketing demo cases.
@@ -146,6 +189,17 @@ export const Diamond: Story = {
 	},
 };
 
+// Static visual state of the grouped table (no play). Renders the editable
+// grouped fixture so the group headers — selectable / double-click-to-rename,
+// with the synthetic "(ungrouped)" bucket — are visible at a glance. Toggle
+// "Group" in the toolbar to see the nesting.
+export const Grouped: Story = {
+	args: { doc: emptyDoc, projectId: "story-grouped" },
+	render: (args) => (
+		<EditableStage seed={makeGroupedDoc()} projectId={args.projectId} />
+	),
+};
+
 export const Empty: Story = {
 	args: { doc: emptyDoc, projectId: "story-empty" },
 	play: async ({ canvasElement }) => {
@@ -207,6 +261,146 @@ export const KeyboardQuickAddMilestone: Story = {
 			const milestones = canvas.queryAllByText("milestone");
 			expect(milestones.length).toBeGreaterThan(0);
 		});
+	},
+};
+
+// Double-clicking a group name in the grouped table opens an inline editor;
+// Enter commits the rename through renameGroupMutation. Mirrors how a task
+// title is renamed, which groups previously couldn't do at all in the table.
+export const GroupRename: Story = {
+	args: { doc: emptyDoc, projectId: "story-group-rename" },
+	render: (args) => (
+		<EditableStage seed={makeGroupedDoc()} projectId={args.projectId} />
+	),
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByTestId("task-list-group"));
+		const label = await canvas.findByTestId("task-list-group-label-g1");
+		await expect(label).toHaveTextContent("Design phase");
+		await userEvent.dblClick(label);
+		const input = await canvas.findByTestId("task-list-group-name-input");
+		await userEvent.clear(input);
+		await userEvent.type(input, "Discovery{Enter}");
+		await waitFor(() =>
+			expect(
+				canvas.queryByTestId("task-list-group-name-input"),
+			).not.toBeInTheDocument(),
+		);
+		await waitFor(() =>
+			expect(canvas.getByTestId("task-list-group-label-g1")).toHaveTextContent(
+				"Discovery",
+			),
+		);
+	},
+};
+
+// Escape during a group rename discards the edit — guards the blur-commit
+// race where unmounting the input would otherwise commit on the way out.
+export const GroupRenameEscape: Story = {
+	args: { doc: emptyDoc, projectId: "story-group-rename-escape" },
+	render: (args) => (
+		<EditableStage seed={makeGroupedDoc()} projectId={args.projectId} />
+	),
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByTestId("task-list-group"));
+		await userEvent.dblClick(
+			await canvas.findByTestId("task-list-group-label-g1"),
+		);
+		const input = await canvas.findByTestId("task-list-group-name-input");
+		await userEvent.clear(input);
+		await userEvent.type(input, "Throwaway{Escape}");
+		await waitFor(() =>
+			expect(
+				canvas.queryByTestId("task-list-group-name-input"),
+			).not.toBeInTheDocument(),
+		);
+		// Name is unchanged — Escape cancelled, blur didn't sneak a commit in.
+		await expect(
+			canvas.getByTestId("task-list-group-label-g1"),
+		).toHaveTextContent("Design phase");
+	},
+};
+
+// Single-clicking a group name selects the group (opens the inspector) and
+// highlights the header row. The synthetic "(ungrouped)" node stays inert.
+export const GroupSelect: Story = {
+	args: { doc: emptyDoc, projectId: "story-group-select" },
+	render: (args) => (
+		<EditableStage seed={makeGroupedDoc()} projectId={args.projectId} />
+	),
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByTestId("task-list-group"));
+		await userEvent.click(
+			await canvas.findByTestId("task-list-group-label-g2"),
+		);
+		await waitFor(() => expect(selectionStore.state.groupId).toBe("g2"));
+		await waitFor(() =>
+			expect(canvas.getByTestId("task-list-group-g2")).toHaveAttribute(
+				"data-selected",
+				"true",
+			),
+		);
+		// The ungrouped bucket can't be selected — its label button is disabled.
+		await expect(
+			canvas.getByTestId("task-list-group-label-__ungrouped__"),
+		).toBeDisabled();
+	},
+};
+
+// Clicking the chevron / metadata area still collapses the group — the new
+// name affordance must not have stolen the toggle.
+export const GroupCollapseStillWorks: Story = {
+	args: { doc: emptyDoc, projectId: "story-group-collapse" },
+	render: (args) => (
+		<EditableStage seed={makeGroupedDoc()} projectId={args.projectId} />
+	),
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByTestId("task-list-group"));
+		await expect(await canvas.findByTestId("task-list-row-A")).toBeVisible();
+		// Click the header cell itself (not the name button) to toggle collapse.
+		// The collapse handler lives on the <td>, so target it directly.
+		const headerCell = canvas
+			.getByTestId("task-list-group-g1")
+			.querySelector("td");
+		if (!headerCell) throw new Error("group header cell not found");
+		await userEvent.click(headerCell);
+		await waitFor(() =>
+			expect(canvas.queryByTestId("task-list-row-A")).not.toBeInTheDocument(),
+		);
+	},
+};
+
+// In "Edit all" mode every group name becomes an always-on input (like task
+// cells), and the one-shot blur guard re-arms on each keystroke — so an Enter
+// commit followed by more typing + blur still commits the later value.
+export const GroupEditAllRename: Story = {
+	args: { doc: emptyDoc, projectId: "story-group-edit-all" },
+	render: (args) => (
+		<EditableStage seed={makeGroupedDoc()} projectId={args.projectId} />
+	),
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByTestId("task-list-group"));
+		await userEvent.click(await canvas.findByTestId("task-list-edit-all"));
+		// Group g1's header row now carries a live name input (no double-click).
+		const g1Row = await canvas.findByTestId("task-list-group-g1");
+		const input = within(g1Row).getByTestId("task-list-group-name-input");
+		await userEvent.clear(input);
+		await userEvent.type(input, "Phase One{Enter}");
+		// Re-arm check: keep typing after Enter, then commit again via blur.
+		await userEvent.type(input, " (rev)");
+		await userEvent.tab();
+		// Exit edit-all so the header renders as a label again, proving the
+		// later (post-Enter) value actually reached the doc.
+		await userEvent.click(canvas.getByTestId("task-list-edit-all"));
+		await waitFor(() =>
+			expect(canvas.getByTestId("task-list-group-label-g1")).toHaveTextContent(
+				"Phase One (rev)",
+			),
+		);
 	},
 };
 
