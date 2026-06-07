@@ -96,3 +96,36 @@ export const DescribeWithAiStep: Story = {
 		);
 	},
 };
+
+// Step 2 — the AI path accepts uploaded source documents. Selecting a file
+// parses it in the browser and shows a chip that settles into the "ready"
+// state; the submit CTA stays "Create & draft" once parsing finishes.
+export const DescribeWithAiAttachDocument: Story = {
+	play: async ({ canvasElement }) => {
+		const body = within(canvasElement.ownerDocument.body);
+		await userEvent.click(body.getByTestId("create-choice-ai"));
+
+		const description = await body.findByLabelText("Describe your project");
+		await userEvent.type(description, "Plan the launch from this brief.");
+
+		const file = new File(
+			["# Launch brief\n\nBuild login, dashboard, and a marketing page."],
+			"brief.md",
+			{ type: "text/markdown" },
+		);
+		const input = await body.findByTestId("attachment-file-input");
+		await userEvent.upload(input, file);
+
+		// The chip first appears parsing, then settles to ready with a char count.
+		await waitFor(async () => {
+			const chips = body.getAllByTestId(/^attachment-att_/);
+			expect(chips.length).toBe(1);
+			expect(chips[0]).toHaveAttribute("data-status", "ready");
+		});
+		await expect(body.getByText("brief.md")).toBeInTheDocument();
+
+		// Submit stays enabled and labelled for the AI draft path.
+		const cta = body.getByRole("button", { name: "Create & draft" });
+		await expect(cta).toBeEnabled();
+	},
+};

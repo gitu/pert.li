@@ -12,6 +12,7 @@ import {
 	addDependencyMutation,
 	addInterfaceMutation,
 	addTaskMutation,
+	listDocuments,
 	type MoveTaskArgs,
 	moveTaskMutation,
 	newId,
@@ -20,6 +21,7 @@ import {
 	type RemoveDependencyArgs,
 	type RemoveInterfaceArgs,
 	type RemoveTaskArgs,
+	readDocument,
 	removeDependencyMutation,
 	removeInterfaceMutation,
 	removeTaskMutation,
@@ -78,6 +80,9 @@ type Executor = (doc: PertDoc, args: Record<string, unknown>) => unknown;
 
 const EXECUTORS: Record<string, Executor> = {
 	read_project: (doc) => summarizeProject(doc),
+	list_documents: (doc) => listDocuments(doc),
+	read_document: (doc, args) =>
+		readDocument(doc, args as unknown as { documentId: string }),
 	add_task: (doc, args) => addTaskMutation(doc, args as unknown as AddTaskArgs),
 	set_title: (doc, args) =>
 		setTitleMutation(doc, args as unknown as SetTitleArgs),

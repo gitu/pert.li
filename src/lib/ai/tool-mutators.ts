@@ -10,11 +10,13 @@ import type {
 	ContainerInterface,
 	Dependency,
 	DependencyType,
+	DocumentId,
 	Estimate,
 	EstimateUnit,
 	InterfaceId,
 	InterfaceKind,
 	PertDoc,
+	ProjectDocumentKind,
 	Task,
 	TaskId,
 	TaskKind,
@@ -592,7 +594,69 @@ export type ProjectSummary = {
 		label: string;
 		taskRef?: TaskId;
 	}>;
+	// Manifest of attached source documents — name/kind/size only, never the
+	// full text (that would blow up every project read). The model calls
+	// `read_document` when it needs a document's contents.
+	attachedDocuments: DocumentManifestEntry[];
 };
+
+export type DocumentManifestEntry = {
+	id: DocumentId;
+	name: string;
+	kind: ProjectDocumentKind;
+	pages?: number;
+	truncated: boolean;
+	charCount: number;
+};
+
+// Read-only: list the project's attached documents as a manifest (no text).
+export function listDocuments(doc: PertDoc): {
+	documents: DocumentManifestEntry[];
+} {
+	const byId = doc.documentsById ?? {};
+	return {
+		documents: Object.values(byId).map((d) => ({
+			id: d.id,
+			name: d.name,
+			kind: d.kind,
+			pages: d.pages,
+			truncated: d.truncated,
+			charCount: d.text.length,
+		})),
+	};
+}
+
+export type ReadDocumentResult =
+	| {
+			ok: true;
+			id: DocumentId;
+			name: string;
+			kind: ProjectDocumentKind;
+			pages?: number;
+			truncated: boolean;
+			text: string;
+	  }
+	| { ok: false; error: string };
+
+// Read-only: return the full extracted text of one attached document by id.
+export function readDocument(
+	doc: PertDoc,
+	args: { documentId: DocumentId },
+): ReadDocumentResult {
+	const found = doc.documentsById?.[args.documentId];
+	if (!found) {
+		return { ok: false, error: `No document with id "${args.documentId}"` };
+	}
+	return {
+		ok: true,
+		id: found.id,
+		name: found.name,
+		kind: found.kind,
+		pages: found.pages,
+		truncated: found.truncated,
+		text: found.text,
+	};
+}
 
 export function summarizeProject(doc: PertDoc): ProjectSummary {
 	const interfaces: ProjectSummary["interfaces"] = [];
@@ -639,5 +703,6 @@ export function summarizeProject(doc: PertDoc): ProjectSummary {
 			toInterfaceId: d.to.interfaceId,
 		})),
 		interfaces,
+		attachedDocuments: listDocuments(doc).documents,
 	};
 }

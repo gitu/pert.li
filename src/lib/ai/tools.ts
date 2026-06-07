@@ -40,6 +40,20 @@ const isoDateSchema = z
 	.string()
 	.regex(/^\d{4}-\d{2}-\d{2}$/, "expected ISO yyyy-mm-dd date");
 
+const documentKindSchema = z.enum(["text", "pdf", "docx"]);
+
+// Manifest entry — describes an attached document without its text. Used by
+// read_project and list_documents so the model knows what's available and can
+// read on demand via read_document.
+const documentManifestEntrySchema = z.object({
+	id: z.string(),
+	name: z.string(),
+	kind: documentKindSchema,
+	pages: z.number().optional(),
+	truncated: z.boolean(),
+	charCount: z.number(),
+});
+
 const projectSummarySchema = z.object({
 	title: z.string(),
 	tasks: z.array(
@@ -77,18 +91,53 @@ const projectSummarySchema = z.object({
 			taskRef: z.string().optional(),
 		}),
 	),
+	attachedDocuments: z.array(documentManifestEntrySchema),
 });
 
 export const readProjectTool = toolDefinition({
 	name: "read_project",
 	description:
-		"Read the active project: title, all tasks (id, title, kind, parentId, key, three-point estimate, status, progress, notes, actualStart/Finish), and dependencies (with type and optional lagDays). Call this BEFORE proposing changes so you reference existing task ids instead of inventing new ones.",
+		"Read the active project: title, all tasks (id, title, kind, parentId, key, three-point estimate, status, progress, notes, actualStart/Finish), dependencies (with type and optional lagDays), and a manifest of attached source documents (id, name, kind, pages) — call read_document to read a document's text. Call this BEFORE proposing changes so you reference existing task ids instead of inventing new ones.",
 	inputSchema: z.object({}),
 	// Returns the project summary OR the "no active project" error shape the
 	// client emits when the user hasn't opened a project. The model treats it
 	// the same way as any other ok:false response — surface and stop.
 	outputSchema: z.union([
 		projectSummarySchema,
+		z.object({ ok: z.literal(false), error: z.string() }),
+	]),
+});
+
+export const listDocumentsTool = toolDefinition({
+	name: "list_documents",
+	description:
+		"List the source documents attached to this project (e.g. the specs/briefs the user uploaded when creating it). Returns a manifest — id, name, kind, page count, character count — but NOT the text. Call read_document to read a document's contents.",
+	inputSchema: z.object({}),
+	outputSchema: z.union([
+		z.object({ documents: z.array(documentManifestEntrySchema) }),
+		z.object({ ok: z.literal(false), error: z.string() }),
+	]),
+});
+
+export const readDocumentTool = toolDefinition({
+	name: "read_document",
+	description:
+		"Read the full extracted text of one attached document by its id (from list_documents or read_project). Use this to ground tasks and estimates in the source material, and to set metadata.sourceRefs.documentId on tasks you derive from a document so their provenance is captured.",
+	inputSchema: z.object({
+		documentId: z
+			.string()
+			.describe("The document id from the manifest, e.g. 'doc_ab12…'."),
+	}),
+	outputSchema: z.union([
+		z.object({
+			ok: z.literal(true),
+			id: z.string(),
+			name: z.string(),
+			kind: documentKindSchema,
+			pages: z.number().optional(),
+			truncated: z.boolean(),
+			text: z.string(),
+		}),
 		z.object({ ok: z.literal(false), error: z.string() }),
 	]),
 });
@@ -589,6 +638,8 @@ export const askChoiceTool = toolDefinition({
 
 export const CHAT_TOOL_DEFINITIONS = [
 	readProjectTool,
+	listDocumentsTool,
+	readDocumentTool,
 	addTaskTool,
 	setTitleTool,
 	setKindTool,

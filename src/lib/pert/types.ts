@@ -234,6 +234,32 @@ export type DocMeta = {
 	>;
 };
 
+export type DocumentId = string;
+
+// Mirrors `ExtractKind` from `src/lib/ai/file-extract.ts` — the kind of source
+// the text was extracted from.
+export type ProjectDocumentKind = "text" | "pdf" | "docx";
+
+// A source document the user attached to the project (a spec, brief, roadmap…).
+// We persist the *extracted plain text*, not the original binary: it's what the
+// assistant reads, it's already bounded by file-extract's 200KB cap, and it
+// keeps the doc self-contained and re-referenceable without any blob storage.
+// `sourceRefs.documentId` on a Task points back here.
+export type ProjectDocument = {
+	id: DocumentId;
+	// Original filename, shown to the user and the assistant.
+	name: string;
+	kind: ProjectDocumentKind;
+	// Extracted text, already capped/truncated by file-extract's `truncate()`.
+	text: string;
+	// PDF page count, when known.
+	pages?: number;
+	// True when `text` was cut to fit the extraction cap.
+	truncated: boolean;
+	// Epoch ms when the document was attached.
+	addedAt: number;
+};
+
 export type PertDoc = {
 	schemaVersion: 1;
 	title: string;
@@ -249,6 +275,10 @@ export type PertDoc = {
 	// The active AI work plan, if any. One per project — creating a new plan
 	// replaces the old one (prior plans remain in Automerge history).
 	workPlan?: WorkPlan;
+	// Source documents attached to the project (typically at "Describe with AI"
+	// creation). Old docs predate this field — always read with
+	// `doc.documentsById ?? {}`.
+	documentsById?: Record<DocumentId, ProjectDocument>;
 };
 
 export function createEmptyPertDoc(title: string): PertDoc {

@@ -158,6 +158,7 @@ export const registerProject = createServerFn({ method: "POST" })
 		return registerProjectRow({
 			workspaceId,
 			title: data.title,
+			description: data.description ?? null,
 			createdBy: session.userId,
 			automergeDocUrl: data.automergeDocUrl,
 		});

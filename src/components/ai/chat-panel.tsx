@@ -8,10 +8,8 @@ import {
 	BotIcon,
 	ChevronDownIcon,
 	ChevronRightIcon,
-	FileTextIcon,
 	GridIcon,
 	ListIcon,
-	Loader2Icon,
 	NetworkIcon,
 	PaperclipIcon,
 	PinIcon,
@@ -33,11 +31,16 @@ import {
 	useState,
 } from "react";
 import { Streamdown } from "streamdown";
+import {
+	AttachmentChip,
+	hasDataTransferFiles,
+	isReadyAttachment,
+	useFileAttachments,
+} from "#/components/ai/attachment-input";
 import { ACTION_SEEDS, TUTORIAL_SEEDS } from "#/components/ai/tutorial-seeds";
 import { Button } from "#/components/ui/button";
 import { ScrollArea } from "#/components/ui/scroll-area";
 import { Textarea } from "#/components/ui/textarea";
-import type { ExtractedFile } from "#/lib/ai/file-extract";
 import { formatToolError } from "#/lib/ai/format-tool-error";
 import type { EditOp } from "#/lib/ai/operations";
 import { applyProposal, stageProposal } from "#/lib/ai/proposals-store";
@@ -46,8 +49,10 @@ import {
 	addDependencyMutation,
 	addInterfaceMutation,
 	addTaskMutation,
+	listDocuments,
 	moveTaskMutation,
 	pinDependencyMutation,
+	readDocument,
 	removeDependencyMutation,
 	removeInterfaceMutation,
 	removeTaskMutation,
@@ -71,10 +76,12 @@ import {
 	createBranchTool,
 	createWorkPlanTool,
 	getWorkPlanTool,
+	listDocumentsTool,
 	moveChatTool,
 	moveTaskTool,
 	pinDependencyTool,
 	proposeChangesTool,
+	readDocumentTool,
 	readProjectTool,
 	removeDependencyTool,
 	removeInterfaceTool,
@@ -657,6 +664,18 @@ function BoundChatPanel({
 					const active = getBoundDoc(projectId);
 					if ("error" in active) return active;
 					return summarizeProject(active.doc);
+				}),
+				listDocumentsTool.client(() => {
+					// Read-only.
+					const active = getBoundDoc(projectId);
+					if ("error" in active) return active;
+					return listDocuments(active.doc);
+				}),
+				readDocumentTool.client((args) => {
+					// Read-only.
+					const active = getBoundDoc(projectId);
+					if ("error" in active) return active;
+					return readDocument(active.doc, args);
 				}),
 				addTaskTool.client((args) => {
 					const active = getEditableDoc(projectId);
@@ -1261,67 +1280,17 @@ function ChatThread({
 	const [input, setInput] = useState(
 		autoSendInitial ? "" : (initialPrompt ?? ""),
 	);
-	const [attachments, setAttachments] = useState<AttachmentSlot[]>([]);
+	const {
+		attachments,
+		attachmentsBusy,
+		ingestFiles,
+		removeAttachment,
+		clearAttachments,
+	} = useFileAttachments();
 	const [isDragging, setIsDragging] = useState(false);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const scrollRef = useRef<HTMLDivElement>(null);
 	const autoSentRef = useRef(false);
-	const attachmentsBusy = attachments.some((a) => a.status === "parsing");
-
-	const ingestFiles = useCallback((files: FileList | File[]) => {
-		const list = Array.from(files);
-		if (list.length === 0) return;
-		setAttachments((current) => {
-			const additions: AttachmentSlot[] = list.map((file) => ({
-				id: createAttachmentId(),
-				file,
-				status: "parsing",
-			}));
-			// Kick off parsing per slot. We mutate the slot in a follow-up
-			// setState — the closure below captures the id, not the index, so
-			// concurrent additions stay independent. file-extract.ts is
-			// dynamic-imported so the chat-panel chunk doesn't statically pull
-			// in pdfjs / mammoth (those have top-level await and the chained
-			// TLA breaks the storybook static build's chunk init order).
-			for (const slot of additions) {
-				void (async () => {
-					try {
-						const { classify, extractText } = await import(
-							"#/lib/ai/file-extract"
-						);
-						// Pre-classify so unsupported types fail fast with a clearer
-						// message instead of routing into a no-op text reader.
-						classify(slot.file);
-						const extracted = await extractText(slot.file);
-						setAttachments((prev) =>
-							prev.map((a) =>
-								a.id === slot.id ? { ...a, status: "ready", extracted } : a,
-							),
-						);
-					} catch (e) {
-						const message =
-							isUnsupportedFileError(e) || isFileExtractError(e)
-								? e.message
-								: e instanceof Error
-									? e.message
-									: "Could not read file";
-						setAttachments((prev) =>
-							prev.map((a) =>
-								a.id === slot.id
-									? { ...a, status: "error", error: message }
-									: a,
-							),
-						);
-					}
-				})();
-			}
-			return [...current, ...additions];
-		});
-	}, []);
-
-	const removeAttachment = useCallback((id: string) => {
-		setAttachments((prev) => prev.filter((a) => a.id !== id));
-	}, []);
 
 	// Expose imperative API to the outer panel for dock pending prompts.
 	useEffect(() => {
@@ -1360,12 +1329,7 @@ function ChatThread({
 
 	const submit = () => {
 		const trimmed = input.trim();
-		const ready = attachments.filter(
-			(
-				a,
-			): a is AttachmentSlot & { status: "ready"; extracted: ExtractedFile } =>
-				a.status === "ready" && !!a.extracted,
-		);
+		const ready = attachments.filter(isReadyAttachment);
 		if (!trimmed && ready.length === 0) return;
 		if (isLoading || attachmentsBusy) return;
 		// Attachment-free is the common path; keep it synchronous. Attachments
@@ -1377,7 +1341,7 @@ function ChatThread({
 			return;
 		}
 		setInput("");
-		setAttachments([]);
+		clearAttachments();
 		void (async () => {
 			const { buildMessageWithAttachments } = await import(
 				"#/lib/ai/file-extract"
@@ -1522,6 +1486,7 @@ function ChatThread({
 							<AttachmentChip
 								key={a.id}
 								slot={a}
+								testIdPrefix="chat-attachment"
 								onRemove={() => removeAttachment(a.id)}
 							/>
 						))}
@@ -1604,102 +1569,6 @@ function ChatThread({
 				</div>
 			</fieldset>
 		</>
-	);
-}
-
-type AttachmentSlot = {
-	id: string;
-	file: File;
-	status: "parsing" | "ready" | "error";
-	extracted?: ExtractedFile;
-	error?: string;
-};
-
-function createAttachmentId(): string {
-	const bytes = new Uint8Array(4);
-	crypto.getRandomValues(bytes);
-	let s = "";
-	for (const b of bytes) s += b.toString(16).padStart(2, "0");
-	return `att_${s}`;
-}
-
-function hasDataTransferFiles(e: React.DragEvent): boolean {
-	const dt = e.dataTransfer;
-	if (!dt) return false;
-	if (dt.files && dt.files.length > 0) return true;
-	// In a dragenter/dragover the file list isn't readable yet; fall back to
-	// the type list which contains "Files" when the drag carries any.
-	return Array.from(dt.types ?? []).includes("Files");
-}
-
-// `instanceof` checks would require a static import of the error classes;
-// duck-type via the `kind` discriminator so the file-extract module stays
-// purely dynamic-imported.
-function isUnsupportedFileError(
-	e: unknown,
-): e is Error & { kind: "unsupported" } {
-	return (
-		e instanceof Error &&
-		(e as Error & { kind?: string }).kind === "unsupported"
-	);
-}
-
-function isFileExtractError(
-	e: unknown,
-): e is Error & { kind: "extract-failed" } {
-	return (
-		e instanceof Error &&
-		(e as Error & { kind?: string }).kind === "extract-failed"
-	);
-}
-
-function AttachmentChip({
-	slot,
-	onRemove,
-}: {
-	slot: AttachmentSlot;
-	onRemove: () => void;
-}) {
-	const truncated = slot.extracted?.truncated;
-	const meta =
-		slot.status === "parsing"
-			? "Reading…"
-			: slot.status === "error"
-				? (slot.error ?? "Failed to read")
-				: slot.extracted
-					? `${slot.extracted.text.length.toLocaleString()} chars${truncated ? " · truncated" : ""}`
-					: "";
-	return (
-		<div
-			className={cn(
-				"flex max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-[10px]",
-				slot.status === "error"
-					? "border-destructive/40 bg-destructive/10 text-destructive"
-					: "border-border bg-muted/30",
-			)}
-			data-testid={`chat-attachment-${slot.id}`}
-			data-status={slot.status}
-		>
-			{slot.status === "parsing" ? (
-				<Loader2Icon className="size-3 shrink-0 animate-spin" />
-			) : (
-				<FileTextIcon className="size-3 shrink-0" />
-			)}
-			<span className="truncate font-medium">{slot.file.name}</span>
-			{meta && (
-				<span className="truncate text-muted-foreground" title={meta}>
-					· {meta}
-				</span>
-			)}
-			<button
-				type="button"
-				onClick={onRemove}
-				className="ml-1 rounded p-0.5 text-muted-foreground hover:bg-muted-foreground/10"
-				aria-label={`Remove attachment ${slot.file.name}`}
-			>
-				<XIcon className="size-3" />
-			</button>
-		</div>
 	);
 }
 

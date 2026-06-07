@@ -25,6 +25,9 @@ export type CreateProjectInput = z.infer<typeof createProjectInput>;
 // a retry after a dropped response converges instead of duplicating.
 export const registerProjectInput = z.object({
 	title: z.string().trim().min(1, "Title is required").max(120),
+	// Optional one-line summary (e.g. the "Describe with AI" prompt) persisted
+	// onto the project row so it survives the offline→online handoff.
+	description: z.string().trim().max(500).optional(),
 	workspaceId: z.string().uuid().optional(),
 	// Automerge document URLs are `automerge:<base58check>`; cap the length to
 	// reject obviously malformed input before it reaches the DB.
