@@ -1,5 +1,7 @@
 import { useStore } from "@tanstack/react-store";
 import {
+	ChevronDownIcon,
+	ChevronRightIcon,
 	CircleDotIcon,
 	LayersIcon,
 	MaximizeIcon,
@@ -7,7 +9,7 @@ import {
 	ZoomInIcon,
 	ZoomOutIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "#/components/ui/button";
 import {
 	buildGroupTree,
@@ -65,9 +67,25 @@ export function TimelineView({ projectId, doc }: TimelineViewProps) {
 	// belongs to. Off by default so the strip stays time-ordered for users who
 	// don't use groups.
 	const [grouped, setGrouped] = useState(false);
+
+	// Per-group collapse, keyed by the group node's stable `path` (groupId or
+	// "__ungrouped__"). Local state, like the task list — folding away a group
+	// is a transient focus aid, not something worth persisting across remounts.
+	const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
+		() => new Set(),
+	);
+	const toggleGroup = useCallback((path: string) => {
+		setCollapsedGroups((prev) => {
+			const next = new Set(prev);
+			if (next.has(path)) next.delete(path);
+			else next.add(path);
+			return next;
+		});
+	}, []);
+
 	const rows = useMemo(
-		() => buildRows(doc, model.lanes, grouped),
-		[doc, model.lanes, grouped],
+		() => buildRows(doc, model.lanes, grouped, collapsedGroups),
+		[doc, model.lanes, grouped, collapsedGroups],
 	);
 
 	const scrollRef = useRef<HTMLDivElement>(null);
@@ -187,6 +205,7 @@ export function TimelineView({ projectId, doc }: TimelineViewProps) {
 						pxPerDay={pxPerDay}
 						selectedTaskId={selectedTaskId}
 						onSelect={(taskId) => selectTask(projectId, taskId)}
+						onToggleGroup={toggleGroup}
 					/>
 				) : (
 					<EmptyTimeline cycle={model.cycle} />
@@ -228,6 +247,7 @@ type HeaderRow = {
 	number: string;
 	path: string;
 	count: number;
+	collapsed: boolean;
 };
 type LaneRow = {
 	type: "lane";
@@ -245,21 +265,27 @@ function buildRows(
 	doc: PertDoc,
 	lanes: TimelineLane[],
 	grouped: boolean,
+	collapsedGroups: ReadonlySet<string>,
 ): TimelineRow[] {
 	if (!grouped) {
 		return lanes.map((lane) => ({ type: "lane", depth: 0, lane }));
 	}
 	const tree = buildGroupTree(doc, lanes);
 	const rows: TimelineRow[] = [];
-	for (const node of tree) flattenNode(node, 0, rows);
+	for (const node of tree) flattenNode(node, 0, rows, collapsedGroups);
 	return rows;
 }
 
+// Header rows are always emitted; a collapsed group simply omits its own lanes
+// and any nested subgroups, so the strip's label column and SVG bars (both
+// driven by this flat list) stay in lock-step.
 function flattenNode(
 	node: KeyGroupNode<TimelineLane>,
 	depth: number,
 	out: TimelineRow[],
+	collapsedGroups: ReadonlySet<string>,
 ): void {
+	const collapsed = collapsedGroups.has(node.path);
 	out.push({
 		type: "header",
 		depth,
@@ -267,12 +293,14 @@ function flattenNode(
 		number: node.number,
 		path: node.path,
 		count: countRowsInGroup(node),
+		collapsed,
 	});
+	if (collapsed) return;
 	for (const lane of node.rows) {
 		out.push({ type: "lane", depth: depth + 1, lane });
 	}
 	for (const child of node.children) {
-		flattenNode(child, depth + 1, out);
+		flattenNode(child, depth + 1, out, collapsedGroups);
 	}
 }
 
@@ -287,6 +315,7 @@ function TimelineStrip({
 	pxPerDay,
 	selectedTaskId,
 	onSelect,
+	onToggleGroup,
 }: {
 	rows: TimelineRow[];
 	axisMax: number;
@@ -294,6 +323,7 @@ function TimelineStrip({
 	pxPerDay: number;
 	selectedTaskId: string | null;
 	onSelect: (taskId: string) => void;
+	onToggleGroup: (path: string) => void;
 }) {
 	const ticks = useMemo(() => timelineTicks(axisMax), [axisMax]);
 	// Pre-compute the y-offset of each row. Heights are mixed (headers
@@ -385,7 +415,13 @@ function TimelineStrip({
 			>
 				{rows.map((row) => {
 					if (row.type === "header") {
-						return <HeaderLabel key={`hdr-${row.path}`} row={row} />;
+						return (
+							<HeaderLabel
+								key={`hdr-${row.path}`}
+								row={row}
+								onToggle={onToggleGroup}
+							/>
+						);
 					}
 					return (
 						<LaneLabel
@@ -464,23 +500,39 @@ function TimelineStrip({
 	);
 }
 
-function HeaderLabel({ row }: { row: HeaderRow }) {
+function HeaderLabel({
+	row,
+	onToggle,
+}: {
+	row: HeaderRow;
+	onToggle: (path: string) => void;
+}) {
 	const indent = row.depth * INDENT_PX;
 	return (
-		<div
+		<button
+			type="button"
 			data-testid={`timeline-header-${row.path}`}
 			data-depth={row.depth}
+			data-collapsed={row.collapsed}
+			onClick={() => onToggle(row.path)}
+			aria-expanded={!row.collapsed}
+			title={row.collapsed ? "Expand group" : "Collapse group"}
 			className={cn(
-				"flex shrink-0 items-center gap-1.5 truncate border-t text-[10px] font-medium uppercase tracking-wide text-muted-foreground",
+				"flex shrink-0 items-center gap-1.5 truncate border-t bg-transparent text-left text-[10px] font-medium uppercase tracking-wide text-muted-foreground hover:text-foreground",
 				row.depth === 0 ? "border-foreground/40" : "border-border",
 			)}
 			style={{ height: HEADER_HEIGHT, paddingLeft: 8 + indent }}
 		>
+			{row.collapsed ? (
+				<ChevronRightIcon className="size-3 shrink-0" />
+			) : (
+				<ChevronDownIcon className="size-3 shrink-0" />
+			)}
 			<span className="truncate font-mono normal-case tracking-normal">
 				{row.number ? `${row.number} ${row.label}` : row.label}
 			</span>
 			<span className="text-muted-foreground/70">({row.count})</span>
-		</div>
+		</button>
 	);
 }
 
