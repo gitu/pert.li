@@ -191,3 +191,16 @@ export const SummaryError: Story = {
 		},
 	},
 };
+
+// Fully-populated dashboard: header actions, the stats band, and both columns
+// of the lg grid (summary + explore on the left, calendar on the right). The
+// test-runner renders at a wide viewport, so this exercises the two-column
+// layout the narrower default stories don't.
+export const WideDashboard: Story = {
+	args: {
+		summaryState: {
+			status: "done",
+			text: "Q3 product launch — 3 tasks and 1 milestone across one design group. One task is complete and one is in progress, so the plan is roughly a third of the way done.\n\nRisks:\n- Build API is unscheduled work feeding the launch milestone.\n- Visual design is the current bottleneck on the critical path.",
+		},
+	},
+};
