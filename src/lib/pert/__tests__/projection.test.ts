@@ -229,3 +229,75 @@ describe("rollupGroup", () => {
 		expect(after.expected).toBeCloseTo(7);
 	});
 });
+
+describe("projectGraph — grouping depth cap", () => {
+	it("emits no box for groups beyond the cap; their tasks render as leaves", () => {
+		const doc = build(
+			[
+				task("a", { groupId: "L1" }),
+				task("b", { groupId: "L2" }),
+				task("c", { groupId: "L3" }),
+			],
+			[],
+			[group("L1"), group("L2", "L1"), group("L3", "L2")],
+		);
+		const r = computeSchedule(doc);
+		const projection = projectGraph(doc, r, new Set(), 2);
+		// L1 + L2 draw boxes; L3 does not.
+		expect(groupNode(projection.nodes, "L1")?.kind).toBe("group-expanded");
+		expect(groupNode(projection.nodes, "L2")?.kind).toBe("group-expanded");
+		expect(groupNode(projection.nodes, "L3")).toBeUndefined();
+		// Every task still renders as a leaf (c folds visually into L2's box).
+		expect(leafIds(projection.nodes)).toEqual(["a", "b", "c"]);
+	});
+
+	it("cap 0 (grouping off) emits no boxes at all; all tasks are leaves", () => {
+		const doc = build(
+			[task("a", { groupId: "L1" }), task("b", { groupId: "L2" })],
+			[],
+			[group("L1"), group("L2", "L1")],
+		);
+		const r = computeSchedule(doc);
+		const projection = projectGraph(doc, r, new Set(), 0);
+		expect(groupNode(projection.nodes, "L1")).toBeUndefined();
+		expect(groupNode(projection.nodes, "L2")).toBeUndefined();
+		expect(leafIds(projection.nodes)).toEqual(["a", "b"]);
+	});
+
+	it("default (no cap) renders every nesting level as a box", () => {
+		const doc = build(
+			[task("c", { groupId: "L3" })],
+			[],
+			[group("L1"), group("L2", "L1"), group("L3", "L2")],
+		);
+		const r = computeSchedule(doc);
+		const projection = projectGraph(doc, r, new Set());
+		expect(groupNode(projection.nodes, "L1")?.kind).toBe("group-expanded");
+		expect(groupNode(projection.nodes, "L2")?.kind).toBe("group-expanded");
+		expect(groupNode(projection.nodes, "L3")?.kind).toBe("group-expanded");
+	});
+
+	it("ignores collapse for a group folded away by the cap (no vanished tasks)", () => {
+		// Collapse L3 (valid when grouping=All), then view with cap=2 so L3 is
+		// folded. L3's task must still render as a leaf (folded loose into L2),
+		// never silently disappear.
+		const doc = build(
+			[task("c", { groupId: "L3" }), task("b", { groupId: "L2" })],
+			[],
+			[group("L1"), group("L2", "L1"), group("L3", "L2")],
+		);
+		const r = computeSchedule(doc);
+		const projection = projectGraph(doc, r, new Set(["L3"]), 2);
+		expect(leafIds(projection.nodes)).toEqual(["b", "c"]);
+		expect(groupNode(projection.nodes, "L3")).toBeUndefined();
+	});
+
+	it("ignores all collapse when grouping is off (cap 0)", () => {
+		const doc = build([task("a", { groupId: "box" })], [], [group("box")]);
+		const r = computeSchedule(doc);
+		const projection = projectGraph(doc, r, new Set(["box"]), 0);
+		// No box, and the member is still a visible leaf.
+		expect(groupNode(projection.nodes, "box")).toBeUndefined();
+		expect(leafIds(projection.nodes)).toEqual(["a"]);
+	});
+});

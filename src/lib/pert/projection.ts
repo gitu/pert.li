@@ -1,7 +1,9 @@
 import {
+	filterCollapsedToRendered,
 	getNearestCollapsedAncestorGroup,
 	getNearestCollapsedGroup,
 	getTasksInGroupDeep,
+	isGroupRendered,
 } from "./hierarchy";
 import { type Schedule, type ScheduleResult, statusOf } from "./schedule";
 import type {
@@ -78,23 +80,30 @@ export function projectGraph(
 	doc: PertDoc,
 	scheduleResult: ScheduleResult,
 	collapsed: ReadonlySet<GroupId>,
+	maxLevel: number = Number.POSITIVE_INFINITY,
 ): ProjectedGraph {
 	const schedule: Schedule | null = scheduleResult.ok
 		? scheduleResult.schedule
 		: null;
 
+	// Collapse only applies to groups that render under the cap; a folded-away
+	// group must not hide its members or reroute its edges (it has no node).
+	const collapsedRendered = filterCollapsedToRendered(doc, collapsed, maxLevel);
+
 	const nodes: ProjectedNode[] = [];
 
 	// Group boxes. A group hidden inside a collapsed ancestor group is not
-	// emitted (it's folded into the ancestor's card).
+	// emitted (it's folded into the ancestor's card), and a group beyond the
+	// depth cap renders no box (its tasks fold into the nearest shown ancestor).
 	for (const group of Object.values(doc.groupsById)) {
+		if (!isGroupRendered(doc, group.id, maxLevel)) continue;
 		const collapsedAncestor = getNearestCollapsedAncestorGroup(
 			doc,
 			group.id,
-			collapsed,
+			collapsedRendered,
 		);
 		if (collapsedAncestor && collapsedAncestor !== group.id) continue;
-		if (collapsed.has(group.id)) {
+		if (collapsedRendered.has(group.id)) {
 			nodes.push({
 				kind: "group-collapsed",
 				group,
@@ -108,7 +117,7 @@ export function projectGraph(
 	// Leaf tasks. A task inside a collapsed group is folded into that group's
 	// card and not emitted.
 	for (const task of Object.values(doc.tasksById)) {
-		if (getNearestCollapsedGroup(doc, task.id, collapsed)) continue;
+		if (getNearestCollapsedGroup(doc, task.id, collapsedRendered)) continue;
 		nodes.push({ kind: "leaf", task });
 	}
 
@@ -122,8 +131,12 @@ export function projectGraph(
 		if (!fromId || !toId) continue;
 		if (!doc.tasksById[fromId] || !doc.tasksById[toId]) continue;
 
-		const fromCollapsed = getNearestCollapsedGroup(doc, fromId, collapsed);
-		const toCollapsed = getNearestCollapsedGroup(doc, toId, collapsed);
+		const fromCollapsed = getNearestCollapsedGroup(
+			doc,
+			fromId,
+			collapsedRendered,
+		);
+		const toCollapsed = getNearestCollapsedGroup(doc, toId, collapsedRendered);
 		const source = fromCollapsed ?? fromId;
 		const target = toCollapsed ?? toId;
 

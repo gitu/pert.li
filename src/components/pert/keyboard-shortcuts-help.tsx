@@ -126,7 +126,6 @@ export const CANVAS_SHORTCUTS: ShortcutGroup[] = [
 		rows: [
 			{ label: "Add task at viewport centre", keys: ["n"] },
 			{ label: "Add milestone at viewport centre", keys: ["m"] },
-			{ label: "Add group at viewport centre", keys: ["g"] },
 			{
 				label: "Spawn downstream task (linked) from selection",
 				keys: ["Tab"],

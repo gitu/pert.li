@@ -1,6 +1,8 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import {
+	effectiveGroupForTask,
+	filterCollapsedToRendered,
 	getChildGroups,
 	getGroupAncestors,
 	getGroupDescendants,
@@ -9,6 +11,8 @@ import {
 	getRootGroups,
 	getTasksInGroup,
 	getTasksInGroupDeep,
+	groupLevel,
+	isGroupRendered,
 	isGroupWithin,
 } from "../hierarchy";
 import type { Group, PertDoc, Task } from "../types";
@@ -201,5 +205,71 @@ describe("group-tree property tests", () => {
 			}),
 			{ numRuns: 50 },
 		);
+	});
+});
+
+describe("grouping-level helpers", () => {
+	// L1 > L2 > L3 chain plus a sibling at L1.
+	const doc = build(
+		[group("L1"), group("L2", "L1"), group("L3", "L2"), group("other")],
+		[task("rootTask"), task("a", "L1"), task("b", "L2"), task("c", "L3")],
+	);
+
+	it("groupLevel is 1-based by depth", () => {
+		expect(groupLevel(doc, "L1")).toBe(1);
+		expect(groupLevel(doc, "L2")).toBe(2);
+		expect(groupLevel(doc, "L3")).toBe(3);
+		expect(groupLevel(doc, "other")).toBe(1);
+	});
+
+	it("isGroupRendered respects the cap (0 = off renders nothing)", () => {
+		expect(isGroupRendered(doc, "L3", 2)).toBe(false);
+		expect(isGroupRendered(doc, "L2", 2)).toBe(true);
+		expect(isGroupRendered(doc, "L1", 2)).toBe(true);
+		expect(isGroupRendered(doc, "L1", 0)).toBe(false);
+		expect(isGroupRendered(doc, "L3", Number.POSITIVE_INFINITY)).toBe(true);
+	});
+
+	it("effectiveGroupForTask folds deep tasks into the nearest shown ancestor", () => {
+		// Uncapped: each task keeps its own group.
+		expect(effectiveGroupForTask(doc, "c", Number.POSITIVE_INFINITY)).toBe(
+			"L3",
+		);
+		// Cap at 2: c (in L3) folds up to L2.
+		expect(effectiveGroupForTask(doc, "c", 2)).toBe("L2");
+		// Cap at 1: c folds all the way to L1.
+		expect(effectiveGroupForTask(doc, "c", 1)).toBe("L1");
+		// b (in L2) at cap 2 stays in L2.
+		expect(effectiveGroupForTask(doc, "b", 2)).toBe("L2");
+	});
+
+	it("effectiveGroupForTask returns null for ungrouped tasks or grouping off", () => {
+		expect(
+			effectiveGroupForTask(doc, "rootTask", Number.POSITIVE_INFINITY),
+		).toBe(null);
+		expect(effectiveGroupForTask(doc, "a", 0)).toBe(null);
+		expect(effectiveGroupForTask(doc, "missing", 2)).toBe(null);
+	});
+});
+
+describe("filterCollapsedToRendered", () => {
+	const doc = build([group("L1"), group("L2", "L1"), group("L3", "L2")], []);
+
+	it("drops collapsed groups the cap has folded away", () => {
+		const collapsed = new Set(["L1", "L2", "L3"]);
+		const out = filterCollapsedToRendered(doc, collapsed, 2);
+		expect([...out].sort()).toEqual(["L1", "L2"]);
+	});
+
+	it("returns an empty set when grouping is off", () => {
+		const out = filterCollapsedToRendered(doc, new Set(["L1"]), 0);
+		expect(out.size).toBe(0);
+	});
+
+	it("returns the same set unchanged when uncapped (fast path)", () => {
+		const collapsed = new Set(["L1", "L3"]);
+		expect(
+			filterCollapsedToRendered(doc, collapsed, Number.POSITIVE_INFINITY),
+		).toBe(collapsed);
 	});
 });
