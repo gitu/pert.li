@@ -1,3 +1,4 @@
+import { CheckIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
@@ -60,6 +61,11 @@ export function ProjectCalendarForm({
 				: [...prev, day].sort((a, b) => a - b),
 		);
 	};
+
+	// Has the user edited anything since the form was seeded? Drives the
+	// "Unsaved changes" / "All changes saved" marker in the footer. The form is
+	// remounted (key bump) after a successful save, so this re-seeds to clean.
+	const dirty = formDiffers(initial, { startDate, workingDays, mode, team });
 
 	// Live readout. Total work = sum of leaf tasks' expected PERT durations
 	// (in days). Daily capacity = peopleCount × availability% (or observed
@@ -236,6 +242,23 @@ export function ProjectCalendarForm({
 				)}
 			</div>
 			<SheetFooter>
+				{dirty ? (
+					<span
+						className="mr-auto inline-flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-500"
+						data-testid="calendar-dirty"
+					>
+						<span className="size-1.5 rounded-full bg-amber-500" />
+						Unsaved changes
+					</span>
+				) : (
+					<span
+						className="mr-auto inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+						data-testid="calendar-clean"
+					>
+						<CheckIcon className="size-3.5" />
+						All changes saved
+					</span>
+				)}
 				<Button type="button" variant="outline" onClick={onCancel}>
 					Cancel
 				</Button>
@@ -349,4 +372,35 @@ function formatDays(n: number): string {
 	if (n === 0) return "0";
 	if (Number.isInteger(n)) return n.toString();
 	return n.toFixed(1);
+}
+
+// True when the live form state diverges from the calendar it was seeded with.
+// Mirrors the seeding in the component (mode/team fall back to defaults) so an
+// untouched form reads as clean.
+function formDiffers(
+	initial: ProjectCalendar,
+	current: {
+		startDate: string;
+		workingDays: number[];
+		mode: AllocationMode;
+		team: TeamCapacity;
+	},
+): boolean {
+	if (initial.startDate !== current.startDate) return true;
+	if (!sameDays(initial.workingDays, current.workingDays)) return true;
+	if ((initial.allocationMode ?? "calendar") !== current.mode) return true;
+	const seedTeam = initial.team ?? DEFAULT_TEAM;
+	if (seedTeam.peopleCount !== current.team.peopleCount) return true;
+	if (seedTeam.availabilityPct !== current.team.availabilityPct) return true;
+	if (Boolean(seedTeam.useHistoric) !== Boolean(current.team.useHistoric)) {
+		return true;
+	}
+	return false;
+}
+
+function sameDays(a: number[], b: number[]): boolean {
+	if (a.length !== b.length) return false;
+	const sa = [...a].sort((x, y) => x - y);
+	const sb = [...b].sort((x, y) => x - y);
+	return sa.every((v, i) => v === sb[i]);
 }
