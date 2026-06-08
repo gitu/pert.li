@@ -14,13 +14,18 @@ jobs:
   # Build the image, gate it, push to ghcr.io, then attach a generated SBOM and a
   # Sigstore-signed SLSA provenance attestation to each pushed image (out-of-band,
   # by digest — see the attest steps below). Needs packages:write (push) +
-  # contents:read (checkout) + id-token:write & attestations:write (attestations).
+  # contents:write (checkout + attach SBOMs to the GitHub Release on tag builds) +
+  # id-token:write & attestations:write (attestations).
   build:
     name: build + push ghcr.io
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read
+      # write (not read) so anchore/sbom-action can attach the generated SBOMs to
+      # the matching GitHub Release on tag (v*) builds. Safe here: this workflow
+      # only runs on main / tags (never on fork PRs), so the elevated token is
+      # never exposed to untrusted code.
+      contents: write
       packages: write
       # Mint the OIDC token Sigstore uses to issue a short-lived signing cert, and
       # persist the resulting attestations. Required by actions/attest-*.
@@ -167,12 +172,12 @@ jobs:
           image: ${{ steps.img.outputs.name }}@${{ steps.push.outputs.digest }}
           format: spdx-json
           output-file: sbom-runner.spdx.json
-          # We only need the file on disk for the attest step below (the signed
-          # registry attestation is the canonical artifact). On tag builds the
-          # action otherwise tries to attach the SBOM to the GitHub Release,
-          # which needs contents:write — this job is read-only on contents.
+          # On tag (v*) builds, attach the SBOM to the matching GitHub Release
+          # (needs the job's contents:write) in addition to the signed registry
+          # attestation below. The per-run workflow artifact is redundant with
+          # both, so skip it.
           upload-artifact: false
-          upload-release-assets: false
+          upload-release-assets: true
       - name: Attest SBOM (runner)
         uses: actions/attest-sbom@v4
         with:
@@ -247,10 +252,10 @@ jobs:
           image: ${{ steps.img.outputs.name }}-evals@${{ steps.push-eval.outputs.digest }}
           format: spdx-json
           output-file: sbom-eval.spdx.json
-          # See the runner SBOM step — disable release/artifact upload so tag
-          # builds don't need contents:write.
+          # See the runner SBOM step — attach to the Release, skip the per-run
+          # workflow artifact.
           upload-artifact: false
-          upload-release-assets: false
+          upload-release-assets: true
       - name: Attest SBOM (eval)
         uses: actions/attest-sbom@v4
         with:
