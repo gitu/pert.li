@@ -43,6 +43,7 @@ import {
 } from "#/components/ui/resizable";
 import { Sheet, SheetContent } from "#/components/ui/sheet";
 import { ProjectCommentsPanel } from "#/components/workspace/project-comments-panel";
+import { ProjectDeletedPrompt } from "#/components/workspace/project-deleted-prompt";
 import { authClient } from "#/lib/auth-client";
 import { useOptionalRepo } from "#/lib/automerge/provider";
 import { usePresenceSelection } from "#/lib/automerge/use-presence-selection";
@@ -346,6 +347,9 @@ function RepoReadyCanvas({
 	}
 	if (resolution.status === "not-found") {
 		return <ProjectNotFound />;
+	}
+	if (resolution.status === "deleted-remotely") {
+		return <ProjectDeletedPrompt pending={resolution.pending} />;
 	}
 	return (
 		<PertProjectPanel
