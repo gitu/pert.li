@@ -11,8 +11,10 @@ concurrency:
 
 jobs:
   # ---- Build -----------------------------------------------------------------
-  # Build the image, gate it, and push to ghcr.io. Self-contained: needs only
-  # packages:write (to push) + contents:read (to check out).
+  # Build the image, gate it, push to ghcr.io, then attach a generated SBOM and a
+  # Sigstore-signed SLSA provenance attestation to each pushed image (out-of-band,
+  # by digest — see the attest steps below). Needs packages:write (push) +
+  # contents:read (checkout) + id-token:write & attestations:write (attestations).
   build:
     name: build + push ghcr.io
     runs-on: ubuntu-latest
@@ -20,6 +22,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Mint the OIDC token Sigstore uses to issue a short-lived signing cert, and
+      # persist the resulting attestations. Required by actions/attest-*.
+      id-token: write
+      attestations: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -68,6 +74,18 @@ jobs:
             # exactly this tag via `${COMMIT_SHA}` — an immutable, unambiguous
             # handle (short-SHA length matching would be fragile).
             type=sha,prefix=,format=long
+          # metadata-action already auto-derives created/revision/source/url/
+          # title/description/licenses from the repo. These add the rest and pin
+          # version to the precise compute-version.mjs value (vX.Y.Z-N-gSHA) —
+          # more exact than the tag-derived default and the reason the Dockerfile
+          # no longer hardcodes the title/version LABELs.
+          labels: |
+            org.opencontainers.image.title=pert.li
+            org.opencontainers.image.description=TanStack Start chat app powered by Claude, with PERT planning
+            org.opencontainers.image.version=${{ steps.version.outputs.value }}
+            org.opencontainers.image.vendor=gitu
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/main/README.md
 
       # Build the runner image into the local daemon (not pushed yet) so the
       # secret-leak gate below can run against the real `.output/public`
@@ -121,6 +139,7 @@ jobs:
             /workspace/scripts/check-secret-leak.mjs
 
       - name: Build and push
+        id: push
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -134,6 +153,33 @@ jobs:
           cache-from: |
             type=gha
             type=registry,ref=${{ steps.img.outputs.name }}:buildcache
+
+      # ---- Supply-chain attestations (runner) --------------------------------
+      # Out-of-band, by digest: we sign the pushed manifest as a referrer rather
+      # than baking BuildKit `provenance:`/`sbom:` into the build. The latter would
+      # wrap this single-platform image in an OCI image index, which is exactly the
+      # artifact the Cloud Run deploy pulls through the Artifact Registry remote
+      # proxy of ghcr.io — and AR-proxy fidelity for attestation sub-manifests is
+      # not guaranteed. Signing by digest keeps the runnable image a plain manifest.
+      - name: Generate SBOM (runner)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.img.outputs.name }}@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-runner.spdx.json
+      - name: Attest SBOM (runner)
+        uses: actions/attest-sbom@v4
+        with:
+          subject-name: ${{ steps.img.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          sbom-path: sbom-runner.spdx.json
+          push-to-registry: true
+      - name: Attest provenance (runner)
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.img.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
 
       # ---- Eval image (separate package, matching version tags) -------------
       # Publish the bring-your-own-LLM eval runner (Dockerfile `eval` target) as
@@ -156,8 +202,17 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha
             type=sha,prefix=,format=long
+          # Same label set as the runner, retitled for the eval package.
+          labels: |
+            org.opencontainers.image.title=pert.li evals
+            org.opencontainers.image.description=Bring-your-own-LLM eval runner for the pert.li chat assistant
+            org.opencontainers.image.version=${{ steps.version.outputs.value }}
+            org.opencontainers.image.vendor=gitu
+            org.opencontainers.image.licenses=MIT
+            org.opencontainers.image.documentation=https://github.com/${{ github.repository }}/blob/main/SELF_HOSTING.md
 
       - name: Build and push eval image
+        id: push-eval
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -178,6 +233,27 @@ jobs:
           cache-to: |
             type=gha,mode=max
             type=registry,ref=${{ steps.img.outputs.name }}-evals:buildcache,mode=max
+
+      # ---- Supply-chain attestations (eval) — same out-of-band pattern -------
+      - name: Generate SBOM (eval)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.img.outputs.name }}-evals@${{ steps.push-eval.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-eval.spdx.json
+      - name: Attest SBOM (eval)
+        uses: actions/attest-sbom@v4
+        with:
+          subject-name: ${{ steps.img.outputs.name }}-evals
+          subject-digest: ${{ steps.push-eval.outputs.digest }}
+          sbom-path: sbom-eval.spdx.json
+          push-to-registry: true
+      - name: Attest provenance (eval)
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.img.outputs.name }}-evals
+          subject-digest: ${{ steps.push-eval.outputs.digest }}
+          push-to-registry: true
 
   # ---- Deploy ----------------------------------------------------------------
   # Runs only after `build` succeeds (image is on ghcr.io). We do NOT rebuild

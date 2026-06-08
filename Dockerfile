@@ -107,13 +107,12 @@ ENV NODE_ENV=production
 ENV PORT=8080
 ENV AUTOMERGE_STORAGE=postgres
 # Re-declare so the runner stage receives the build-arg too (ARGs don't
-# carry across FROM lines). Exposed as ENV + OCI labels so ops can read
-# the version with `docker inspect` or `printenv` without spelunking the
-# bundled JS — the in-app footer already covers user-facing reads.
+# carry across FROM lines). Exposed as ENV so ops can read the version with
+# `printenv` without spelunking the bundled JS — the in-app footer already
+# covers user-facing reads. The OCI image labels (incl. title + version) are
+# applied at push time by docker/metadata-action in .github/workflows/docker.yml.
 ARG APP_VERSION=0.0.0-unknown
 ENV APP_VERSION=${APP_VERSION}
-LABEL org.opencontainers.image.title="pert.li"
-LABEL org.opencontainers.image.version="${APP_VERSION}"
 
 USER node
 
