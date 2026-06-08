@@ -75,6 +75,11 @@ const CALENDAR: ProjectCalendar = {
 const meta: Meta<typeof OverviewContent> = {
 	title: "PERT/Overview/OverviewContent",
 	component: OverviewContent,
+	// The embedded Monte Carlo forecast runs an artificial 1–2s "calculating"
+	// timer, so the screenshot can land on either the spinner or the result —
+	// non-deterministic. Skip pixel-diffing; play functions still run. The
+	// forecast's own visual coverage lives in MonteCarloForecast stories.
+	tags: ["no-screenshot-diff"],
 	parameters: { layout: "fullscreen" },
 	args: {
 		title: "Q3 product launch",

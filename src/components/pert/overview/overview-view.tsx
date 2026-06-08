@@ -16,6 +16,7 @@ import {
 	XIcon,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { ExportProjectButton } from "#/components/pert/exchange/export-button";
 import { ProjectCalendarForm } from "#/components/pert/project-calendar-form";
 import { Button } from "#/components/ui/button";
@@ -44,6 +45,7 @@ import {
 	listProjects,
 	updateProjectMeta,
 } from "#/server/workspace";
+import { MonteCarloForecast } from "./monte-carlo-forecast";
 import { OverviewMetrics } from "./overview-metrics";
 import {
 	OverviewSummaryCard,
@@ -305,7 +307,10 @@ export function OverviewView({
 			// (showing the error) when the save fails.
 			onSaveMeta={(next) => metaMutation.mutateAsync(next)}
 			calendarInitial={calendarInitial}
-			onSaveCalendar={(next) => applyCalendar(changeDoc, next)}
+			onSaveCalendar={(next) => {
+				applyCalendar(changeDoc, next);
+				toast.success("Calendar & scheduling saved");
+			}}
 			summaryState={summaryState}
 			onSummarize={() => summarize.mutate()}
 			onNavigate={(view) =>
@@ -423,6 +428,8 @@ export function OverviewContent({
 								}}
 							/>
 						)}
+						{/* Read-only forecast — shown in both edit and read-only modes. */}
+						<MonteCarloForecast doc={doc} />
 					</section>
 
 					{/* View jump-offs */}
