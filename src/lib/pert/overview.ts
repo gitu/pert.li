@@ -7,6 +7,7 @@ import {
 	computeSchedule,
 	expected,
 	progressFractionOf,
+	type ScheduleResult,
 	statusOf,
 } from "./schedule";
 import type { PertDoc, TaskId } from "./types";
@@ -43,7 +44,13 @@ export type ProjectOverview = {
 	schedule: ProjectScheduleSummary;
 };
 
-export function computeProjectOverview(doc: PertDoc): ProjectOverview {
+export function computeProjectOverview(
+	doc: PertDoc,
+	// The CPM scheduler is the priciest part of this function. Callers that
+	// already have a schedule (e.g. the Overview view, which also feeds it to the
+	// per-group rollups) can pass it in so it isn't recomputed.
+	scheduleResult: ScheduleResult = computeSchedule(doc),
+): ProjectOverview {
 	let taskCount = 0;
 	let milestoneCount = 0;
 	const status: ProjectStatusBreakdown = {
@@ -78,7 +85,7 @@ export function computeProjectOverview(doc: PertDoc): ProjectOverview {
 	const progressPct =
 		progressWeight > 0 ? weightedProgress / progressWeight : 0;
 
-	const result = computeSchedule(doc);
+	const result = scheduleResult;
 	const schedule: ProjectScheduleSummary = result.ok
 		? {
 				ok: true,
