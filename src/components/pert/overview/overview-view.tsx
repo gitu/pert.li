@@ -5,6 +5,8 @@ import {
 	ArrowUpFromLineIcon,
 	CalendarDaysIcon,
 	CheckIcon,
+	ChevronDownIcon,
+	ChevronRightIcon,
 	GitBranchIcon,
 	GridIcon,
 	ListIcon,
@@ -370,6 +372,12 @@ export function OverviewContent({
 }: OverviewContentProps) {
 	// Bump to re-seed the calendar form (Cancel / after Save) from props.
 	const [calendarKey, setCalendarKey] = useState(0);
+	// The calendar settings are the calculation basis behind the forecast — shown
+	// below it and collapsed by default so the finish-date result leads.
+	const [basisOpen, setBasisOpen] = useState(false);
+	// Mount the form lazily on first expand, then keep it mounted (just hidden)
+	// so collapsing mid-edit doesn't unmount it and silently drop unsaved edits.
+	const [basisMounted, setBasisMounted] = useState(false);
 
 	return (
 		<div className="h-full overflow-y-auto" data-testid="overview-view">
@@ -406,30 +414,66 @@ export function OverviewContent({
 						/>
 					</div>
 
-					{/* Calendar settings */}
+					{/* Calendar & scheduling: forecast first, calendar settings
+					    (the calculation basis) collapsed below it. */}
 					<section className="rounded-md border bg-card/40 lg:col-start-2 lg:row-start-1">
 						<div className="flex items-center gap-1.5 border-b px-4 py-3 text-sm font-medium">
 							<CalendarDaysIcon className="size-4" />
 							Calendar &amp; scheduling
 						</div>
-						{readOnly ? (
-							<p className="p-4 text-xs text-muted-foreground">
-								Switch to edit mode to change the project calendar.
-							</p>
-						) : (
-							<ProjectCalendarForm
-								key={calendarKey}
-								initial={calendarInitial}
-								doc={doc}
-								onCancel={() => setCalendarKey((k) => k + 1)}
-								onSave={(next) => {
-									onSaveCalendar(next);
-									setCalendarKey((k) => k + 1);
-								}}
-							/>
-						)}
 						{/* Read-only forecast — shown in both edit and read-only modes. */}
 						<MonteCarloForecast doc={doc} />
+						{/* Calculation basis — the project calendar the schedule is
+						    computed from. Collapsed by default. */}
+						<div className="border-t">
+							<button
+								type="button"
+								onClick={() => {
+									if (!basisOpen) setBasisMounted(true);
+									setBasisOpen((open) => !open);
+								}}
+								aria-expanded={basisOpen}
+								title={
+									basisOpen
+										? "Hide calendar settings"
+										: "Show calendar settings"
+								}
+								data-testid="calendar-basis-toggle"
+								className="flex w-full items-center gap-1.5 px-4 py-3 text-left text-sm font-medium transition-colors hover:bg-muted/50"
+							>
+								{basisOpen ? (
+									<ChevronDownIcon className="size-3 shrink-0" />
+								) : (
+									<ChevronRightIcon className="size-3 shrink-0" />
+								)}
+								Calendar settings
+								<span className="ml-1 text-xs font-normal text-muted-foreground">
+									Calculation basis
+								</span>
+							</button>
+							{/* Mounted on first expand, then kept mounted but hidden when
+							    collapsed so unsaved calendar edits survive a collapse. */}
+							{basisMounted && (
+								<div hidden={!basisOpen}>
+									{readOnly ? (
+										<p className="px-4 pb-4 text-xs text-muted-foreground">
+											Switch to edit mode to change the project calendar.
+										</p>
+									) : (
+										<ProjectCalendarForm
+											key={calendarKey}
+											initial={calendarInitial}
+											doc={doc}
+											onCancel={() => setCalendarKey((k) => k + 1)}
+											onSave={(next) => {
+												onSaveCalendar(next);
+												setCalendarKey((k) => k + 1);
+											}}
+										/>
+									)}
+								</div>
+							)}
+						</div>
 					</section>
 
 					{/* View jump-offs */}
