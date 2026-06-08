@@ -85,6 +85,25 @@ export default defineConfig({
 			testMatch: /authed\/mobile\/.*\.spec\.ts$/,
 			dependencies: ["setup"],
 		},
+		// README screenshot renderer — only defined under `pnpm screenshots`
+		// (which sets E2E_SCREENSHOTS=1). Kept out of the default project list so
+		// a plain `pnpm e2e` run never executes it and overwrites the committed
+		// PNGs. Runs authed (same setup user) at the 1440×900 viewport the README
+		// images use, writing into docs/screenshots/.
+		...(process.env.E2E_SCREENSHOTS === "1"
+			? [
+					{
+						name: "screenshots",
+						use: {
+							...devices["Desktop Chrome"],
+							viewport: { width: 1440, height: 900 },
+							storageState: STORAGE_STATE,
+						},
+						testMatch: /screenshots\/.*\.screens\.ts$/,
+						dependencies: ["setup"],
+					},
+				]
+			: []),
 	],
 	webServer: {
 		// E2E_USE_BUILD=1 swaps the dev server for `node .output/server/index.mjs`
@@ -137,6 +156,17 @@ export default defineConfig({
 			// sign-up POST from /signin is accepted.
 			BETTER_AUTH_URL: `http://localhost:${E2E_PORT}`,
 			PORT: String(E2E_PORT),
+			// Screenshot runs (`pnpm screenshots`, which sets E2E_SCREENSHOTS=1)
+			// hand the server a placeholder key so the chat dock renders its
+			// normal, provider-ready chrome for chat.png. Gated so the regular
+			// `pnpm e2e` suite keeps running with no provider configured. No real
+			// requests are made — the renderer only screenshots the dock.
+			...(process.env.E2E_SCREENSHOTS === "1"
+				? {
+						ANTHROPIC_API_KEY:
+							process.env.ANTHROPIC_API_KEY ?? "sk-screenshots-placeholder",
+					}
+				: {}),
 		},
 	},
 });
