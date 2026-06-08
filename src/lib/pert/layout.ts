@@ -1,9 +1,13 @@
 import ELK from "elkjs/lib/elk.bundled.js";
 import { type LayoutSpacing, SPACING_PRESETS } from "./canvas-prefs";
 import {
+	filterCollapsedToRendered,
 	getChildGroups,
+	getGroupDescendants,
 	getNearestCollapsedGroup,
 	getTasksInGroup,
+	getTasksInGroupDeep,
+	isGroupRendered,
 } from "./hierarchy";
 import type { Group, GroupId, PertDoc } from "./types";
 
@@ -83,6 +87,13 @@ export type ComputeLayoutOptions = {
 	 * empty set if not provided.
 	 */
 	collapsed?: ReadonlySet<GroupId>;
+	/**
+	 * Depth cap for group boxes (WBS level, 1-based). Groups deeper than this are
+	 * not laid out as ELK parents — their tasks fold into the nearest shown
+	 * ancestor. `0` disables grouping entirely (flat layout). Defaults to
+	 * `Number.POSITIVE_INFINITY` (all levels).
+	 */
+	maxLevel?: number;
 };
 
 export async function computeLayout(
@@ -92,15 +103,17 @@ export async function computeLayout(
 	const spacing = options.spacing ?? "comfortable";
 	const forceReflow = options.forceReflow ?? false;
 	const collapsed = options.collapsed ?? new Set<GroupId>();
+	const maxLevel = options.maxLevel ?? Number.POSITIVE_INFINITY;
 
 	const allTasks = Object.values(doc.tasksById);
 	if (allTasks.length === 0 && Object.keys(doc.groupsById).length === 0) {
 		return {};
 	}
 
+	// Grouping off (cap 0) lays the graph out flat — no group boxes at all.
 	const hasGroups = Object.keys(doc.groupsById).length > 0;
-	if (hasGroups) {
-		return computeHierarchicalLayout(doc, spacing, collapsed);
+	if (hasGroups && maxLevel >= 1) {
+		return computeHierarchicalLayout(doc, spacing, collapsed, maxLevel);
 	}
 	return computeFlatLayout(doc, spacing, forceReflow);
 }
@@ -154,12 +167,27 @@ async function computeFlatLayout(
 async function computeHierarchicalLayout(
 	doc: PertDoc,
 	spacing: LayoutSpacing,
-	collapsed: ReadonlySet<GroupId>,
+	rawCollapsed: ReadonlySet<GroupId>,
+	maxLevel: number,
 ): Promise<LayoutResult> {
+	// Collapse only applies to groups rendered under the cap — a folded-away
+	// group has no ELK node, so its members mustn't hide and its edges mustn't
+	// reroute to it.
+	const collapsed = filterCollapsedToRendered(doc, rawCollapsed, maxLevel);
 	const placed = new Set<string>();
+
+	// Mark a folded (beyond-cap) group subtree as placed so the promote/straggler
+	// loops below don't try to give it a position — it renders no box.
+	function markGroupTreePlaced(groupId: GroupId): void {
+		placed.add(groupId);
+		for (const d of getGroupDescendants(doc, groupId)) placed.add(d);
+	}
 
 	function buildGroupNode(group: Group): ElkInputNode | null {
 		if (placed.has(group.id)) return null;
+		// Groups beyond the depth cap don't render as boxes — they're folded by
+		// the caller, never laid out as ELK parents.
+		if (!isGroupRendered(doc, group.id, maxLevel)) return null;
 		placed.add(group.id);
 		// Collapsed groups behave like sized leaves: their members are hidden
 		// from the layout so ELK can route external edges straight to the card.
@@ -171,14 +199,22 @@ async function computeHierarchicalLayout(
 			};
 		}
 		const children: ElkInputNode[] = [];
-		for (const t of getTasksInGroup(doc, group.id)) {
-			if (placed.has(t.id)) continue;
-			placed.add(t.id);
-			children.push({ id: t.id, width: NODE_WIDTH, height: NODE_HEIGHT });
-		}
+		const addTask = (id: string): void => {
+			if (placed.has(id)) return;
+			placed.add(id);
+			children.push({ id, width: NODE_WIDTH, height: NODE_HEIGHT });
+		};
+		for (const t of getTasksInGroup(doc, group.id)) addTask(t.id);
 		for (const child of getChildGroups(doc, group.id)) {
-			const node = buildGroupNode(child);
-			if (node) children.push(node);
+			if (isGroupRendered(doc, child.id, maxLevel)) {
+				const node = buildGroupNode(child);
+				if (node) children.push(node);
+			} else {
+				// Fold the over-deep subtree: its tasks render loose inside THIS
+				// box; the subtree's groups get no node.
+				for (const t of getTasksInGroupDeep(doc, child.id)) addTask(t.id);
+				markGroupTreePlaced(child.id);
+			}
 		}
 		return {
 			id: group.id,

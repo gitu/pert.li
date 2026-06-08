@@ -1,6 +1,5 @@
 import {
 	CircleDotIcon,
-	FolderPlusIcon,
 	FoldVerticalIcon,
 	LayoutGridIcon,
 	PinIcon,
@@ -35,17 +34,16 @@ import { CanvasLegend } from "./canvas-legend";
 export type CanvasAddToolbarProps = {
 	onAddTask: () => void;
 	onAddMilestone: () => void;
-	onAddGroup: () => void;
 };
 
 // Tooltip suffix that exposes the keyboard shortcut next to each button so
 // users discover them without opening the help popover. The popover still
 // ships the full cheat-sheet for the bindings that aren't on a button (Tab,
-// arrows, etc.).
+// arrows, etc.). Groups aren't created here — they come from the work plan /
+// WBS hierarchy — so there's no "Group" button on the board.
 export function CanvasAddToolbar({
 	onAddTask,
 	onAddMilestone,
-	onAddGroup,
 }: CanvasAddToolbarProps) {
 	return (
 		<div
@@ -74,17 +72,6 @@ export function CanvasAddToolbar({
 				<CircleDotIcon className="size-3.5" />
 				Milestone
 			</Button>
-			<Button
-				size="sm"
-				variant="ghost"
-				className="h-8 gap-1.5 text-xs"
-				onClick={onAddGroup}
-				data-testid="toolbar-add-group"
-				title="Add a group (g)"
-			>
-				<FolderPlusIcon className="size-3.5" />
-				Group
-			</Button>
 		</div>
 	);
 }
@@ -99,7 +86,54 @@ export type CanvasViewToolbarProps = {
 	// groups (callers pass undefined then).
 	onCollapseAll?: () => void;
 	onExpandAll?: () => void;
+	// Set the grouping depth cap. Hidden when the project has no groups
+	// (callers pass undefined then). The current cap is read from `prefs`.
+	onSetGroupingLevel?: (level: number) => void;
 };
+
+// Grouping depth options. The numeric cap is a WBS level (1-based);
+// `Number.POSITIVE_INFINITY` = all levels, `0` = grouping off.
+const GROUPING_OPTIONS: ReadonlyArray<{
+	value: string;
+	label: string;
+	description: string;
+}> = [
+	{ value: "off", label: "Off", description: "No group boxes — flat graph." },
+	{
+		value: "1",
+		label: "Level 1 only",
+		description: "Only top-level groups draw a box.",
+	},
+	{
+		value: "2",
+		label: "Up to level 2",
+		description: "Boxes for levels 1–2; deeper groups fold into their parent.",
+	},
+	{
+		value: "3",
+		label: "Up to level 3",
+		description: "Boxes for levels 1–3; deeper groups fold into their parent.",
+	},
+	{
+		value: "all",
+		label: "All levels",
+		description: "Every group nesting level draws a box.",
+	},
+];
+
+function groupingLevelToValue(level: number): string {
+	if (level <= 0) return "off";
+	if (!Number.isFinite(level)) return "all";
+	if (level >= 1 && level <= 3) return String(level);
+	return "all";
+}
+
+function groupingValueToLevel(value: string): number {
+	if (value === "off") return 0;
+	if (value === "all") return Number.POSITIVE_INFINITY;
+	const n = Number.parseInt(value, 10);
+	return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+}
 
 export function CanvasViewToolbar({
 	prefs,
@@ -109,6 +143,7 @@ export function CanvasViewToolbar({
 	onToggleContinuous,
 	onCollapseAll,
 	onExpandAll,
+	onSetGroupingLevel,
 }: CanvasViewToolbarProps) {
 	return (
 		<div
@@ -231,6 +266,31 @@ export function CanvasViewToolbar({
 							Spacious
 						</DropdownMenuRadioItem>
 					</DropdownMenuRadioGroup>
+					{onSetGroupingLevel && (
+						<>
+							<DropdownMenuSeparator />
+							<DropdownMenuLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">
+								Grouping
+							</DropdownMenuLabel>
+							<DropdownMenuRadioGroup
+								value={groupingLevelToValue(prefs.groupingMaxLevel)}
+								onValueChange={(v) =>
+									onSetGroupingLevel(groupingValueToLevel(v))
+								}
+							>
+								{GROUPING_OPTIONS.map((opt) => (
+									<DropdownMenuRadioItem
+										key={opt.value}
+										value={opt.value}
+										data-testid={`toolbar-grouping-${opt.value}`}
+										title={opt.description}
+									>
+										{opt.label}
+									</DropdownMenuRadioItem>
+								))}
+							</DropdownMenuRadioGroup>
+						</>
+					)}
 					<DropdownMenuSeparator />
 					<DropdownMenuItem
 						onClick={onRelayout}

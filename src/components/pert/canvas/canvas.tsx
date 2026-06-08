@@ -23,6 +23,7 @@ import {
 	type LayoutSpacing,
 	setContinuousLayout,
 	setEdgeStyle,
+	setGroupingMaxLevel,
 	setLayoutSpacing,
 	useCanvasPrefs,
 } from "#/lib/pert/canvas-prefs";
@@ -34,10 +35,9 @@ import {
 import { cycleEdgeSet, cycleTaskSet } from "#/lib/pert/cycle";
 import {
 	assignTaskToGroupMutation,
-	createGroupMutation,
 	deleteGroupMutation,
 } from "#/lib/pert/group-mutations";
-import { getGroupAncestors } from "#/lib/pert/hierarchy";
+import { getGroupAncestors, isGroupRendered } from "#/lib/pert/hierarchy";
 import { computeLayout, fallbackGridLayout } from "#/lib/pert/layout";
 import type { MonteCarloResult } from "#/lib/pert/montecarlo";
 import { computeNumbering } from "#/lib/pert/numbering";
@@ -105,14 +105,16 @@ const LEAF_Z = 100;
 function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	const scheduleResult = useMemo(() => computeSchedule(doc), [doc]);
 	const prefs = useCanvasPrefs(projectId);
+	const maxLevel = prefs.groupingMaxLevel;
 	const collapsedSet = useCollapsedSet(projectId);
-	useAutoLayout(doc, changeDoc, prefs.spacing, collapsedSet);
+	useAutoLayout(doc, changeDoc, prefs.spacing, collapsedSet, maxLevel);
 
 	const handleRelayout = useCallback(async () => {
 		const positions = await computeLayout(doc, {
 			spacing: prefs.spacing,
 			forceReflow: true,
 			collapsed: collapsedSet,
+			maxLevel,
 		});
 		changeDoc((d) => {
 			for (const task of Object.values(d.tasksById)) {
@@ -129,7 +131,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				group.layout = { ...(group.layout ?? {}), position: pos };
 			}
 		});
-	}, [doc, changeDoc, prefs.spacing, collapsedSet]);
+	}, [doc, changeDoc, prefs.spacing, collapsedSet, maxLevel]);
 
 	const handleSetEdgeStyle = useCallback(
 		(style: EdgeStyle) => setEdgeStyle(projectId, style),
@@ -137,6 +139,10 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	);
 	const handleSetSpacing = useCallback(
 		(spacing: LayoutSpacing) => setLayoutSpacing(projectId, spacing),
+		[projectId],
+	);
+	const handleSetGroupingLevel = useCallback(
+		(level: number) => setGroupingMaxLevel(projectId, level),
 		[projectId],
 	);
 	const handleToggleContinuous = useCallback(() => {
@@ -166,12 +172,13 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		changeDoc,
 		prefs.spacing,
 		collapsedSet,
+		maxLevel,
 		prefs.continuousLayout,
 	);
 
 	const projection = useMemo(
-		() => projectGraph(doc, scheduleResult, collapsedSet),
-		[doc, scheduleResult, collapsedSet],
+		() => projectGraph(doc, scheduleResult, collapsedSet, maxLevel),
+		[doc, scheduleResult, collapsedSet, maxLevel],
 	);
 
 	const numbering = useMemo(() => computeNumbering(doc), [doc]);
@@ -226,7 +233,10 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			// store only the position — not the (large) expanded width/height —
 			// so the collapsed card keeps its compact size.
 			if (!collapsedSet.has(groupId)) {
-				const bounds = groupBoundsFromMembers(doc, groupId);
+				const bounds = groupBoundsFromMembers(doc, groupId, {
+					collapsed: collapsedSet,
+					maxLevel,
+				});
 				if (bounds) {
 					changeDoc((d) => {
 						const g = d.groupsById[groupId];
@@ -240,7 +250,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			}
 			toggleCollapse(projectId, groupId);
 		},
-		[changeDoc, collapsedSet, doc, projectId],
+		[changeDoc, collapsedSet, doc, projectId, maxLevel],
 	);
 
 	const mc = useMonteCarlo(doc, { trials: 1500 });
@@ -368,6 +378,8 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				onDeleteGroup,
 				cycleTaskIds,
 				onAddLinkedTask,
+				collapsedSet,
+				maxLevel,
 			),
 		[
 			doc,
@@ -380,6 +392,8 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			onDeleteGroup,
 			cycleTaskIds,
 			onAddLinkedTask,
+			collapsedSet,
+			maxLevel,
 		],
 	);
 	const derivedNodes = useMemo(
@@ -485,6 +499,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 									doc,
 									collapsedSet,
 									new Set<TaskId>([change.id]),
+									maxLevel,
 								),
 							);
 						}
@@ -573,7 +588,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				}
 			}
 		},
-		[changeDoc, doc, projectId, collapsedSet],
+		[changeDoc, doc, projectId, collapsedSet, maxLevel],
 	);
 
 	const onEdgesChange = useCallback(
@@ -649,28 +664,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		},
 		[changeDoc, projectId, screenToFlowPosition, selectedGroupId],
 	);
-
-	const onAddGroup = useCallback(() => {
-		const center = screenToFlowPosition({
-			x: window.innerWidth / 2,
-			y: window.innerHeight / 2,
-		});
-		// Nest the new group under the currently-selected group, if any.
-		const parentGroupId =
-			selectionStore.state.projectId === projectId
-				? selectionStore.state.groupId
-				: null;
-		let createdId: string | null = null;
-		changeDoc((d) => {
-			const result = createGroupMutation(d, {
-				name: "New group",
-				parentGroupId: parentGroupId ?? null,
-				layout: { position: center },
-			});
-			if (result.ok) createdId = result.id;
-		});
-		if (createdId) selectGroup(projectId, createdId);
-	}, [changeDoc, projectId, screenToFlowPosition]);
 
 	useEffect(() => {
 		return () => {
@@ -831,9 +824,9 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	//   • Spawn from selection — Tab adds a downstream task connected to
 	//     the seed; Shift+Tab adds a sibling that shares the seed's
 	//     predecessors so users can fan out parallel work fast.
-	//   • Fresh add — `n` / `m` / `g` add a task / milestone / group at the
-	//     viewport centre, with no selection required. Lets users bootstrap an
-	//     empty canvas without reaching for the toolbar.
+	//   • Fresh add — `n` / `m` add a task / milestone at the viewport centre,
+	//     with no selection required. Lets users bootstrap an empty canvas
+	//     without reaching for the toolbar.
 	// Bound via refs so the listener doesn't re-attach on every doc edit.
 	const keyNavRef = useRef({
 		doc,
@@ -841,7 +834,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		onAddLinkedTask,
 		onAddSiblingTask,
 		onAddFreshNode,
-		onAddGroup,
 	});
 	keyNavRef.current = {
 		doc,
@@ -849,7 +841,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 		onAddLinkedTask,
 		onAddSiblingTask,
 		onAddFreshNode,
-		onAddGroup,
 	};
 	useEffect(() => {
 		function isTypingTarget(target: EventTarget | null): boolean {
@@ -877,12 +868,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 					e.preventDefault();
 					e.stopPropagation();
 					current.onAddFreshNode(key === "n" ? "task" : "milestone");
-					return;
-				}
-				if (key === "g") {
-					e.preventDefault();
-					e.stopPropagation();
-					current.onAddGroup();
 					return;
 				}
 			}
@@ -998,7 +983,6 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 					<CanvasAddToolbar
 						onAddTask={() => handleAddTask("task")}
 						onAddMilestone={() => handleAddTask("milestone")}
-						onAddGroup={onAddGroup}
 					/>
 				</div>
 			</div>
@@ -1017,6 +1001,9 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 							onToggleContinuous={handleToggleContinuous}
 							onCollapseAll={hasGroups ? handleCollapseAll : undefined}
 							onExpandAll={hasGroups ? handleExpandAll : undefined}
+							onSetGroupingLevel={
+								hasGroups ? handleSetGroupingLevel : undefined
+							}
 						/>
 					</div>
 				</div>
@@ -1097,6 +1084,8 @@ function buildBaseNodes(
 		direction: "successor" | "predecessor",
 		kind: "task" | "milestone",
 	) => void,
+	collapsed: ReadonlySet<GroupId>,
+	maxLevel: number,
 ): Node[] {
 	const fallback = fallbackGridLayout(doc);
 	const schedule = scheduleResult.ok ? scheduleResult.schedule : null;
@@ -1105,9 +1094,13 @@ function buildBaseNodes(
 	for (const projected of projection.nodes) {
 		if (projected.kind === "group-expanded") {
 			const group = projected.group;
-			// Bounds derive from member positions (matching the drop hit-test).
+			// Bounds derive from what's drawn inside (members + nested boxes),
+			// matching the drop hit-test and folding collapsed/over-deep children.
 			// groupBoundsFromMembers only returns null for a missing group.
-			const bounds = groupBoundsFromMembers(doc, group.id);
+			const bounds = groupBoundsFromMembers(doc, group.id, {
+				collapsed,
+				maxLevel,
+			});
 			if (!bounds) continue;
 			// Stored manual size acts as a minimum — members can still grow the
 			// box, but the user can claim extra room.
@@ -1428,17 +1421,23 @@ function useAutoLayout(
 	changeDoc: (mutate: (d: PertDoc) => void) => void,
 	spacing: LayoutSpacing,
 	collapsed: ReadonlySet<GroupId>,
+	maxLevel: number,
 ) {
 	useEffect(() => {
 		const tasksMissing = Object.values(doc.tasksById).some(
 			(t) => !t.layout?.position,
 		);
+		// Only groups that actually render under the cap can receive a position
+		// from computeLayout. A folded-away group (or any group when grouping is
+		// off) intentionally never gets one, so it must NOT count as "missing" —
+		// otherwise this effect would re-run ELK on every doc edit in capped/off
+		// modes instead of staying idle once the initial layout is done.
 		const groupsMissing = Object.values(doc.groupsById).some(
-			(g) => !g.layout?.position,
+			(g) => isGroupRendered(doc, g.id, maxLevel) && !g.layout?.position,
 		);
 		if (!tasksMissing && !groupsMissing) return;
 		let cancelled = false;
-		computeLayout(doc, { spacing, collapsed }).then((positions) => {
+		computeLayout(doc, { spacing, collapsed, maxLevel }).then((positions) => {
 			if (cancelled) return;
 			changeDoc((d) => {
 				for (const task of Object.values(d.tasksById)) {
@@ -1459,7 +1458,7 @@ function useAutoLayout(
 		return () => {
 			cancelled = true;
 		};
-	}, [doc, changeDoc, spacing, collapsed]);
+	}, [doc, changeDoc, spacing, collapsed, maxLevel]);
 }
 
 // Continuous auto-layout. When enabled, every structural doc change (new
@@ -1480,6 +1479,7 @@ function useContinuousLayout(
 	changeDoc: (mutate: (d: PertDoc) => void) => void,
 	spacing: LayoutSpacing,
 	collapsed: ReadonlySet<GroupId>,
+	maxLevel: number,
 	enabled: boolean,
 ) {
 	const reactFlow = useReactFlow();
@@ -1499,8 +1499,8 @@ function useContinuousLayout(
 			.map((d) => `${d.from.taskId ?? "*"}->${d.to.taskId ?? "*"}`)
 			.sort()
 			.join(",");
-		return `${tasks}::${groups}::${deps}::${spacing}`;
-	}, [doc, collapsed, spacing]);
+		return `${tasks}::${groups}::${deps}::${spacing}::${maxLevel}`;
+	}, [doc, collapsed, spacing, maxLevel]);
 
 	// structuralKey stands in for doc/changeDoc/spacing/collapsed/reactFlow —
 	// re-running on those would loop (changeDoc) or thrash (every doc edit).
@@ -1533,6 +1533,7 @@ function useContinuousLayout(
 				spacing,
 				forceReflow: true,
 				collapsed,
+				maxLevel,
 			});
 			if (cancelled) return;
 			// Apply positions. Expanded groups derive their box from member

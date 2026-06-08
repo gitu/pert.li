@@ -5,10 +5,14 @@ import {
 	EDGE_STYLES,
 	getCanvasPrefs,
 	isEdgeStyle,
+	normalizeGroupingMaxLevel,
 	SPACING_PRESETS,
 	setEdgeStyle,
+	setGroupingMaxLevel,
 	setLayoutSpacing,
 } from "#/lib/pert/canvas-prefs";
+
+const ALL = Number.POSITIVE_INFINITY;
 
 beforeEach(() => {
 	canvasPrefsStore.setState(() => ({}));
@@ -23,6 +27,7 @@ describe("canvasPrefsStore", () => {
 			edgeStyle: "bezier",
 			spacing: "comfortable",
 			continuousLayout: false,
+			groupingMaxLevel: ALL,
 		});
 	});
 
@@ -36,11 +41,13 @@ describe("canvasPrefsStore", () => {
 			edgeStyle: "bezier",
 			spacing: "spacious",
 			continuousLayout: false,
+			groupingMaxLevel: ALL,
 		});
 		expect(getCanvasPrefs("p2")).toEqual({
 			edgeStyle: "smoothstep",
 			spacing: "compact",
 			continuousLayout: false,
+			groupingMaxLevel: ALL,
 		});
 	});
 
@@ -51,7 +58,32 @@ describe("canvasPrefsStore", () => {
 			edgeStyle: "bezier",
 			spacing: "compact",
 			continuousLayout: false,
+			groupingMaxLevel: ALL,
 		});
+	});
+
+	it("setGroupingMaxLevel is isolated and leaves other prefs untouched", () => {
+		setLayoutSpacing("p1", "compact");
+		setGroupingMaxLevel("p1", 2);
+		setGroupingMaxLevel("p2", 0);
+		expect(getCanvasPrefs("p1")).toEqual({
+			edgeStyle: "bezier",
+			spacing: "compact",
+			continuousLayout: false,
+			groupingMaxLevel: 2,
+		});
+		expect(getCanvasPrefs("p2").groupingMaxLevel).toBe(0);
+	});
+
+	it("round-trips the 'All' sentinel through JSON (Infinity → null → All)", () => {
+		setGroupingMaxLevel("p1", ALL);
+		// JSON is how the store persists to localStorage; Infinity serializes to
+		// null, so a naive read would lose "All". The normalizer must restore it.
+		const raw = JSON.stringify(canvasPrefsStore.state);
+		expect(raw).toContain('"groupingMaxLevel":null');
+		// Rehydrate from the serialized form (simulate a fresh tab).
+		canvasPrefsStore.setState(() => JSON.parse(raw));
+		expect(getCanvasPrefs("p1").groupingMaxLevel).toBe(ALL);
 	});
 
 	it("subscribers see each setter's state change", () => {
@@ -100,13 +132,42 @@ describe("EDGE_STYLES + helpers", () => {
 				edgeStyle: "squiggle" as unknown as "smoothstep",
 				spacing: "compact",
 				continuousLayout: false,
+				groupingMaxLevel: ALL,
 			},
 		}));
 		expect(getCanvasPrefs("p1")).toEqual({
 			edgeStyle: "bezier",
 			spacing: "compact",
 			continuousLayout: false,
+			groupingMaxLevel: ALL,
 		});
+	});
+});
+
+describe("normalizeGroupingMaxLevel", () => {
+	it("treats null/undefined/non-finite as All (infinity)", () => {
+		expect(normalizeGroupingMaxLevel(null)).toBe(ALL);
+		expect(normalizeGroupingMaxLevel(undefined)).toBe(ALL);
+		expect(normalizeGroupingMaxLevel(ALL)).toBe(ALL);
+		expect(normalizeGroupingMaxLevel("nope")).toBe(ALL);
+	});
+
+	it("keeps 0 (off) and the UI-representable levels 1–3", () => {
+		expect(normalizeGroupingMaxLevel(0)).toBe(0);
+		expect(normalizeGroupingMaxLevel(1)).toBe(1);
+		expect(normalizeGroupingMaxLevel(3)).toBe(3);
+		expect(normalizeGroupingMaxLevel(2.7)).toBe(2);
+	});
+
+	it("collapses finite caps above the UI range (>3) to All", () => {
+		// Otherwise the Display radio would show "All" but behave as level 4+,
+		// then silently change the stored value on the next save.
+		expect(normalizeGroupingMaxLevel(4)).toBe(ALL);
+		expect(normalizeGroupingMaxLevel(99)).toBe(ALL);
+	});
+
+	it("clamps negatives up to All rather than producing a nonsense cap", () => {
+		expect(normalizeGroupingMaxLevel(-5)).toBe(ALL);
 	});
 });
 
