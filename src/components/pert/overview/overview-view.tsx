@@ -392,10 +392,36 @@ export function OverviewContent({
 					)}
 				</header>
 
+				{/* View jump-offs — compact strip up top so the views are one click away */}
+				<section data-testid="overview-explore">
+					<div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+						{VIEW_JUMP_OFFS.map((v) => (
+							<button
+								key={v.id}
+								type="button"
+								onClick={() => onNavigate(v.id)}
+								data-testid={`overview-jump-${v.id}`}
+								// title gives sighted mouse users a hover tooltip; aria-label
+								// carries the same intro to keyboard/AT users on focus, since
+								// the compact strip no longer renders the intro as visible text.
+								title={v.intro}
+								aria-label={`${v.label}: ${v.intro}`}
+								className="group flex items-center gap-2 rounded-md border bg-card/40 px-3 py-2 text-left transition-colors hover:border-brand/50 hover:bg-brand/5"
+							>
+								<v.Icon className="size-4 shrink-0 text-muted-foreground group-hover:text-brand" />
+								<span className="min-w-0 flex-1 truncate text-sm font-medium">
+									{v.label}
+								</span>
+								<ArrowRightIcon className="size-3.5 shrink-0 -translate-x-1 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
+							</button>
+						))}
+					</div>
+				</section>
+
 				{/* Key figures */}
 				<OverviewMetrics overview={overview} />
 
-				{/* Dashboard grid: summary + explore on the left, calendar on the right */}
+				{/* Dashboard grid: AI summary on the left, calendar on the right */}
 				<div className="grid items-start gap-6 lg:grid-cols-2">
 					{/* AI summary */}
 					<div className="lg:col-start-1 lg:row-start-1">
@@ -430,33 +456,6 @@ export function OverviewContent({
 						)}
 						{/* Read-only forecast — shown in both edit and read-only modes. */}
 						<MonteCarloForecast doc={doc} />
-					</section>
-
-					{/* View jump-offs */}
-					<section className="lg:col-start-1 lg:row-start-2">
-						<h2 className="mb-2 text-sm font-medium">Explore this project</h2>
-						<div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-							{VIEW_JUMP_OFFS.map((v) => (
-								<button
-									key={v.id}
-									type="button"
-									onClick={() => onNavigate(v.id)}
-									data-testid={`overview-jump-${v.id}`}
-									className="group flex items-start gap-3 rounded-md border bg-card/40 p-3 text-left transition-colors hover:border-brand/50 hover:bg-brand/5"
-								>
-									<v.Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground group-hover:text-brand" />
-									<div className="min-w-0 flex-1">
-										<div className="flex items-center gap-1 text-sm font-medium">
-											{v.label}
-											<ArrowRightIcon className="size-3.5 -translate-x-1 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-100" />
-										</div>
-										<div className="text-xs text-muted-foreground">
-											{v.intro}
-										</div>
-									</div>
-								</button>
-							))}
-						</div>
 					</section>
 				</div>
 			</div>

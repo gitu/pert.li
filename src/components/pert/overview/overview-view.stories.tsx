@@ -197,10 +197,10 @@ export const SummaryError: Story = {
 	},
 };
 
-// Fully-populated dashboard: header actions, the stats band, and both columns
-// of the lg grid (summary + explore on the left, calendar on the right). The
-// test-runner renders at a wide viewport, so this exercises the two-column
-// layout the narrower default stories don't.
+// Fully-populated dashboard: header actions, the compact Explore strip up top,
+// the stats band, and both columns of the lg grid (summary on the left, calendar
+// on the right). The test-runner renders at a wide viewport, so this exercises
+// the two-column layout the narrower default stories don't.
 export const WideDashboard: Story = {
 	args: {
 		summaryState: {
