@@ -56,6 +56,7 @@ import {
 	assignTaskToGroupMutation,
 } from "#/lib/ai/tool-mutators";
 import { todayIsoDate } from "#/lib/pert/calendar";
+import { renameGroupMutation } from "#/lib/pert/group-mutations";
 import {
 	buildGroupTree,
 	countRowsInGroup,
@@ -63,9 +64,16 @@ import {
 } from "#/lib/pert/group-tree";
 import { computeNumbering } from "#/lib/pert/numbering";
 import { computeSchedule, type ScheduleResult } from "#/lib/pert/schedule";
-import { projectDocStore, selectionStore, selectTask } from "#/lib/pert/store";
+import {
+	type ChangeFn,
+	projectDocStore,
+	selectGroup,
+	selectionStore,
+	selectTask,
+} from "#/lib/pert/store";
 import type {
 	Estimate,
+	GroupId,
 	PertDoc,
 	TaskId,
 	TaskKind,
@@ -208,6 +216,9 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 	const selectedTaskId = useStore(selectionStore, (s) =>
 		s.projectId === projectId ? s.taskId : null,
 	);
+	const selectedGroupId = useStore(selectionStore, (s) =>
+		s.projectId === projectId ? s.groupId : null,
+	);
 	const changeDoc = useStore(projectDocStore, (s) =>
 		s.projectId === projectId ? s.changeDoc : null,
 	);
@@ -299,6 +310,10 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 	const [editingProgressId, setEditingProgressId] = useState<TaskId | null>(
 		null,
 	);
+	// Which group header is in inline-rename mode. Keyed by GroupId, independent
+	// of the task editing keys so renaming a group doesn't cancel an in-flight
+	// task edit (and vice versa).
+	const [editingGroupId, setEditingGroupId] = useState<GroupId | null>(null);
 	// Group rows by the group each task belongs to. Collapsed group paths live in a
 	// separate set so flipping the toggle off and back on keeps the user's
 	// open/closed state instead of resetting.
@@ -1268,8 +1283,13 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 									toggleGroup,
 									visibleRowById,
 									selectedTaskId,
+									selectedGroupId,
 									projectId,
 									columnCount: visibleColumnCount,
+									changeDoc,
+									editingGroupId,
+									setEditingGroupId,
+									editAll,
 								})
 							) : (
 								visibleRows.map((row) =>
@@ -1502,8 +1522,13 @@ function renderGroupedRows({
 	toggleGroup,
 	visibleRowById,
 	selectedTaskId,
+	selectedGroupId,
 	projectId,
 	columnCount,
+	changeDoc,
+	editingGroupId,
+	setEditingGroupId,
+	editAll,
 }: {
 	tree: KeyGroupNode<TaskListRow>[];
 	depth: number;
@@ -1511,8 +1536,13 @@ function renderGroupedRows({
 	toggleGroup: (path: string) => void;
 	visibleRowById: Map<TaskId, Row<TaskListRow>>;
 	selectedTaskId: TaskId | null;
+	selectedGroupId: GroupId | null;
 	projectId: string;
 	columnCount: number;
+	changeDoc: ChangeFn | null;
+	editingGroupId: GroupId | null;
+	setEditingGroupId: (id: GroupId | null) => void;
+	editAll: boolean;
 }): React.ReactNode[] {
 	const nodes: React.ReactNode[] = [];
 	for (const group of tree) {
@@ -1520,11 +1550,23 @@ function renderGroupedRows({
 		const total = countRowsInGroup(group);
 		const summary = summarizeGroup(group);
 		const indent = depth * 16;
+		// The synthetic "(ungrouped)" bucket has no real group, so it can't be
+		// selected or renamed — only toggled. Everything else mirrors task rows:
+		// click the name to select (open the inspector), double-click to rename.
+		const gid = group.groupId;
+		const selectable = gid !== null;
+		const editable = gid !== null && !!changeDoc;
+		const isSelectedGroup = gid !== null && gid === selectedGroupId;
+		const isEditingGroup = gid !== null && gid === editingGroupId;
 		nodes.push(
 			<TableRow
 				key={`group-${group.path || "ungrouped"}`}
 				data-testid={`task-list-group-${group.path || "ungrouped"}`}
-				className="bg-muted/30 hover:bg-muted/40"
+				data-selected={isSelectedGroup}
+				className={cn(
+					"bg-muted/30 hover:bg-muted/40",
+					isSelectedGroup && "bg-accent/60",
+				)}
 			>
 				<TableCell
 					colSpan={columnCount}
@@ -1538,14 +1580,79 @@ function renderGroupedRows({
 						) : (
 							<ChevronDownIcon className="size-3.5 text-muted-foreground" />
 						)}
-						{group.number && (
-							<span className="font-mono text-[11px] text-muted-foreground">
-								{group.number}
-							</span>
+						{editable && (isEditingGroup || editAll) ? (
+							// Inline name editor — opened by double-click, or always-on
+							// in edit-all mode (where it doesn't autofocus and stays put
+							// on commit, matching the task title cells). TitleEdit stops
+							// its own click propagation, so clicks never reach the cell's
+							// collapse toggle. Keep the WBS number alongside for context.
+							<div className="flex items-center gap-x-2">
+								{group.number && (
+									<span className="font-mono text-[11px] text-muted-foreground">
+										{group.number}
+									</span>
+								)}
+								<div className="min-w-[12rem] max-w-xs">
+									<TitleEdit
+										initial={group.label}
+										autoFocus={!editAll}
+										data-testid="task-list-group-name-input"
+										onCommit={(value) => {
+											const name = value.trim();
+											// Empty rename → cancel rather than blanking the
+											// header into an unclickable sliver.
+											if (name.length > 0 && gid) {
+												changeDoc?.((d) => {
+													renameGroupMutation(d, { groupId: gid, name });
+												});
+											}
+											if (!editAll) setEditingGroupId(null);
+										}}
+										onCancel={() => {
+											if (!editAll) setEditingGroupId(null);
+										}}
+									/>
+								</div>
+							</div>
+						) : (
+							<button
+								type="button"
+								disabled={!selectable}
+								data-testid={`task-list-group-label-${group.path || "ungrouped"}`}
+								title={
+									editable
+										? "Click to select, double-click to rename"
+										: selectable
+											? "Click to select"
+											: undefined
+								}
+								// pointer-events-none when disabled lets a click on the
+								// inert "(ungrouped)" label fall through to the cell's
+								// collapse toggle instead of dying on the button.
+								className="flex items-center gap-x-2 text-left disabled:pointer-events-none disabled:cursor-default"
+								onClick={(e) => {
+									e.stopPropagation();
+									if (selectable && gid) selectGroup(projectId, gid);
+								}}
+								onDoubleClick={(e) => {
+									e.stopPropagation();
+									if (editable && gid) setEditingGroupId(gid);
+								}}
+							>
+								{group.number && (
+									<span className="font-mono text-[11px] text-muted-foreground">
+										{group.number}
+									</span>
+								)}
+								<span className="text-[11px] font-medium text-foreground">
+									{group.label || (
+										<span className="italic text-muted-foreground">
+											Untitled
+										</span>
+									)}
+								</span>
+							</button>
 						)}
-						<span className="text-[11px] font-medium text-foreground">
-							{group.label}
-						</span>
 						<span className="text-muted-foreground">·</span>
 						<span className="text-muted-foreground">
 							{total} task{total === 1 ? "" : "s"}
@@ -1635,8 +1742,13 @@ function renderGroupedRows({
 					toggleGroup,
 					visibleRowById,
 					selectedTaskId,
+					selectedGroupId,
 					projectId,
 					columnCount,
+					changeDoc,
+					editingGroupId,
+					setEditingGroupId,
+					editAll,
 				}),
 			);
 		}
@@ -1672,14 +1784,22 @@ function TitleEdit({
 	onCommit,
 	onCancel,
 	autoFocus = true,
+	"data-testid": testId = "task-list-title-input",
 }: {
 	initial: string;
 	onCommit: (value: string) => void;
 	onCancel: () => void;
 	autoFocus?: boolean;
+	"data-testid"?: string;
 }) {
 	const [value, setValue] = useState(initial);
 	const ref = useRef<HTMLInputElement>(null);
+	// Enter and Escape both unmount the input, whose trailing blur would fire a
+	// SECOND onCommit — committing a duplicate value (an extra Automerge history
+	// entry) or re-committing a value the user just cancelled. This guard records
+	// that a terminal action already ran so the blur is skipped exactly once. A
+	// plain blur (click away) leaves it false and commits normally.
+	const doneRef = useRef(false);
 	useEffect(() => {
 		if (autoFocus) ref.current?.focus();
 	}, [autoFocus]);
@@ -1687,20 +1807,31 @@ function TitleEdit({
 		<Input
 			ref={ref}
 			value={value}
-			onChange={(e) => setValue(e.target.value)}
-			onBlur={() => onCommit(value.trim())}
+			onChange={(e) => {
+				// Typing again re-arms the editor: clear the one-shot guard so a
+				// later blur commits. Without this, an Enter in a persistent
+				// (edit-all) input would suppress every subsequent blur-commit.
+				doneRef.current = false;
+				setValue(e.target.value);
+			}}
+			onBlur={() => {
+				if (doneRef.current) return;
+				onCommit(value.trim());
+			}}
 			onKeyDown={(e) => {
 				if (e.key === "Enter") {
 					e.preventDefault();
+					doneRef.current = true;
 					onCommit(value.trim());
 				} else if (e.key === "Escape") {
 					e.preventDefault();
+					doneRef.current = true;
 					onCancel();
 				}
 			}}
 			onClick={(e) => e.stopPropagation()}
 			className="h-7 text-xs"
-			data-testid="task-list-title-input"
+			data-testid={testId}
 		/>
 	);
 }
@@ -1721,6 +1852,8 @@ function KeyEdit({
 }) {
 	const [value, setValue] = useState(initial);
 	const ref = useRef<HTMLInputElement>(null);
+	// See TitleEdit: skip the trailing blur-commit after Enter or Escape.
+	const doneRef = useRef(false);
 	useEffect(() => {
 		if (autoFocus) ref.current?.focus();
 	}, [autoFocus]);
@@ -1729,14 +1862,22 @@ function KeyEdit({
 			ref={ref}
 			value={value}
 			placeholder="ungrouped"
-			onChange={(e) => setValue(e.target.value)}
-			onBlur={() => onCommit(value)}
+			onChange={(e) => {
+				doneRef.current = false;
+				setValue(e.target.value);
+			}}
+			onBlur={() => {
+				if (doneRef.current) return;
+				onCommit(value);
+			}}
 			onKeyDown={(e) => {
 				if (e.key === "Enter") {
 					e.preventDefault();
+					doneRef.current = true;
 					onCommit(value);
 				} else if (e.key === "Escape") {
 					e.preventDefault();
+					doneRef.current = true;
 					onCancel();
 				}
 			}}
@@ -1768,11 +1909,16 @@ function EstimateEdit({
 	// Imperative focus avoids the a11y autoFocus warning; we only fire once
 	// on mount, and only when the caller asked for it.
 	const firstInputRef = useRef<HTMLInputElement>(null);
+	// See TitleEdit: after Enter (submit) or Escape the input unmounts and its
+	// blur would re-fire commit. Guarded so the terminal action wins; a plain
+	// field-to-field blur still commits (doneRef stays false until Enter/Escape).
+	const doneRef = useRef(false);
 	useEffect(() => {
 		if (autoFocus) firstInputRef.current?.focus();
 	}, [autoFocus]);
 
 	const commit = () => {
+		if (doneRef.current) return;
 		const parse = (s: string, fallback: number) => {
 			const n = Number.parseFloat(s);
 			return Number.isFinite(n) && n >= 0 ? n : fallback;
@@ -1794,14 +1940,21 @@ function EstimateEdit({
 		// it doesn't bubble up and re-select the row.
 		<form
 			className="flex items-center justify-end gap-1"
+			// Any descendant input changing re-arms the guard so a later blur or
+			// submit commits again (matters when the editor persists in edit-all).
+			onChange={() => {
+				doneRef.current = false;
+			}}
 			onSubmit={(e) => {
 				e.preventDefault();
 				commit();
+				doneRef.current = true;
 			}}
 			onClick={(e) => e.stopPropagation()}
 			onKeyDown={(e) => {
 				if (e.key === "Escape") {
 					e.preventDefault();
+					doneRef.current = true;
 					onCancel();
 				}
 			}}
@@ -1941,6 +2094,9 @@ function DateEdit({
 	const [draft, setDraft] = useState(value ?? "");
 	const initialRef = useRef(value ?? "");
 	const inputRef = useRef<HTMLInputElement>(null);
+	// See TitleEdit: after Enter or Escape the input unmounts and its blur would
+	// re-fire commit (a duplicate write, or re-committing a cancelled change).
+	const doneRef = useRef(false);
 	useEffect(() => {
 		setDraft(value ?? "");
 		initialRef.current = value ?? "";
@@ -1949,6 +2105,7 @@ function DateEdit({
 		if (autoFocus) inputRef.current?.focus();
 	}, [autoFocus]);
 	const commit = useCallback(() => {
+		if (doneRef.current) return;
 		if (draft === initialRef.current) {
 			onCancel();
 			return;
@@ -1960,14 +2117,19 @@ function DateEdit({
 			ref={inputRef}
 			type="date"
 			value={draft}
-			onChange={(e) => setDraft(e.target.value)}
+			onChange={(e) => {
+				doneRef.current = false;
+				setDraft(e.target.value);
+			}}
 			onBlur={commit}
 			onKeyDown={(e) => {
 				if (e.key === "Enter") {
 					e.preventDefault();
 					commit();
+					doneRef.current = true;
 				} else if (e.key === "Escape") {
 					e.preventDefault();
+					doneRef.current = true;
 					onCancel();
 				}
 			}}
@@ -1994,24 +2156,34 @@ function ProgressEdit({
 }) {
 	const [value, setValue] = useState(String(initial));
 	const ref = useRef<HTMLInputElement>(null);
+	// See TitleEdit: skip the trailing blur-commit after Enter (submit) or Escape.
+	const doneRef = useRef(false);
 	useEffect(() => {
 		if (autoFocus) ref.current?.focus();
 	}, [autoFocus]);
 	const commit = () => {
+		if (doneRef.current) return;
 		const parsed = Number.parseFloat(value);
 		onCommit(Number.isFinite(parsed) ? parsed : initial);
 	};
 	return (
 		<form
 			className="flex items-center justify-end gap-1"
+			// Any descendant input changing re-arms the guard so a later blur or
+			// submit commits again (matters when the editor persists in edit-all).
+			onChange={() => {
+				doneRef.current = false;
+			}}
 			onSubmit={(e) => {
 				e.preventDefault();
 				commit();
+				doneRef.current = true;
 			}}
 			onClick={(e) => e.stopPropagation()}
 			onKeyDown={(e) => {
 				if (e.key === "Escape") {
 					e.preventDefault();
+					doneRef.current = true;
 					onCancel();
 				}
 			}}
