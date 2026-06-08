@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { fromExchange } from "#/lib/pert/exchange";
+import { PROJECT_NOT_FOUND_MESSAGE } from "#/types/workspace";
 import {
 	addProjectCommentInput,
 	closeBranchInput,
@@ -203,7 +204,7 @@ export const getProjectById = createServerFn({ method: "GET" })
 			projectId: data.projectId,
 			userId: session.userId,
 		});
-		if (!result) throw new Error("Project not found");
+		if (!result) throw new Error(PROJECT_NOT_FOUND_MESSAGE);
 		return result;
 	});
 

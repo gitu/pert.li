@@ -1,6 +1,7 @@
 import type { AnyDocumentId, AutomergeUrl } from "@automerge/automerge-repo";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import type { PendingProject } from "#/lib/sync/pending-projects";
 import {
 	findPendingByProjectId,
 	hydratePending,
@@ -9,12 +10,17 @@ import {
 } from "#/lib/sync/pending-projects";
 import { getProjectById } from "#/server/workspace.ts";
 import type { PertProjectDoc } from "#/types/workspace";
+import { isProjectNotFoundError } from "#/types/workspace";
 
 export type { PertProjectDoc };
 
 export type ProjectDocResolution =
 	| { status: "loading" }
 	| { status: "not-found" }
+	// A locally-registered project whose server row is gone — deleted elsewhere
+	// while its (orphaned) local queue record lingers. The canvas prompts the
+	// user to restore or discard it; carries the record so the prompt can act.
+	| { status: "deleted-remotely"; pending: PendingProject }
 	| {
 			status: "ready";
 			documentId: AnyDocumentId;
@@ -30,6 +36,12 @@ export function useProjectDoc(projectId: string): ProjectDocResolution {
 	usePendingProjects();
 	const local = findPendingByProjectId(projectId);
 
+	// A registered local record still carries a server row id — so unlike a
+	// not-yet-synced offline project, we CAN ask the server whether it's still
+	// there. If the row is gone, the record is an orphan left behind by a delete
+	// elsewhere, and we prompt to restore or discard it.
+	const isRegistered = local?.status === "registered" && !!local.serverId;
+
 	// Kick off (idempotent) hydration so a hard reload offline finds the queued
 	// record before we fall through to the server query.
 	const [hydrated, setHydrated] = useState(isHydrated());
@@ -42,13 +54,20 @@ export function useProjectDoc(projectId: string): ProjectDocResolution {
 		queryFn: () => getProjectById({ data: { projectId } }),
 		staleTime: 60_000,
 		retry: false,
-		// Skip the server entirely for locally-resolved docs, and hold off until
-		// the local queue has hydrated so we don't briefly flash "not found" for
-		// an offline-created project on a cold reload.
-		enabled: hydrated && !local,
+		// Skip the server for not-yet-registered offline docs (they'd 404), and
+		// hold off until the local queue has hydrated so we don't briefly flash
+		// "not found" for an offline-created project on a cold reload. Registered
+		// records DO query — that's how we detect a remote deletion.
+		enabled: hydrated && (!local || isRegistered),
 	});
 
 	if (local) {
+		// Only an explicit "row is gone" response means deleted — a network error
+		// (offline) keeps the project openable from the local doc below. The
+		// classifier is deliberately narrow so offline never triggers the prompt.
+		if (isRegistered && query.isError && isProjectNotFoundError(query.error)) {
+			return { status: "deleted-remotely", pending: local };
+		}
 		return {
 			status: "ready",
 			documentId: local.automergeDocUrl as unknown as AnyDocumentId,

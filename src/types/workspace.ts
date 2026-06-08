@@ -12,6 +12,25 @@ export type WorkspaceDoc = {
 
 export type PertProjectDoc = PertDoc;
 
+// Message the server throws (and client matches) when a project row no longer
+// exists. Kept as a shared constant so the throw site (`getProjectById`) and the
+// client-side classifier (`isProjectNotFoundError`) can't drift apart — the
+// classifier gates a destructive restore/delete prompt, so a false positive on
+// an unrelated (e.g. network) error must not happen.
+export const PROJECT_NOT_FOUND_MESSAGE = "Project not found";
+
+// True only for the explicit "row is gone" signal above — NOT for network or
+// transport failures, which carry different messages. Used to distinguish a
+// server-side deletion from "offline" before prompting the user.
+export function isProjectNotFoundError(error: unknown): boolean {
+	return (
+		error instanceof Error &&
+		error.message
+			.toLowerCase()
+			.includes(PROJECT_NOT_FOUND_MESSAGE.toLowerCase())
+	);
+}
+
 export type ProjectSummary = {
 	id: string;
 	workspaceId: string;
