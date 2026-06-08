@@ -167,6 +167,12 @@ jobs:
           image: ${{ steps.img.outputs.name }}@${{ steps.push.outputs.digest }}
           format: spdx-json
           output-file: sbom-runner.spdx.json
+          # We only need the file on disk for the attest step below (the signed
+          # registry attestation is the canonical artifact). On tag builds the
+          # action otherwise tries to attach the SBOM to the GitHub Release,
+          # which needs contents:write — this job is read-only on contents.
+          upload-artifact: false
+          upload-release-assets: false
       - name: Attest SBOM (runner)
         uses: actions/attest-sbom@v4
         with:
@@ -241,6 +247,10 @@ jobs:
           image: ${{ steps.img.outputs.name }}-evals@${{ steps.push-eval.outputs.digest }}
           format: spdx-json
           output-file: sbom-eval.spdx.json
+          # See the runner SBOM step — disable release/artifact upload so tag
+          # builds don't need contents:write.
+          upload-artifact: false
+          upload-release-assets: false
       - name: Attest SBOM (eval)
         uses: actions/attest-sbom@v4
         with:
