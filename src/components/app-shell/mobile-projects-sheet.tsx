@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "@tanstack/react-router";
+import { Link, useParams, useSearch } from "@tanstack/react-router";
 import { FolderTreeIcon, PlusIcon } from "lucide-react";
 import { Button } from "#/components/ui/button";
 import { ScrollArea } from "#/components/ui/scroll-area";
@@ -13,6 +13,7 @@ import {
 } from "#/components/ui/sheet";
 import { ProjectList } from "#/components/workspace/project-list";
 import { useActiveWorkspaceId } from "#/lib/active-workspace";
+import type { ProjectView } from "#/routes/_app/p.$projectId";
 import { listProjects } from "#/server/workspace.ts";
 
 // Phone equivalent of the desktop LeftNav sidebar — wraps the same Project
@@ -39,6 +40,7 @@ export function MobileProjectsSheet({
 			}),
 	});
 	const params = useParams({ strict: false }) as { projectId?: string };
+	const search = useSearch({ strict: false }) as { view?: ProjectView };
 
 	return (
 		<Sheet open={open} onOpenChange={onOpenChange}>
@@ -91,6 +93,7 @@ export function MobileProjectsSheet({
 						<ProjectList
 							projects={projectsQuery.data ?? []}
 							activeProjectId={params.projectId}
+							currentView={search.view}
 							empty="No projects yet."
 							onSelect={() => onOpenChange(false)}
 						/>

@@ -273,3 +273,16 @@ export const NestedBranches: Story = {
 export const OrphanBranch: Story = {
 	args: { projects: fixtureOrphanBranch },
 };
+
+// When a view is active on the open project, switching to another project keeps
+// it: each row's link carries `?view=<view>` so e.g. Network stays Network.
+export const CarriesActiveView: Story = {
+	args: { projects: fixtureProjects, currentView: "network" },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const row = canvas.getByTestId(
+			`project-row-${fixtureProjects[0].id}`,
+		) as HTMLAnchorElement;
+		await expect(row.getAttribute("href")).toContain("view=network");
+	},
+};

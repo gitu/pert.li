@@ -5,6 +5,7 @@ import {
 	Outlet,
 	useNavigate,
 	useParams,
+	useSearch,
 } from "@tanstack/react-router";
 import {
 	BotIcon,
@@ -86,6 +87,7 @@ import { setThemeMode, type ThemeMode, useThemeMode } from "#/lib/theme";
 import { useIsMobile } from "#/lib/use-media-query";
 import { ViewModeProvider } from "#/lib/view-mode";
 import { hasSeenWelcome } from "#/lib/welcome";
+import type { ProjectView } from "#/routes/_app/p.$projectId";
 import { listProjects } from "#/server/workspace.ts";
 
 // Auth-gated shell: session is resolved client-side via useOfflineSession
@@ -735,6 +737,8 @@ function LeftNav({ onNewProject }: { onNewProject: () => void }) {
 	// `useParams` with `strict: false` returns the active leaf's params if it
 	// matches; otherwise `{}`. Used to highlight the active project.
 	const params = useParams({ strict: false }) as { projectId?: string };
+	// Active view of the open project, so switching projects keeps the same view.
+	const search = useSearch({ strict: false }) as { view?: ProjectView };
 	// Union the server list with offline-created projects so they appear here
 	// even before they register (or while the workspace is offline), scoped to
 	// the active workspace.
@@ -783,6 +787,7 @@ function LeftNav({ onNewProject }: { onNewProject: () => void }) {
 					<ProjectList
 						projects={projects}
 						activeProjectId={params.projectId}
+						currentView={search.view}
 						empty="No projects yet."
 					/>
 				)}

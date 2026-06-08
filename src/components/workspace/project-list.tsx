@@ -5,12 +5,17 @@ import {
 	buildProjectTree,
 	type ProjectTreeNode,
 } from "#/lib/workspace/project-tree";
+import type { ProjectView } from "#/routes/_app/p.$projectId";
 import type { ProjectSummary } from "#/types/workspace";
 import { ProjectActionsMenu } from "./project-actions-menu";
 
 export type ProjectListProps = {
 	projects: ProjectSummary[];
 	activeProjectId?: string;
+	// The view currently active on the open project (URL `view` search param).
+	// When set, switching to another project carries this view across so the
+	// user stays on e.g. the Network view instead of bouncing to Overview.
+	currentView?: ProjectView;
 	empty?: React.ReactNode;
 	onSelect?: (project: ProjectSummary) => void;
 };
@@ -26,6 +31,7 @@ export type ProjectListProps = {
 export function ProjectList({
 	projects,
 	activeProjectId,
+	currentView,
 	empty,
 	onSelect,
 }: ProjectListProps) {
@@ -44,6 +50,7 @@ export function ProjectList({
 					key={node.project.id}
 					node={node}
 					activeProjectId={activeProjectId}
+					currentView={currentView}
 					onSelect={onSelect}
 				/>
 			))}
@@ -54,10 +61,12 @@ export function ProjectList({
 function ProjectNode({
 	node,
 	activeProjectId,
+	currentView,
 	onSelect,
 }: {
 	node: ProjectTreeNode;
 	activeProjectId?: string;
+	currentView?: ProjectView;
 	onSelect?: (project: ProjectSummary) => void;
 }) {
 	const { project, children, isOrphanBranch } = node;
@@ -71,6 +80,7 @@ function ProjectNode({
 			<ProjectRow
 				project={project}
 				active={project.id === activeProjectId}
+				currentView={currentView}
 				onSelect={onSelect}
 				kind={kind}
 			/>
@@ -84,6 +94,7 @@ function ProjectNode({
 							key={child.project.id}
 							node={child}
 							activeProjectId={activeProjectId}
+							currentView={currentView}
 							onSelect={onSelect}
 						/>
 					))}
@@ -96,11 +107,13 @@ function ProjectNode({
 function ProjectRow({
 	project,
 	active,
+	currentView,
 	onSelect,
 	kind,
 }: {
 	project: ProjectSummary;
 	active: boolean;
+	currentView?: ProjectView;
 	onSelect?: (project: ProjectSummary) => void;
 	kind: "root" | "branch" | "orphan-branch";
 }) {
@@ -118,6 +131,12 @@ function ProjectRow({
 			<Link
 				to="/p/$projectId"
 				params={{ projectId: project.id }}
+				// Carry the open project's active view across the switch so e.g.
+				// Network stays Network. "overview" maps to no param to match the
+				// in-project view switcher's URL normalization (setView).
+				search={{
+					view: currentView === "overview" ? undefined : currentView,
+				}}
 				onClick={() => onSelect?.(project)}
 				data-testid={`project-row-${project.id}`}
 				data-kind={kind}
