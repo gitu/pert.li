@@ -159,10 +159,37 @@ export const ReadOnly: Story = {
 		await expect(
 			await canvas.findByTestId("overview-ai-summarize"),
 		).toBeDisabled();
-		// Calendar editor swapped for the read-only note.
+		// Calendar settings (the calculation basis) are collapsed by default;
+		// expanding them shows the read-only note instead of the editor.
+		await userEvent.click(await canvas.findByTestId("calendar-basis-toggle"));
 		await expect(
 			canvas.getByText(/switch to edit mode to change the project calendar/i),
 		).toBeVisible();
+	},
+};
+
+// The Calendar & scheduling section leads with the finish-date forecast; the
+// calendar form (the calculation basis) is collapsed behind a toggle and only
+// mounts once expanded. After that first mount it stays mounted (just hidden)
+// so collapsing mid-edit doesn't discard unsaved edits.
+export const CalendarBasisCollapsed: Story = {
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const toggle = await canvas.findByTestId("calendar-basis-toggle");
+		// Forecast is present up front; the calendar editor is not mounted yet.
+		await canvas.findByTestId("monte-carlo-forecast");
+		expect(canvas.queryByTestId("calendar-start-input")).toBeNull();
+		// Expanding the calculation basis reveals the calendar form.
+		await userEvent.click(toggle);
+		await expect(
+			await canvas.findByTestId("calendar-start-input"),
+		).toBeVisible();
+		// Collapsing keeps the form mounted (so edits survive) but hides it.
+		await userEvent.click(toggle);
+		await expect(canvas.getByTestId("calendar-start-input")).not.toBeVisible();
+		// Re-expanding shows the same (still-mounted) form.
+		await userEvent.click(toggle);
+		await expect(canvas.getByTestId("calendar-start-input")).toBeVisible();
 	},
 };
 

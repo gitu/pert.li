@@ -42,7 +42,7 @@ export function MonteCarloForecastView({
 	doc: PertDoc;
 }) {
 	return (
-		<div className="border-t px-4 py-3" data-testid="monte-carlo-forecast">
+		<div className="px-4 py-3" data-testid="monte-carlo-forecast">
 			<div className="mb-2 flex items-center gap-1.5 text-sm font-medium">
 				<TrendingUpIcon className="size-4" />
 				Finish-date forecast
