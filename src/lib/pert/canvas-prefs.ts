@@ -74,13 +74,52 @@ export type CanvasPrefs = {
 	// pans the viewport so the currently selected node visually stays put.
 	// Off by default — manual layout is the safer baseline.
 	continuousLayout: boolean;
+	// Depth cap for group boxes (WBS level, 1-based). Only groups at or below
+	// this level render as boxes; deeper groups fold their tasks into the nearest
+	// shown ancestor. `Number.POSITIVE_INFINITY` = all levels (default); `0` =
+	// grouping off (flat graph, no boxes).
+	groupingMaxLevel: number;
 };
 
 const DEFAULT_PREFS: CanvasPrefs = {
 	edgeStyle: "bezier",
 	spacing: "comfortable",
 	continuousLayout: false,
+	groupingMaxLevel: Number.POSITIVE_INFINITY,
 };
+
+// Highest finite cap the UI can represent (Off / 1 / 2 / 3 / All). Anything
+// above this is indistinguishable from "All" for any realistic group tree.
+const MAX_UI_GROUPING_LEVEL = 3;
+
+// Normalize a persisted grouping cap. `JSON.stringify(Infinity)` becomes `null`,
+// so a stored "All" round-trips as null/undefined — both map back to All. `0`
+// (grouping off) and 1–3 survive as-is; any finite value above the UI range
+// collapses to "All" so the stored value and the Display radio never disagree
+// (a hand-edited / legacy `4+` would otherwise show "All" but behave as that
+// level, then silently change on re-save).
+export function normalizeGroupingMaxLevel(value: unknown): number {
+	if (value === 0) return 0;
+	if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+		const n = Math.floor(value);
+		return n <= MAX_UI_GROUPING_LEVEL ? n : Number.POSITIVE_INFINITY;
+	}
+	return Number.POSITIVE_INFINITY;
+}
+
+// Coerce a possibly-partial / hand-edited stored entry into a full, valid prefs
+// object. Shared by the imperative getter and the React hook.
+function normalizePrefs(stored: Partial<CanvasPrefs> | undefined): CanvasPrefs {
+	if (!stored) return DEFAULT_PREFS;
+	return {
+		edgeStyle: isEdgeStyle(stored.edgeStyle)
+			? stored.edgeStyle
+			: DEFAULT_PREFS.edgeStyle,
+		spacing: stored.spacing ?? DEFAULT_PREFS.spacing,
+		continuousLayout: stored.continuousLayout ?? DEFAULT_PREFS.continuousLayout,
+		groupingMaxLevel: normalizeGroupingMaxLevel(stored.groupingMaxLevel),
+	};
+}
 
 type PrefsState = Record<string, CanvasPrefs>;
 
@@ -115,18 +154,9 @@ canvasPrefsStore.subscribe(() => {
 });
 
 export function getCanvasPrefs(projectId: string): CanvasPrefs {
-	const stored = canvasPrefsStore.state[projectId];
-	if (!stored) return DEFAULT_PREFS;
-	// Forward-compat: if a stored edgeStyle is no longer recognised (or
-	// localStorage was hand-edited), reset to the default rather than render
-	// an indeterminate dropdown.
-	return {
-		edgeStyle: isEdgeStyle(stored.edgeStyle)
-			? stored.edgeStyle
-			: DEFAULT_PREFS.edgeStyle,
-		spacing: stored.spacing ?? DEFAULT_PREFS.spacing,
-		continuousLayout: stored.continuousLayout ?? DEFAULT_PREFS.continuousLayout,
-	};
+	// Forward-compat: stored values that are no longer recognised (or were
+	// hand-edited) fall back to defaults rather than rendering indeterminate.
+	return normalizePrefs(canvasPrefsStore.state[projectId]);
 }
 
 export function setEdgeStyle(projectId: string, edgeStyle: EdgeStyle): void {
@@ -156,19 +186,21 @@ export function setContinuousLayout(
 	}));
 }
 
+export function setGroupingMaxLevel(
+	projectId: string,
+	groupingMaxLevel: number,
+): void {
+	canvasPrefsStore.setState((s) => ({
+		...s,
+		[projectId]: {
+			...(s[projectId] ?? DEFAULT_PREFS),
+			groupingMaxLevel: normalizeGroupingMaxLevel(groupingMaxLevel),
+		},
+	}));
+}
+
 export function useCanvasPrefs(projectId: string): CanvasPrefs {
-	return useStore(canvasPrefsStore, (s) => {
-		const stored = s[projectId];
-		if (!stored) return DEFAULT_PREFS;
-		return {
-			edgeStyle: isEdgeStyle(stored.edgeStyle)
-				? stored.edgeStyle
-				: DEFAULT_PREFS.edgeStyle,
-			spacing: stored.spacing ?? DEFAULT_PREFS.spacing,
-			continuousLayout:
-				stored.continuousLayout ?? DEFAULT_PREFS.continuousLayout,
-		};
-	});
+	return useStore(canvasPrefsStore, (s) => normalizePrefs(s[projectId]));
 }
 
 // ELK tightness mapping. Tighter packing trades off readability for

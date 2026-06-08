@@ -132,6 +132,34 @@ describe("computeLayout — hierarchical (groups)", () => {
 		// rerouted to outer→outsider during collapse.
 		expect(positions.outsider.x).toBeGreaterThan(positions.outer.x);
 	});
+
+	it("a group beyond the depth cap gets no position; its tasks still do", async () => {
+		const doc = nestedDoc();
+		// Cap at level 1: inner (level 2) folds away — no box, no position — but
+		// its member tasks are still laid out (inside outer).
+		const positions = await computeLayout(doc, {
+			forceReflow: true,
+			maxLevel: 1,
+		});
+		expect(positions.outer).toBeDefined();
+		expect(positions.inner).toBeUndefined();
+		expect(positions.A).toBeDefined();
+		expect(positions.B).toBeDefined();
+		expect(positions.outer.x).toBeLessThanOrEqual(positions.A.x);
+	});
+
+	it("cap 0 lays the graph out flat — no group positions at all", async () => {
+		const doc = nestedDoc();
+		const positions = await computeLayout(doc, {
+			forceReflow: true,
+			maxLevel: 0,
+		});
+		expect(positions.outer).toBeUndefined();
+		expect(positions.inner).toBeUndefined();
+		expect(positions.A).toBeDefined();
+		expect(positions.B).toBeDefined();
+		expect(positions.outsider).toBeDefined();
+	});
 });
 
 describe("fallbackGridLayout", () => {
