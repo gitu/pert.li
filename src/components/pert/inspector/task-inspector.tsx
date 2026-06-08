@@ -9,6 +9,7 @@ import {
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConflictPill } from "#/components/pert/inspector/conflict-pill";
+import { GroupCombobox } from "#/components/pert/inspector/group-combobox";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
@@ -33,6 +34,7 @@ import {
 	addDependencyMutation,
 	addTaskMutation,
 	assignTaskToGroupMutation,
+	createGroupMutation,
 	deleteGroupMutation,
 	removeTaskMutation,
 	renameGroupMutation,
@@ -448,6 +450,17 @@ function TaskForm({
 			}),
 		[changeDoc, task.id],
 	);
+	// Create a new top-level group and drop this task straight into it — both
+	// mutations in one `changeDoc` so it's a single, atomic Automerge change.
+	const createAndAssignGroup = useCallback(
+		(name: string) =>
+			changeDoc((d) => {
+				const r = createGroupMutation(d, { name });
+				if (r.ok)
+					assignTaskToGroupMutation(d, { taskId: task.id, groupId: r.id });
+			}),
+		[changeDoc, task.id],
+	);
 	const setNumberOverride = useCallback(
 		(number: string | null) =>
 			changeDoc((d) => {
@@ -487,22 +500,13 @@ function TaskForm({
 
 					<div className="space-y-1.5">
 						<Label htmlFor="ti-group">Group</Label>
-						<Select
-							value={task.groupId ?? "__none__"}
-							onValueChange={(v) => setGroup(v === "__none__" ? null : v)}
-						>
-							<SelectTrigger id="ti-group" data-testid="inspector-group">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="__none__">(none)</SelectItem>
-								{groupOptions.map((g) => (
-									<SelectItem key={g.id} value={g.id}>
-										{g.label}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
+						<GroupCombobox
+							id="ti-group"
+							value={task.groupId ?? null}
+							options={groupOptions}
+							onChange={setGroup}
+							onCreate={createAndAssignGroup}
+						/>
 					</div>
 
 					<NumberOverrideRow

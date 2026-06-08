@@ -38,6 +38,8 @@ import {
 	type ProjectOverview,
 } from "#/lib/pert/overview";
 import { buildProjectDigest } from "#/lib/pert/overview-digest";
+import { computeSchedule, type Schedule } from "#/lib/pert/schedule";
+import { selectGroup } from "#/lib/pert/store";
 import type { PertDoc, ProjectCalendar } from "#/lib/pert/types";
 import { useViewMode } from "#/lib/view-mode";
 import type { ProjectView } from "#/routes/_app/p.$projectId";
@@ -48,6 +50,7 @@ import {
 	updateProjectMeta,
 } from "#/server/workspace";
 import { MonteCarloForecast } from "./monte-carlo-forecast";
+import { OverviewGroups } from "./overview-groups";
 import { OverviewMetrics } from "./overview-metrics";
 import {
 	OverviewSummaryCard,
@@ -121,12 +124,16 @@ export function OverviewView({
 		workspaceProjects?.filter((p) => p.parentProjectId === projectId).length ??
 		0;
 
-	// Memoize by doc — computeProjectOverview runs the CPM scheduler, so we
-	// don't want it re-running when only local UI state (dialogs, edit toggle)
-	// changes. Matches the useMemo(computeSchedule) pattern in the other views.
+	// Compute the CPM schedule once per doc change and share it: the project
+	// rollup (computeProjectOverview) and the per-group rollups (OverviewGroups)
+	// both need it, so passing it in avoids running the scheduler twice. Memoized
+	// by doc so it doesn't re-run when only local UI state (dialogs, edit toggle)
+	// changes.
+	const scheduleResult = useMemo(() => computeSchedule(doc), [doc]);
+	const schedule = scheduleResult.ok ? scheduleResult.schedule : null;
 	const overview: ProjectOverview = useMemo(
-		() => computeProjectOverview(doc),
-		[doc],
+		() => computeProjectOverview(doc, scheduleResult),
+		[doc, scheduleResult],
 	);
 
 	const metaMutation = useMutation({
@@ -303,6 +310,7 @@ export function OverviewView({
 			description={description}
 			overview={overview}
 			doc={doc}
+			schedule={schedule}
 			readOnly={readOnly}
 			metaSaving={metaMutation.isPending}
 			// mutateAsync so the editor can await the result and keep itself open
@@ -322,6 +330,16 @@ export function OverviewView({
 					search: { view },
 				})
 			}
+			onSelectGroup={(groupId) => {
+				// Drill into the group: select it, then jump to the Network canvas
+				// where the selection (and the group box) is visible + inspectable.
+				selectGroup(projectId, groupId);
+				navigate({
+					to: "/p/$projectId",
+					params: { projectId },
+					search: { view: "network" },
+				});
+			}}
 			actions={actions}
 		/>
 	);
@@ -340,6 +358,8 @@ export type OverviewContentProps = {
 	description: string | null;
 	overview: ProjectOverview;
 	doc: PertDoc;
+	// Precomputed CPM schedule (shared with `overview`) for the per-group rollups.
+	schedule: Schedule | null;
 	readOnly: boolean;
 	metaSaving: boolean;
 	onSaveMeta: (next: {
@@ -351,6 +371,7 @@ export type OverviewContentProps = {
 	summaryState: SummaryState;
 	onSummarize: () => void;
 	onNavigate: (view: Exclude<ProjectView, "overview">) => void;
+	onSelectGroup: (groupId: string) => void;
 	actions?: ReactNode;
 };
 
@@ -360,6 +381,7 @@ export function OverviewContent({
 	description,
 	overview,
 	doc,
+	schedule,
 	readOnly,
 	metaSaving,
 	onSaveMeta,
@@ -368,6 +390,7 @@ export function OverviewContent({
 	summaryState,
 	onSummarize,
 	onNavigate,
+	onSelectGroup,
 	actions,
 }: OverviewContentProps) {
 	// Bump to re-seed the calendar form (Cancel / after Save) from props.
@@ -502,6 +525,13 @@ export function OverviewContent({
 						</div>
 					</section>
 				</div>
+
+				{/* All groups at a glance — rollups + drill-in. */}
+				<OverviewGroups
+					doc={doc}
+					schedule={schedule}
+					onSelect={onSelectGroup}
+				/>
 			</div>
 		</div>
 	);

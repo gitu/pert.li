@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { computeProjectOverview } from "#/lib/pert/overview";
+import { computeSchedule } from "#/lib/pert/schedule";
 import type { PertDoc, ProjectCalendar } from "#/lib/pert/types";
 import { createEmptyPertDoc } from "#/lib/pert/types";
 import { OverviewContent } from "./overview-view";
@@ -67,6 +68,10 @@ function sampleDoc(): PertDoc {
 }
 
 const DOC = sampleDoc();
+const DOC_SCHEDULE = (() => {
+	const r = computeSchedule(DOC);
+	return r.ok ? r.schedule : null;
+})();
 const CALENDAR: ProjectCalendar = {
 	startDate: "2026-06-01",
 	workingDays: [1, 2, 3, 4, 5],
@@ -85,6 +90,7 @@ const meta: Meta<typeof OverviewContent> = {
 		title: "Q3 product launch",
 		description: "Ship the new dashboard to GA by end of Q3.",
 		doc: DOC,
+		schedule: DOC_SCHEDULE,
 		overview: computeProjectOverview(DOC),
 		readOnly: false,
 		metaSaving: false,
@@ -94,6 +100,7 @@ const meta: Meta<typeof OverviewContent> = {
 		summaryState: { status: "idle" },
 		onSummarize: fn(),
 		onNavigate: fn(),
+		onSelectGroup: fn(),
 		actions: (
 			<span className="text-xs text-muted-foreground">
 				[export / share / edit / branch / delete]
@@ -118,6 +125,17 @@ export const Default: Story = {
 		// Jump-off cards navigate.
 		await userEvent.click(await canvas.findByTestId("overview-jump-timeline"));
 		expect(args.onNavigate).toHaveBeenCalledWith("timeline");
+	},
+};
+
+// The Groups section lists every group with its rollup and drills in on click.
+export const GroupsSection: Story = {
+	play: async ({ canvasElement, args }) => {
+		const canvas = within(canvasElement);
+		const section = await canvas.findByTestId("overview-groups");
+		expect(section.textContent).toContain("Design");
+		await userEvent.click(await canvas.findByTestId("overview-group-g1"));
+		expect(args.onSelectGroup).toHaveBeenCalledWith("g1");
 	},
 };
 
