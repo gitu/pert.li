@@ -1,0 +1,138 @@
+name: Screenshots
+
+# Regenerates the README screenshots (docs/screenshots/*.png) by driving the
+# real app through Playwright's `screenshots` project (see playwright.config.ts)
+# against the production build. Two ways to run it:
+#   • Actions tab → "Run workflow" (workflow_dispatch): pushes the refreshed
+#     images to `chore/regenerate-screenshots` and prints a one-click PR link.
+#   • Add the `regenerate-screenshots` label to a PR: the refreshed images are
+#     committed straight back onto that PR's branch, so its diff updates in place.
+#
+# It commits with the GITHUB_TOKEN (contents:write) rather than opening a PR via
+# the API, so it does NOT depend on the org/repo "Allow GitHub Actions to create
+# and approve pull requests" setting.
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+# Only needs to push commits/branches — no PR-creation API is used.
+permissions:
+  contents: write
+
+concurrency:
+  group: screenshots-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    name: regenerate docs/screenshots
+    # Manual run, or a PR carrying the `regenerate-screenshots` label. The label
+    # check is naturally false for workflow_dispatch (no pull_request payload).
+    # Skip fork PRs: their GITHUB_TOKEN is read-only, so the push-back would fail
+    # (same guard as ci.yml's screenshot jobs).
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.pull_request.labels.*.name, 'regenerate-screenshots') &&
+       github.event.pull_request.head.repo.fork == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CI: "true"
+      # Run the renderer against the built Nitro server (node .output/...),
+      # the same artefact the deploy ships. Mirrors the e2e job. BETTER_AUTH_SECRET
+      # is intentionally NOT set here — playwright.config.ts' webServer.env already
+      # supplies a vetted high-entropy default for the render server.
+      E2E_USE_BUILD: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          # compute-version.mjs falls back to `git describe`; tags need history.
+          fetch-depth: 0
+          # On a labelled PR, check out the PR's head branch (not the detached
+          # merge ref) so the refreshed images can be committed straight back
+          # into that PR. On dispatch there's no PR payload, so fall back to the
+          # dispatched ref.
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+
+      - name: Resolve APP_VERSION
+        id: version
+        run: echo "value=$(node scripts/compute-version.mjs)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 11.3.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Approve build scripts
+        run: pnpm approve-builds --all
+        continue-on-error: true
+
+      - name: Build
+        env:
+          APP_VERSION: ${{ steps.version.outputs.value }}
+        run: pnpm build
+
+      # Cache the Chromium binary keyed on the installed Playwright version.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p 'require("@playwright/test/package.json").version')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
+
+      - name: Install Chromium (+ system deps)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Install Chromium system deps only
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: pnpm exec playwright install-deps chromium
+
+      - name: Render screenshots
+        # Writes docs/screenshots/*.png. The script sets E2E_SCREENSHOTS=1,
+        # which selects the screenshots project and hands the server a
+        # placeholder ANTHROPIC_API_KEY so the chat dock renders normally.
+        run: pnpm screenshots
+
+      - name: Commit refreshed screenshots
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+          DISPATCH_BRANCH: chore/regenerate-screenshots
+        run: |
+          # --porcelain catches adds/deletes/modifications (git diff --quiet
+          # would miss a newly-added, still-untracked shot).
+          if [ -z "$(git status --porcelain -- docs/screenshots)" ]; then
+            echo "No screenshot changes — the committed images already match the UI." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A docs/screenshots
+          git commit -m "docs: regenerate README screenshots"
+          if [ "$EVENT" = "pull_request" ]; then
+            git push origin "HEAD:${PR_BRANCH}"
+            echo "Committed refreshed screenshots to \`${PR_BRANCH}\` — this PR's diff is updated." >> "$GITHUB_STEP_SUMMARY"
+          else
+            # Throwaway branch holding just the latest render; force so repeated
+            # dispatches don't pile up history.
+            git push --force origin "HEAD:${DISPATCH_BRANCH}"
+            echo "Pushed refreshed screenshots to \`${DISPATCH_BRANCH}\`." >> "$GITHUB_STEP_SUMMARY"
+            echo "Open a PR: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${DISPATCH_BRANCH}?expand=1" >> "$GITHUB_STEP_SUMMARY"
+          fi
