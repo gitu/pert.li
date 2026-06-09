@@ -1,6 +1,7 @@
 import { useStore } from "@tanstack/react-store";
 import { CircleDotIcon, ZapIcon } from "lucide-react";
 import { useMemo } from "react";
+import { IssueLinkBadge } from "#/components/pert/issue-links";
 import {
 	buildTaskListRows,
 	type TaskListRow,
@@ -49,6 +50,7 @@ export function TaskCardList({ projectId, doc }: TaskCardListProps) {
 				<TaskCard
 					key={row.id}
 					row={row}
+					template={doc.issueTracker?.urlTemplate}
 					selected={row.id === selectedId}
 					onSelect={() => selectTask(projectId, row.id)}
 				/>
@@ -59,10 +61,12 @@ export function TaskCardList({ projectId, doc }: TaskCardListProps) {
 
 function TaskCard({
 	row,
+	template,
 	selected,
 	onSelect,
 }: {
 	row: TaskListRow;
+	template?: string;
 	selected: boolean;
 	onSelect: () => void;
 }) {
@@ -105,6 +109,7 @@ function TaskCard({
 							critical
 						</Badge>
 					)}
+					<IssueLinkBadge issueKeys={row.issueKeys} template={template} />
 				</div>
 			</button>
 		</li>

@@ -97,6 +97,8 @@ const meta: Meta<typeof OverviewContent> = {
 		onSaveMeta: fn(),
 		calendarInitial: CALENDAR,
 		onSaveCalendar: fn(),
+		issueTrackerInitial: { urlTemplate: "" },
+		onSaveIssueTracker: fn(),
 		summaryState: { status: "idle" },
 		onSummarize: fn(),
 		onNavigate: fn(),
@@ -160,6 +162,25 @@ export const EditingDescription: Story = {
 
 export const NoDescription: Story = {
 	args: { description: null },
+};
+
+// Expanding the Issue tracker panel reveals the URL-template form, which
+// emits the config to the parent on save.
+export const IssueTrackerPanel: Story = {
+	play: async ({ canvasElement, args }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByTestId("issue-tracker-toggle"));
+		// `{{` types a literal `{` (userEvent treats `{` as a key delimiter).
+		await userEvent.type(
+			await canvas.findByTestId("tracker-template-input"),
+			"https://acme.atlassian.net/browse/{{key}",
+		);
+		await userEvent.click(await canvas.findByTestId("tracker-save"));
+		expect(args.onSaveIssueTracker).toHaveBeenCalledWith({
+			urlTemplate: "https://acme.atlassian.net/browse/{key}",
+			name: undefined,
+		});
+	},
 };
 
 // Read-only (a view-share recipient): the presentational shell suppresses

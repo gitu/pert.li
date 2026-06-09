@@ -24,8 +24,10 @@ const noopChangeDoc = (..._args: unknown[]) => {
 
 function StoryHarness({
 	changeDoc,
+	withIssues,
 }: {
 	changeDoc: ((mutate: (d: unknown) => void) => void) | null;
+	withIssues?: boolean;
 }) {
 	useEffect(() => {
 		const doc = createEmptyPertDoc("Inspector read-only story");
@@ -40,6 +42,13 @@ function StoryHarness({
 				unit: "day",
 			},
 		};
+		if (withIssues) {
+			doc.issueTracker = {
+				urlTemplate: "https://acme.atlassian.net/browse/{key}",
+				name: "Jira",
+			};
+			doc.tasksById.T1.issueKeys = ["PROJ-1", "PROJ-2"];
+		}
 		setActiveProjectDoc(
 			PROJECT_ID,
 			doc,
@@ -52,7 +61,7 @@ function StoryHarness({
 			selectTask(PROJECT_ID, null);
 			clearActiveProjectDoc(PROJECT_ID);
 		};
-	}, [changeDoc]);
+	}, [changeDoc, withIssues]);
 
 	return (
 		<TooltipProvider delayDuration={150}>
@@ -96,6 +105,27 @@ export const Editable: Story = {
 		await waitFor(() =>
 			expect(canvas.getByText(/Select a task or group to edit/i)).toBeVisible(),
 		);
+	},
+};
+
+// With a configured tracker, the Plan pane's issue-links editor shows the
+// task's keys as click-through links plus the add input. (The harness uses a
+// no-op changeDoc, so we assert the rendered/read state rather than a mutation.)
+export const WithIssueLinks: Story = {
+	render: () => <StoryHarness changeDoc={noopChangeDoc} withIssues />,
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const editor = await canvas.findByTestId("issue-links-editor");
+		const links = await within(editor).findAllByTestId("issue-link");
+		expect(links).toHaveLength(2);
+		await expect(links[0]).toHaveAttribute(
+			"href",
+			"https://acme.atlassian.net/browse/PROJ-1",
+		);
+		// The add affordance is present.
+		await expect(
+			await within(editor).findByTestId("issue-link-add"),
+		).toBeVisible();
 	},
 };
 

@@ -3,6 +3,7 @@ import {
 	AlertOctagonIcon,
 	CheckCircle2Icon,
 	CircleDotIcon,
+	ExternalLinkIcon,
 	FlagIcon,
 	PlusIcon,
 	ZapIcon,
@@ -30,6 +31,10 @@ export type TaskNodeData = {
 	slackDays: number | null;
 	critical: boolean;
 	hasEstimate: boolean;
+	// External issue references (Jira keys / URLs). Surfaced as a small badge on
+	// the node; the click-through links live in the inspector + table (a node
+	// link would fight canvas selection/drag).
+	issueKeys?: string[];
 	cycle?: boolean;
 	status: "not_started" | "in_progress" | "completed";
 	progress: number;
@@ -209,6 +214,24 @@ function TaskNodeImpl(props: NodeProps) {
 						style={{ width: `${Math.max(0, Math.min(100, data.progress))}%` }}
 					/>
 				</div>
+			)}
+			{data.issueKeys && data.issueKeys.length > 0 && (
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<span
+							data-testid={`task-issues-${props.id}`}
+							className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-muted-foreground"
+						>
+							<ExternalLinkIcon className="size-3 shrink-0" />
+							{data.issueKeys.length === 1
+								? data.issueKeys[0]
+								: `${data.issueKeys.length} issues`}
+						</span>
+					</TooltipTrigger>
+					<TooltipContent side="bottom">
+						{data.issueKeys.join(", ")}
+					</TooltipContent>
+				</Tooltip>
 			)}
 			<PresenceBadge taskId={props.id} className="absolute -top-2 -right-2" />
 			<Handle

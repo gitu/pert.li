@@ -24,6 +24,7 @@ import {
 	type SetActualDatesArgs,
 	type SetDependencyArgs,
 	type SetEstimateArgs,
+	type SetIssueLinksArgs,
 	type SetKindArgs,
 	type SetNotesArgs,
 	type SetProgressArgs,
@@ -33,6 +34,7 @@ import {
 	setDependencyMutation,
 	setEstimateMutation,
 	setGroupParentMutation,
+	setIssueLinksMutation,
 	setKindMutation,
 	setNotesMutation,
 	setProgressMutation,
@@ -88,6 +90,8 @@ const EXECUTORS: Record<string, Executor> = {
 		),
 	set_notes: (doc, args) =>
 		setNotesMutation(doc, args as unknown as SetNotesArgs),
+	set_issue_links: (doc, args) =>
+		setIssueLinksMutation(doc, args as unknown as SetIssueLinksArgs),
 	set_estimate: (doc, args) =>
 		setEstimateMutation(doc, args as unknown as SetEstimateArgs),
 	set_status: (doc, args) =>
@@ -161,6 +165,7 @@ const EXECUTORS: Record<string, Executor> = {
 			"set_kind",
 			"set_task_number",
 			"set_notes",
+			"set_issue_links",
 			"set_estimate",
 			"set_status",
 			"set_progress",

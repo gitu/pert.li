@@ -26,6 +26,7 @@ import {
 	ZapIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { IssueLinkBadge } from "#/components/pert/issue-links";
 import {
 	KeyboardShortcutsHelp,
 	TABLE_SHORTCUTS,
@@ -111,6 +112,9 @@ export type TaskListRow = {
 	// "completed implies 100, not_started implies 0" semantics the
 	// inspector uses (the column cell does the final clamp).
 	progress: number | undefined;
+	// External issue references (Jira keys / URLs). Rendered as a compact badge
+	// in the Issues column.
+	issueKeys: string[] | undefined;
 };
 
 // Pure derivation of list rows from a doc + already-computed schedule. Lives
@@ -142,6 +146,7 @@ export function buildTaskListRows(
 				actualStart: t.actualStart,
 				actualFinish: t.actualFinish,
 				progress: t.progress,
+				issueKeys: t.issueKeys,
 			};
 		})
 		.sort((a, b) => {
@@ -178,6 +183,7 @@ const DEFAULT_EDIT_COLUMN_VISIBILITY: VisibilityState = {
 	ef: false,
 	slack: false,
 	status: false,
+	issues: false,
 };
 
 function readPersistedColumnVisibility(key: string): VisibilityState | null {
@@ -227,6 +233,7 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 		() => buildTaskListRows(doc, scheduleResult),
 		[doc, scheduleResult],
 	);
+	const issueTemplate = doc.issueTracker?.urlTemplate;
 
 	const [sorting, setSorting] = useState<SortingState>([
 		{ id: "es", desc: false },
@@ -991,6 +998,21 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 				},
 				size: 100,
 			},
+			{
+				id: "issues",
+				header: "Issues",
+				enableSorting: false,
+				cell: ({ row }) => {
+					const r = row.original;
+					if (!r.issueKeys || r.issueKeys.length === 0) {
+						return <span className="text-xs text-muted-foreground/60">—</span>;
+					}
+					return (
+						<IssueLinkBadge issueKeys={r.issueKeys} template={issueTemplate} />
+					);
+				},
+				size: 120,
+			},
 		],
 		[
 			editingId,
@@ -1001,6 +1023,7 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 			editingProgressId,
 			editAll,
 			changeDoc,
+			issueTemplate,
 		],
 	);
 

@@ -246,6 +246,27 @@ export function setNotesMutation(
 	return { ok: true };
 }
 
+export type SetIssueLinksArgs = { taskId: TaskId; issueKeys: string[] | null };
+
+// Replace a task's external issue references with the given list. Whole-list
+// semantics (like set_notes' replace) — the caller passes the complete desired
+// set. Keys are trimmed, empties dropped, duplicates removed; an empty result
+// clears the field (delete, never assign undefined — Automerge rejects it).
+export function setIssueLinksMutation(
+	d: PertDoc,
+	args: SetIssueLinksArgs,
+): { ok: true } | { ok: false; error: string } {
+	const task = d.tasksById[args.taskId];
+	if (!task) return { ok: false, error: `task ${args.taskId} not found` };
+	const cleaned = (args.issueKeys ?? [])
+		.map((k) => k.trim())
+		.filter((k) => k.length > 0);
+	const deduped = [...new Set(cleaned)];
+	if (deduped.length === 0) delete task.issueKeys;
+	else task.issueKeys = deduped;
+	return { ok: true };
+}
+
 export type SetStatusArgs = { taskId: TaskId; status: TaskStatus };
 
 // Mirrors the inspector's setStatus behaviour: when the user marks something

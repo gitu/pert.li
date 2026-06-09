@@ -15,6 +15,7 @@ import {
 	setDependencyMutation,
 	setEstimateMutation,
 	setGroupParentMutation,
+	setIssueLinksMutation,
 	setKindMutation,
 	setNotesMutation,
 	setProgressMutation,
@@ -120,6 +121,7 @@ function remapOp(op: EditOp, remap: Map<string, string>): EditOp {
 		case "set_kind":
 		case "set_task_number":
 		case "set_notes":
+		case "set_issue_links":
 		case "set_estimate":
 		case "set_status":
 		case "set_progress":
@@ -251,6 +253,13 @@ function runOp(
 		}
 		case "set_notes": {
 			const r = setNotesMutation(doc, { taskId: op.taskId, notes: op.notes });
+			return toResult(op.op, index, r);
+		}
+		case "set_issue_links": {
+			const r = setIssueLinksMutation(doc, {
+				taskId: op.taskId,
+				issueKeys: op.issueKeys,
+			});
 			return toResult(op.op, index, r);
 		}
 		case "set_estimate": {

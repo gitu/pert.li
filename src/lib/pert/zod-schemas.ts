@@ -5,6 +5,7 @@ import type {
 	Group,
 	PertDoc,
 	ProjectCalendar,
+	ProjectIssueTracker,
 	Task,
 	ViewState,
 	WorkPlan,
@@ -63,6 +64,7 @@ export const task: z.ZodType<Task> = z.object({
 	order: z.number().optional(),
 	estimate: estimate.optional(),
 	notes: z.string().optional(),
+	issueKeys: z.array(z.string()).optional(),
 	layout: layout.optional(),
 	status: taskStatus.optional(),
 	progress: z.number().min(0).max(100).optional(),
@@ -141,6 +143,11 @@ export const projectCalendar: z.ZodType<ProjectCalendar> = z.object({
 	allocationMode: allocationMode.optional(),
 });
 
+export const projectIssueTracker: z.ZodType<ProjectIssueTracker> = z.object({
+	urlTemplate: z.string(),
+	name: z.string().optional(),
+});
+
 export const workPlanStepStatus = z.enum([
 	"pending",
 	"in_progress",
@@ -183,5 +190,6 @@ export const pertDoc: z.ZodType<PertDoc> = z.object({
 	dependenciesById: z.record(z.string(), dependency),
 	viewsById: z.record(z.string(), viewState),
 	calendar: projectCalendar.optional(),
+	issueTracker: projectIssueTracker.optional(),
 	workPlan: workPlan.optional(),
 });
