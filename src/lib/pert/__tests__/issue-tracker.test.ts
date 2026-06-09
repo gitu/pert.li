@@ -60,8 +60,9 @@ describe("buildIssueUrl", () => {
 		expect(buildIssueUrl("//evil.example/{key}", "PROJ-1")).toBeNull();
 	});
 
-	it("allows root-relative same-origin templates", () => {
-		expect(buildIssueUrl("/issues/{key}", "PROJ-1")).toBe("/issues/PROJ-1");
+	it("only produces http(s) URLs — relative templates are rejected", () => {
+		expect(buildIssueUrl("/issues/{key}", "PROJ-1")).toBeNull();
+		expect(buildIssueUrl("ftp://host/{key}", "PROJ-1")).toBeNull();
 	});
 
 	it("does not link a key whose scheme is dangerous", () => {

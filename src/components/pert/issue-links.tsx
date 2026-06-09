@@ -17,7 +17,12 @@ function IssueChip({
 	template?: string;
 	className?: string;
 }) {
-	const url = buildIssueUrl(template, issueKey);
+	const built = buildIssueUrl(template, issueKey);
+	// Inline scheme allowlist at the href sink: only ever render http(s) links
+	// so a malicious tracker template can't inject a javascript:/data: URL
+	// (CWE-79). buildIssueUrl already enforces this; the local check keeps the
+	// guarantee obvious at the point the value reaches the DOM.
+	const url = built && /^https?:\/\//i.test(built) ? built : null;
 	if (url) {
 		return (
 			<a
