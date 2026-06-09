@@ -1,3 +1,4 @@
+import * as Automerge from "@automerge/automerge";
 import { describe, expect, it } from "vitest";
 import { applyCalendar } from "../apply-calendar";
 import { DEFAULT_WORKING_DAYS } from "../calendar";
@@ -53,5 +54,38 @@ describe("applyCalendar", () => {
 		});
 		expect(doc.calendar?.holidays).toEqual(["2026-12-25"]);
 		expect("useHistoric" in (doc.calendar?.team ?? {})).toBe(false);
+	});
+
+	// Regression: the calendar form seeds its state directly from `doc.calendar`,
+	// so an unedited `workingDays` / `holidays` is still the live Automerge proxy
+	// array. Re-assigning that proxy into the doc throws "Cannot create a
+	// reference to an existing document object" — applyCalendar must clone it.
+	// (Repro: in team mode, change only People and Save → crash, no save.)
+	it("re-saves an Automerge-backed calendar without throwing when arrays are unchanged", () => {
+		let doc = Automerge.from<PertDoc>(createEmptyPertDoc("t"));
+		doc = Automerge.change(doc, (d) => {
+			d.calendar = {
+				startDate: "2026-01-01",
+				workingDays: [1, 2, 3, 4, 5],
+				holidays: ["2026-12-25"],
+			};
+		});
+
+		expect(() => {
+			doc = Automerge.change(doc, (d) => {
+				// Pass the live proxy arrays back, exactly as the form does when the
+				// user changes only the team size and leaves the days untouched.
+				applyCalendar((fn) => fn(d), {
+					startDate: d.calendar?.startDate ?? "2026-01-01",
+					workingDays: d.calendar?.workingDays ?? [],
+					allocationMode: "team",
+					team: { peopleCount: 4, availabilityPct: 100 },
+				});
+			});
+		}).not.toThrow();
+
+		expect(doc.calendar?.team?.peopleCount).toBe(4);
+		expect([...(doc.calendar?.workingDays ?? [])]).toEqual([1, 2, 3, 4, 5]);
+		expect([...(doc.calendar?.holidays ?? [])]).toEqual(["2026-12-25"]);
 	});
 });
