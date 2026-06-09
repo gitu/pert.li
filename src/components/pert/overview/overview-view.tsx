@@ -1,3 +1,4 @@
+import type { AutomergeUrl } from "@automerge/automerge-repo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
@@ -13,12 +14,18 @@ import {
 	NetworkIcon,
 	PencilIcon,
 	Share2Icon,
+	SlidersHorizontalIcon,
 	TimerIcon,
 	Trash2Icon,
 	XIcon,
 } from "lucide-react";
 import { type ReactNode, useMemo, useState } from "react";
 import { toast } from "sonner";
+import {
+	CopyDisplayToProjectsDialog,
+	type CopyTargetProject,
+} from "#/components/pert/copy-display-to-projects-dialog";
+import { DisplaySettingsForm } from "#/components/pert/display-settings-form";
 import { ExportProjectButton } from "#/components/pert/exchange/export-button";
 import { ProjectCalendarForm } from "#/components/pert/project-calendar-form";
 import { Button } from "#/components/ui/button";
@@ -28,11 +35,22 @@ import { BranchProjectDialog } from "#/components/workspace/branch-project-dialo
 import { DeleteProjectDialog } from "#/components/workspace/delete-project-dialog";
 import { PromoteBranchDialog } from "#/components/workspace/promote-branch-dialog";
 import { ShareProjectDialog } from "#/components/workspace/share-project-dialog";
+import { useOptionalRepo } from "#/lib/automerge/provider";
 import {
 	applyCalendar,
 	type CalendarFormResult,
 } from "#/lib/pert/apply-calendar";
+import {
+	applyDisplaySettings,
+	type DisplayFormResult,
+	writeDisplay,
+} from "#/lib/pert/apply-display";
 import { DEFAULT_WORKING_DAYS, todayIsoDate } from "#/lib/pert/calendar";
+import { changeWith } from "#/lib/pert/change-meta";
+import {
+	type ResolvedDisplaySettings,
+	resolveDisplaySettings,
+} from "#/lib/pert/display";
 import {
 	computeProjectOverview,
 	type ProjectOverview,
@@ -105,6 +123,7 @@ export function OverviewView({
 }) {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
+	const repo = useOptionalRepo();
 	const { mode } = useViewMode();
 	const readOnly = mode === "mobile-readonly";
 
@@ -181,6 +200,59 @@ export function OverviewView({
 	const calendarInitial: ProjectCalendar = doc.calendar ?? {
 		startDate: todayIsoDate(),
 		workingDays: DEFAULT_WORKING_DAYS,
+	};
+
+	// DISPLAY-SETTINGS: resolved current config seeds the form; the other live
+	// projects in this workspace are the copy targets (exclude this one + any
+	// archived).
+	const displayInitial = useMemo(() => resolveDisplaySettings(doc), [doc]);
+	const copyProjects: CopyTargetProject[] = (workspaceProjects ?? [])
+		.filter((p) => p.id !== projectId && p.archivedAt == null)
+		.map((p) => ({
+			id: p.id,
+			title: p.title,
+			url: p.automergeDocUrl as string,
+		}));
+
+	// Fan the given display config out to the selected projects' docs. Resolves
+	// the handles on demand (overview rows don't preload them) and writes via the
+	// shared `writeDisplay` so the on-doc shape matches an in-place save exactly.
+	// Targets are resolved in PARALLEL so the per-doc readiness wait is bounded by
+	// the slowest single doc, not the sum — copying to many projects stays snappy
+	// even when some of their docs haven't synced into this client yet.
+	const copyDisplayToProjects = async (
+		result: DisplayFormResult,
+		targetUrls: string[],
+	) => {
+		if (!repo) {
+			toast.error("Sync isn't ready yet — try again in a moment.");
+			throw new Error("repo unavailable");
+		}
+		const results = await Promise.all(
+			targetUrls.map(async (url) => {
+				const handle = await repo.find<PertDoc>(url as AutomergeUrl, {
+					allowableStates: ["ready", "unavailable"],
+				});
+				if (!handle.isReady()) {
+					await Promise.race([
+						handle.whenReady(["ready"]).catch(() => {}),
+						new Promise((resolve) => setTimeout(resolve, 5000)),
+					]);
+				}
+				// A doc that never synced into this client can't be written — skip it.
+				if (!handle.doc()) return false;
+				changeWith(handle, "user", (d) => writeDisplay(d, result));
+				return true;
+			}),
+		);
+		const copied = results.filter(Boolean).length;
+		if (copied === 0) {
+			toast.error("Couldn't load the selected projects to copy to.");
+			throw new Error("no projects copied");
+		}
+		toast.success(
+			`Display settings copied to ${copied} project${copied === 1 ? "" : "s"}`,
+		);
 	};
 
 	const actions: ReactNode = (
@@ -321,6 +393,13 @@ export function OverviewView({
 				applyCalendar(changeDoc, next);
 				toast.success("Calendar & scheduling saved");
 			}}
+			displayInitial={displayInitial}
+			onSaveDisplay={(next) => {
+				applyDisplaySettings(changeDoc, next);
+				toast.success("Display settings saved");
+			}}
+			copyProjects={copyProjects}
+			onCopyDisplay={copyDisplayToProjects}
 			summaryState={summaryState}
 			onSummarize={() => summarize.mutate()}
 			onNavigate={(view) =>
@@ -368,6 +447,15 @@ export type OverviewContentProps = {
 	}) => void | Promise<unknown>;
 	calendarInitial: ProjectCalendar;
 	onSaveCalendar: (next: CalendarFormResult) => void;
+	// DISPLAY-SETTINGS
+	displayInitial: ResolvedDisplaySettings;
+	onSaveDisplay: (next: DisplayFormResult) => void;
+	// Other live projects in the workspace, available as copy targets.
+	copyProjects: CopyTargetProject[];
+	onCopyDisplay: (
+		result: DisplayFormResult,
+		targetUrls: string[],
+	) => Promise<void>;
 	summaryState: SummaryState;
 	onSummarize: () => void;
 	onNavigate: (view: Exclude<ProjectView, "overview">) => void;
@@ -387,6 +475,10 @@ export function OverviewContent({
 	onSaveMeta,
 	calendarInitial,
 	onSaveCalendar,
+	displayInitial,
+	onSaveDisplay,
+	copyProjects,
+	onCopyDisplay,
 	summaryState,
 	onSummarize,
 	onNavigate,
@@ -401,6 +493,15 @@ export function OverviewContent({
 	// Mount the form lazily on first expand, then keep it mounted (just hidden)
 	// so collapsing mid-edit doesn't unmount it and silently drop unsaved edits.
 	const [basisMounted, setBasisMounted] = useState(false);
+
+	// DISPLAY-SETTINGS: same collapse / lazy-mount / re-seed triple as the
+	// calendar basis above. The copy dialog opens from inside the form, carrying
+	// the on-screen settings up to the container's cross-doc writer.
+	const [displayKey, setDisplayKey] = useState(0);
+	const [displayOpen, setDisplayOpen] = useState(false);
+	const [displayMounted, setDisplayMounted] = useState(false);
+	const [copyOpen, setCopyOpen] = useState(false);
+	const [copyResult, setCopyResult] = useState<DisplayFormResult | null>(null);
 
 	return (
 		<div className="h-full overflow-y-auto" data-testid="overview-view">
@@ -525,6 +626,73 @@ export function OverviewContent({
 						</div>
 					</section>
 				</div>
+
+				{/* DISPLAY-SETTINGS: per-project display config for the Groups list
+				    below + the Network nodes. Collapsed by default; same pattern as
+				    the calendar basis. */}
+				<section className="rounded-md border bg-card/40">
+					<button
+						type="button"
+						onClick={() => {
+							if (!displayOpen) setDisplayMounted(true);
+							setDisplayOpen((open) => !open);
+						}}
+						aria-expanded={displayOpen}
+						title={
+							displayOpen ? "Hide display settings" : "Show display settings"
+						}
+						data-testid="display-settings-toggle"
+						className="flex w-full items-center gap-1.5 px-4 py-3 text-left text-sm font-medium transition-colors hover:bg-muted/50"
+					>
+						{displayOpen ? (
+							<ChevronDownIcon className="size-3 shrink-0" />
+						) : (
+							<ChevronRightIcon className="size-3 shrink-0" />
+						)}
+						<SlidersHorizontalIcon className="size-4" />
+						Display settings
+						<span className="ml-1 text-xs font-normal text-muted-foreground">
+							Fields & density for Groups + Network
+						</span>
+					</button>
+					{displayMounted && (
+						<div hidden={!displayOpen} className="border-t">
+							{readOnly ? (
+								<p className="px-4 py-4 text-xs text-muted-foreground">
+									Switch to edit mode to change display settings.
+								</p>
+							) : (
+								<DisplaySettingsForm
+									key={displayKey}
+									initial={displayInitial}
+									onCancel={() => setDisplayKey((k) => k + 1)}
+									onSave={(next) => {
+										onSaveDisplay(next);
+										setDisplayKey((k) => k + 1);
+									}}
+									onCopyToProjects={
+										copyProjects.length > 0
+											? (current) => {
+													setCopyResult(current);
+													setCopyOpen(true);
+												}
+											: undefined
+									}
+								/>
+							)}
+						</div>
+					)}
+				</section>
+				{!readOnly && (
+					<CopyDisplayToProjectsDialog
+						open={copyOpen}
+						onOpenChange={setCopyOpen}
+						projects={copyProjects}
+						onCopy={async (urls) => {
+							if (copyResult) await onCopyDisplay(copyResult, urls);
+						}}
+					/>
+				)}
 
 				{/* All groups at a glance — rollups + drill-in. */}
 				<OverviewGroups

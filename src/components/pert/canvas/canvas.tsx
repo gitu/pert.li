@@ -34,6 +34,11 @@ import {
 } from "#/lib/pert/collapse";
 import { cycleEdgeSet, cycleTaskSet } from "#/lib/pert/cycle";
 import {
+	type CanvasFieldId,
+	type ResolvedSurface,
+	resolveDisplaySettings,
+} from "#/lib/pert/display";
+import {
 	assignTaskToGroupMutation,
 	deleteGroupMutation,
 } from "#/lib/pert/group-mutations";
@@ -55,7 +60,13 @@ import {
 	selectionStore,
 	selectTask,
 } from "#/lib/pert/store";
-import type { GroupId, PertDoc, Task, TaskId } from "#/lib/pert/types";
+import type {
+	CanvasLayoutMode,
+	GroupId,
+	PertDoc,
+	Task,
+	TaskId,
+} from "#/lib/pert/types";
 import { useMonteCarlo } from "#/lib/pert/use-monte-carlo";
 import { useResolvedTheme } from "#/lib/theme";
 import { useIsMobile } from "#/lib/use-media-query";
@@ -365,6 +376,13 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 	// MC criticality, just-created flash) layer on cheaply and keep stable
 	// references for unaffected nodes — that's what stops React Flow from
 	// re-diffing every node on every drag frame or MC result.
+	// DISPLAY-SETTINGS: resolved per-project canvas display config (which node
+	// fields + density). Derived from `doc`, so it rides the baseNodes memo and
+	// only changes identity when the doc does.
+	const displayCanvas = useMemo(
+		() => resolveDisplaySettings(doc).canvas,
+		[doc],
+	);
 	const baseNodes = useMemo(
 		() =>
 			buildBaseNodes(
@@ -380,6 +398,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 				onAddLinkedTask,
 				collapsedSet,
 				maxLevel,
+				displayCanvas,
 			),
 		[
 			doc,
@@ -394,6 +413,7 @@ function CanvasInner({ projectId, doc, changeDoc }: CanvasProps) {
 			onAddLinkedTask,
 			collapsedSet,
 			maxLevel,
+			displayCanvas,
 		],
 	);
 	const derivedNodes = useMemo(
@@ -1086,6 +1106,7 @@ function buildBaseNodes(
 	) => void,
 	collapsed: ReadonlySet<GroupId>,
 	maxLevel: number,
+	display: ResolvedSurface<CanvasLayoutMode, CanvasFieldId>,
 ): Node[] {
 	const fallback = fallbackGridLayout(doc);
 	const schedule = scheduleResult.ok ? scheduleResult.schedule : null;
@@ -1179,6 +1200,7 @@ function buildBaseNodes(
 				cycleTaskIds,
 				onDeleteTask,
 				onAddLinkedTask,
+				display,
 			);
 		}
 	}
@@ -1253,6 +1275,7 @@ function pushLeafNode(
 		direction: "successor" | "predecessor",
 		kind: "task" | "milestone",
 	) => void,
+	display: ResolvedSurface<CanvasLayoutMode, CanvasFieldId>,
 ) {
 	const task = projected.task;
 	const pos = task.layout?.position ?? fallback[task.id] ?? { x: 0, y: 0 };
@@ -1276,6 +1299,11 @@ function pushLeafNode(
 		onCancelEdit: undefined,
 		onAddPredecessor: (kind) => onAddLinkedTask(task.id, "predecessor", kind),
 		onAddSuccessor: (kind) => onAddLinkedTask(task.id, "successor", kind),
+		// DISPLAY-SETTINGS: per-project node field visibility + density.
+		showDuration: display.fields.duration,
+		showSlack: display.fields.slack,
+		showProgress: display.fields.progress,
+		layout: display.layout,
 	};
 	nodes.push({
 		id: task.id,

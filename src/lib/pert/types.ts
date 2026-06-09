@@ -170,6 +170,31 @@ export type ProjectCalendar = {
 	allocationMode?: AllocationMode;
 };
 
+// ── Display settings ─────────────────────────────────────────────────────────
+// DISPLAY-SETTINGS: per-project, collaborator-shared view config for the two
+// surfaces that render rolled-up / per-task fields — the Overview "Groups"
+// section and the Network canvas task nodes. Each surface picks a density MODE
+// plus a SPARSE map of field-id → visible (absence = the field's registry
+// default, so the doc stays small and merge-friendly, and newly-added registry
+// fields default-on for existing docs without a migration). Stored on the doc
+// (shared), NOT in the workspace doc or localStorage. Old docs predate this —
+// always read through `resolveDisplaySettings(doc)` (display.ts), never branch
+// on raw `doc.display`.
+export type OverviewLayoutMode = "compact" | "detailed";
+export type CanvasLayoutMode = "compact" | "detailed";
+
+export type DisplaySurfaceSettings<Mode extends string> = {
+	layout?: Mode;
+	// Plain string keys (Automerge stores them as-is). The FieldId unions and
+	// defaults live in display.ts; the doc type stays loose/forward-compatible.
+	fields?: Record<string, boolean>;
+};
+
+export type DisplaySettings = {
+	overview?: DisplaySurfaceSettings<OverviewLayoutMode>;
+	canvas?: DisplaySurfaceSettings<CanvasLayoutMode>;
+};
+
 // ── Work plan ────────────────────────────────────────────────────────────────
 // A structured, AI-driven todo list for large multi-step changes (bulk
 // imports, restructurings). The assistant drafts it, the USER approves it
@@ -267,6 +292,10 @@ export type PertDoc = {
 	dependenciesById: Record<DependencyId, Dependency>;
 	viewsById: Record<ViewId, ViewState>;
 	calendar?: ProjectCalendar;
+	// DISPLAY-SETTINGS: shared per-project display config (which fields + which
+	// density) for the Overview groups list and the canvas task nodes. Old docs
+	// predate it — read through resolveDisplaySettings(), which fills defaults.
+	display?: DisplaySettings;
 	meta?: DocMeta;
 	// The active AI work plan, if any. One per project — creating a new plan
 	// replaces the old one (prior plans remain in Automerge history).
