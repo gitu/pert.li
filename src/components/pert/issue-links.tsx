@@ -17,12 +17,21 @@ function IssueChip({
 	template?: string;
 	className?: string;
 }) {
-	const built = buildIssueUrl(template, issueKey);
-	// Inline scheme allowlist at the href sink: only ever render http(s) links
-	// so a malicious tracker template can't inject a javascript:/data: URL
-	// (CWE-79). buildIssueUrl already enforces this; the local check keeps the
-	// guarantee obvious at the point the value reaches the DOM.
-	const url = built && /^https?:\/\//i.test(built) ? built : null;
+	// Allowlist the protocol at the href sink itself, so a malicious tracker
+	// template (the template lives in the shared doc) can't inject a
+	// javascript:/data: URL that executes on click (CWE-79). buildIssueUrl
+	// already restricts to http(s); this is the defense-in-depth guard right
+	// where the value reaches the DOM.
+	const candidate = buildIssueUrl(template, issueKey);
+	let url: string | null = null;
+	if (candidate) {
+		try {
+			const protocol = new URL(candidate).protocol;
+			if (protocol === "http:" || protocol === "https:") url = candidate;
+		} catch {
+			url = null;
+		}
+	}
 	if (url) {
 		return (
 			<a
