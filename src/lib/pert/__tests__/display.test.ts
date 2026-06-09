@@ -58,6 +58,14 @@ describe("resolveDisplaySettings", () => {
 		expect(r.overview.fields.duration).toBe(true);
 	});
 
+	it("falls back to the default for an unknown / corrupted layout value", () => {
+		const r = resolveDisplaySettings({
+			// A forward-version or corrupted mode that isn't a known layout.
+			display: { overview: { layout: "spacious" as never } },
+		});
+		expect(r.overview.layout).toBe(DEFAULT_OVERVIEW_LAYOUT);
+	});
+
 	it("ignores unknown keys in the fields map", () => {
 		const r = resolveDisplaySettings({
 			display: { canvas: { fields: { bogus: false, alsoFake: true } } },

@@ -50,6 +50,19 @@ export const CANVAS_FIELDS: readonly FieldDef<CanvasFieldId>[] = [
 export const DEFAULT_OVERVIEW_LAYOUT: OverviewLayoutMode = "detailed";
 export const DEFAULT_CANVAS_LAYOUT: CanvasLayoutMode = "detailed";
 
+// The known layout modes per surface. `resolveSurface` validates a doc's stored
+// layout against these — a corrupted or forward-version value falls back to the
+// default rather than flowing through (the config is collaborator-shared, so a
+// bad value must not survive a re-save/copy).
+export const OVERVIEW_LAYOUTS: readonly OverviewLayoutMode[] = [
+	"compact",
+	"detailed",
+];
+export const CANVAS_LAYOUTS: readonly CanvasLayoutMode[] = [
+	"compact",
+	"detailed",
+];
+
 // Fully-resolved, no-optional shape consumers read. `fields` is a TOTAL record
 // over the registry ids for that surface, so callers index it directly.
 export type ResolvedSurface<Mode extends string, Id extends string> = {
@@ -64,6 +77,7 @@ export type ResolvedDisplaySettings = {
 
 function resolveSurface<Mode extends string, Id extends string>(
 	defs: readonly FieldDef<Id>[],
+	layouts: readonly Mode[],
 	defaultLayout: Mode,
 	raw: { layout?: Mode; fields?: Record<string, boolean> } | undefined,
 ): ResolvedSurface<Mode, Id> {
@@ -74,7 +88,16 @@ function resolveSurface<Mode extends string, Id extends string>(
 		// unknown/garbage key that isn't in the registry) falls back to default.
 		fields[def.id] = typeof override === "boolean" ? override : def.defaultOn;
 	}
-	return { layout: raw?.layout ?? defaultLayout, fields };
+	// Validate layout the same way as fields: only a KNOWN mode wins. A corrupted
+	// or forward-version string falls back to the default rather than flowing
+	// through into the resolved (and thus re-saveable / copyable) settings.
+	const rawLayout = raw?.layout;
+	const layout =
+		rawLayout !== undefined &&
+		(layouts as readonly string[]).includes(rawLayout)
+			? rawLayout
+			: defaultLayout;
+	return { layout, fields };
 }
 
 // Total resolver: fills every field + layout default. Tolerates undefined docs,
@@ -86,11 +109,13 @@ export function resolveDisplaySettings(
 	return {
 		overview: resolveSurface(
 			OVERVIEW_FIELDS,
+			OVERVIEW_LAYOUTS,
 			DEFAULT_OVERVIEW_LAYOUT,
 			display?.overview,
 		),
 		canvas: resolveSurface(
 			CANVAS_FIELDS,
+			CANVAS_LAYOUTS,
 			DEFAULT_CANVAS_LAYOUT,
 			display?.canvas,
 		),
