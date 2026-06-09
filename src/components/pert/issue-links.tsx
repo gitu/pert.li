@@ -106,10 +106,14 @@ export function IssueLinksEditor({
 	issueKeys,
 	template,
 	onChange,
+	inputId,
 }: {
 	issueKeys: string[];
 	template?: string;
 	onChange: (next: string[]) => void;
+	// Optional id for the add-key input, so a caller's <Label htmlFor> can
+	// associate with it for screen readers / click-to-focus.
+	inputId?: string;
 }) {
 	const [draft, setDraft] = useState("");
 
@@ -153,6 +157,7 @@ export function IssueLinksEditor({
 			)}
 			<div className="flex gap-1.5">
 				<Input
+					id={inputId}
 					value={draft}
 					data-testid="issue-link-input"
 					placeholder="PROJ-123 or https://…"

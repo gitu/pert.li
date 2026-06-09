@@ -608,6 +608,7 @@ function TaskForm({
 							)}
 						</Label>
 						<IssueLinksEditor
+							inputId="issue-link-input"
 							issueKeys={task.issueKeys ?? []}
 							template={doc.issueTracker?.urlTemplate}
 							onChange={setIssueKeys}

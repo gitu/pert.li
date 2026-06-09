@@ -47,6 +47,32 @@ describe("buildIssueUrl", () => {
 		).toBeNull();
 	});
 
+	it("rejects dangerous schemes in the template (no javascript:/data:/etc.)", () => {
+		// A malicious tracker template in the shared doc must never produce an
+		// href that executes script when clicked (CWE-79).
+		expect(buildIssueUrl("javascript:alert(1)//{key}", "PROJ-1")).toBeNull();
+		expect(buildIssueUrl("JavaScript:alert(1)//{key}", "PROJ-1")).toBeNull();
+		expect(
+			buildIssueUrl("data:text/html,<script>{key}</script>", "X"),
+		).toBeNull();
+		expect(buildIssueUrl("vbscript:msgbox/{key}", "PROJ-1")).toBeNull();
+		// Protocol-relative escapes the origin → rejected.
+		expect(buildIssueUrl("//evil.example/{key}", "PROJ-1")).toBeNull();
+	});
+
+	it("allows root-relative same-origin templates", () => {
+		expect(buildIssueUrl("/issues/{key}", "PROJ-1")).toBe("/issues/PROJ-1");
+	});
+
+	it("does not link a key whose scheme is dangerous", () => {
+		// Keys only short-circuit to a direct link when they are http(s); a
+		// javascript: 'key' falls through to the template path (and is encoded).
+		expect(buildIssueUrl(undefined, "javascript:alert(1)")).toBeNull();
+		expect(buildIssueUrl(JIRA, "javascript:alert(1)")).toBe(
+			`https://acme.atlassian.net/browse/${encodeURIComponent("javascript:alert(1)")}`,
+		);
+	});
+
 	it("trims the key before substituting", () => {
 		expect(buildIssueUrl(JIRA, "  PROJ-7  ")).toBe(
 			"https://acme.atlassian.net/browse/PROJ-7",
