@@ -26,8 +26,13 @@ function IssueChip({
 	let url: string | null = null;
 	if (candidate) {
 		try {
-			const protocol = new URL(candidate).protocol;
-			if (protocol === "http:" || protocol === "https:") url = candidate;
+			const parsed = new URL(candidate);
+			// Emit the parsed URL's own href (a sanitized value), not the raw
+			// candidate, and only for http(s) — so a malicious tracker template
+			// can't reach the DOM as a javascript:/data: URL (CWE-79).
+			if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+				url = parsed.href;
+			}
 		} catch {
 			url = null;
 		}
