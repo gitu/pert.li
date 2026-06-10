@@ -12,17 +12,21 @@ function IssueChip({
 	issueKey,
 	template,
 	className,
+	linkify = true,
 }: {
 	issueKey: string;
 	template?: string;
 	className?: string;
+	// When false, always render plain text (no <a>). Used where an anchor would
+	// be nested in another interactive element (e.g. the mobile card's <button>).
+	linkify?: boolean;
 }) {
 	// Allowlist the protocol at the href sink itself, so a malicious tracker
 	// template (the template lives in the shared doc) can't inject a
 	// javascript:/data: URL that executes on click (CWE-79). buildIssueUrl
 	// already restricts to http(s); this is the defense-in-depth guard right
 	// where the value reaches the DOM.
-	const candidate = buildIssueUrl(template, issueKey);
+	const candidate = linkify ? buildIssueUrl(template, issueKey) : null;
 	let url: string | null = null;
 	if (candidate) {
 		try {
@@ -99,10 +103,14 @@ export function IssueLinkBadge({
 	issueKeys,
 	template,
 	className,
+	linkify = true,
 }: {
 	issueKeys: string[] | undefined;
 	template?: string;
 	className?: string;
+	// Pass false where the badge sits inside another interactive element (e.g.
+	// the mobile card's <button>) so it renders plain text, not a nested <a>.
+	linkify?: boolean;
 }) {
 	if (!issueKeys || issueKeys.length === 0) return null;
 	const [first, ...rest] = issueKeys;
@@ -111,7 +119,7 @@ export function IssueLinkBadge({
 			data-testid="issue-link-badge"
 			className={cn("inline-flex items-center gap-1 text-xs", className)}
 		>
-			<IssueChip issueKey={first} template={template} />
+			<IssueChip issueKey={first} template={template} linkify={linkify} />
 			{rest.length > 0 && (
 				<span className="text-muted-foreground">+{rest.length}</span>
 			)}

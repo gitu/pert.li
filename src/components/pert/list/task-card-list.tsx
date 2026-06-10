@@ -109,7 +109,14 @@ function TaskCard({
 							critical
 						</Badge>
 					)}
-					<IssueLinkBadge issueKeys={row.issueKeys} template={template} />
+					{/* Plain text (linkify=false): the card is a <button>, so an inner
+				    <a> would be invalid nested-interactive markup. The click-through
+				    link lives in the inspector this card opens. */}
+					<IssueLinkBadge
+						issueKeys={row.issueKeys}
+						template={template}
+						linkify={false}
+					/>
 				</div>
 			</button>
 		</li>
