@@ -45,6 +45,36 @@ export const ListPlainText: Story = {
 	},
 };
 
+// Security regression: a malicious tracker template (templates live in the
+// shared doc, so any collaborator can set one) must never reach the DOM as a
+// clickable javascript:/data: href. The sink guard renders plain text instead.
+export const MaliciousTemplateIsInert: Story = {
+	args: {
+		issueKeys: ["PROJ-1"],
+		template: "javascript:alert(document.cookie)//{key}",
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// No anchor is rendered at all…
+		expect(canvas.queryByTestId("issue-link")).toBeNull();
+		// …the key falls back to inert text.
+		await expect(await canvas.findByTestId("issue-text")).toHaveTextContent(
+			"PROJ-1",
+		);
+	},
+};
+
+// Security regression: protocol-relative templates (which escape the origin)
+// are likewise rejected — rendered as text, never as a link.
+export const ProtocolRelativeTemplateIsInert: Story = {
+	args: { issueKeys: ["PROJ-1"], template: "//evil.example/{key}" },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		expect(canvas.queryByTestId("issue-link")).toBeNull();
+		await expect(await canvas.findByTestId("issue-text")).toBeVisible();
+	},
+};
+
 // A key that is itself a URL links directly even without a template.
 export const ListUrlKey: Story = {
 	args: { issueKeys: ["https://linear.app/x/issue/9"], template: undefined },
