@@ -144,7 +144,13 @@ export const projectCalendar: z.ZodType<ProjectCalendar> = z.object({
 });
 
 export const projectIssueTracker: z.ZodType<ProjectIssueTracker> = z.object({
-	urlTemplate: z.string(),
+	// Reject empty / whitespace-only templates so a persisted issueTracker can't
+	// be "effectively unconfigured" (buildIssueUrl trims, and the Overview would
+	// otherwise show a misleading "Configured" state). The UI's applyIssueTracker
+	// already deletes empties; this guards import / direct-write paths too.
+	urlTemplate: z.string().refine((s) => s.trim().length > 0, {
+		message: "urlTemplate must not be empty",
+	}),
 	name: z.string().optional(),
 });
 

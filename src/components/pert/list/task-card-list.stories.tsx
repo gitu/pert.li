@@ -73,8 +73,9 @@ export const LargeProject: Story = {
 	render: () => <Harness doc={seedDoc(40)} />,
 };
 
-// Cards surface linked external issues as a compact badge. With a tracker
-// template configured, the first key resolves to a click-through link.
+// Cards surface linked external issues as a compact badge. The badge renders
+// plain text (linkify=false) — the card is a <button>, so a nested <a> would be
+// invalid; the click-through link lives in the inspector the card opens.
 export const WithIssueLinks: Story = {
 	render: () => {
 		const doc = seedDoc(3);

@@ -85,12 +85,17 @@ export function IssueLinkList({
 	className?: string;
 }) {
 	if (!issueKeys || issueKeys.length === 0) return null;
+	// Dedupe for display: issueKeys is normally deduped by the mutator, but an
+	// old doc / import could carry duplicates. Removing them keeps the value a
+	// safe, stable React key (no index-based keys, per lint) and avoids showing
+	// the same issue twice.
+	const keys = [...new Set(issueKeys)];
 	return (
 		<div
 			data-testid="issue-link-list"
 			className={cn("flex flex-wrap gap-x-3 gap-y-1 text-sm", className)}
 		>
-			{issueKeys.map((key) => (
+			{keys.map((key) => (
 				<IssueChip key={key} issueKey={key} template={template} />
 			))}
 		</div>
@@ -113,7 +118,8 @@ export function IssueLinkBadge({
 	linkify?: boolean;
 }) {
 	if (!issueKeys || issueKeys.length === 0) return null;
-	const [first, ...rest] = issueKeys;
+	// Dedupe so the "+N" overflow count reflects distinct issues.
+	const [first, ...rest] = [...new Set(issueKeys)];
 	return (
 		<span
 			data-testid="issue-link-badge"
@@ -156,9 +162,11 @@ export function IssueLinksEditor({
 		<div className="space-y-2" data-testid="issue-links-editor">
 			{issueKeys.length > 0 && (
 				<ul className="flex flex-wrap gap-1.5">
-					{issueKeys.map((key) => {
+					{[...new Set(issueKeys)].map((key) => {
 						const url = buildIssueUrl(template, key);
 						return (
+							// issueKeys is deduped (above) so the value is a safe,
+							// stable React key without resorting to the array index.
 							<li
 								key={key}
 								className="inline-flex items-center gap-1 rounded-md border bg-muted/40 py-0.5 pr-0.5 pl-2 text-xs"
