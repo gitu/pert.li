@@ -48,6 +48,18 @@ describe("applyOperations", () => {
 		expect(doc.dependenciesById.dep1).toBeDefined();
 	});
 
+	it("sets and clears issue links via set_issue_links", () => {
+		const doc = seed();
+		applyOperations(doc, [
+			{ op: "set_issue_links", taskId: "A", issueKeys: [" PROJ-1 ", "PROJ-1"] },
+		]);
+		expect(doc.tasksById.A.issueKeys).toEqual(["PROJ-1"]);
+		applyOperations(doc, [
+			{ op: "set_issue_links", taskId: "A", issueKeys: null },
+		]);
+		expect(doc.tasksById.A.issueKeys).toBeUndefined();
+	});
+
 	it("surfaces per-op errors without stopping the batch", () => {
 		const doc = seed();
 		const ops: EditOp[] = [

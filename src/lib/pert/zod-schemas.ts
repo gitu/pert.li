@@ -5,6 +5,7 @@ import type {
 	Group,
 	PertDoc,
 	ProjectCalendar,
+	ProjectIssueTracker,
 	Task,
 	ViewState,
 	WorkPlan,
@@ -63,6 +64,7 @@ export const task: z.ZodType<Task> = z.object({
 	order: z.number().optional(),
 	estimate: estimate.optional(),
 	notes: z.string().optional(),
+	issueKeys: z.array(z.string()).optional(),
 	layout: layout.optional(),
 	status: taskStatus.optional(),
 	progress: z.number().min(0).max(100).optional(),
@@ -141,6 +143,17 @@ export const projectCalendar: z.ZodType<ProjectCalendar> = z.object({
 	allocationMode: allocationMode.optional(),
 });
 
+export const projectIssueTracker: z.ZodType<ProjectIssueTracker> = z.object({
+	// Reject empty / whitespace-only templates so a persisted issueTracker can't
+	// be "effectively unconfigured" (buildIssueUrl trims, and the Overview would
+	// otherwise show a misleading "Configured" state). The UI's applyIssueTracker
+	// already deletes empties; this guards import / direct-write paths too.
+	urlTemplate: z.string().refine((s) => s.trim().length > 0, {
+		message: "urlTemplate must not be empty",
+	}),
+	name: z.string().optional(),
+});
+
 export const workPlanStepStatus = z.enum([
 	"pending",
 	"in_progress",
@@ -183,5 +196,6 @@ export const pertDoc: z.ZodType<PertDoc> = z.object({
 	dependenciesById: z.record(z.string(), dependency),
 	viewsById: z.record(z.string(), viewState),
 	calendar: projectCalendar.optional(),
+	issueTracker: projectIssueTracker.optional(),
 	workPlan: workPlan.optional(),
 });

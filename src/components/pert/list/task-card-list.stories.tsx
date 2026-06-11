@@ -72,3 +72,24 @@ export const SmallProject: Story = {
 export const LargeProject: Story = {
 	render: () => <Harness doc={seedDoc(40)} />,
 };
+
+// Cards surface linked external issues as a compact badge. The badge renders
+// plain text (linkify=false) — the card is a <button>, so a nested <a> would be
+// invalid; the click-through link lives in the inspector the card opens.
+export const WithIssueLinks: Story = {
+	render: () => {
+		const doc = seedDoc(3);
+		doc.issueTracker = {
+			urlTemplate: "https://acme.atlassian.net/browse/{key}",
+			name: "Jira",
+		};
+		doc.tasksById.T0.issueKeys = ["PROJ-1", "PROJ-2"];
+		doc.tasksById.T1.issueKeys = ["PROJ-9"];
+		return <Harness doc={doc} />;
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const badges = await canvas.findAllByTestId("issue-link-badge");
+		expect(badges).toHaveLength(2);
+	},
+};

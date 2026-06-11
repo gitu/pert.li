@@ -251,6 +251,17 @@ export const setNotesTool = toolDefinition({
 	outputSchema: okOrErrorSchema,
 });
 
+export const setIssueLinksTool = toolDefinition({
+	name: "set_issue_links",
+	description:
+		"Set or replace a task's external issue references (e.g. Jira keys like PROJ-123, or full URLs). Pass the complete desired list — it replaces any existing list. Pass an empty array or null to clear all links.",
+	inputSchema: z.object({
+		taskId: z.string(),
+		issueKeys: z.array(z.string()).nullable(),
+	}),
+	outputSchema: okOrErrorSchema,
+});
+
 export const moveTaskToGroupTool = toolDefinition({
 	name: "move_task_to_group",
 	description:
@@ -628,6 +639,7 @@ export const CHAT_TOOL_DEFINITIONS = [
 	setKindTool,
 	setTaskNumberTool,
 	setNotesTool,
+	setIssueLinksTool,
 	setEstimateTool,
 	setStatusTool,
 	setProgressTool,

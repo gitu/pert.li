@@ -60,6 +60,7 @@ import {
 	setDependencyMutation,
 	setEstimateMutation,
 	setGroupParentMutation,
+	setIssueLinksMutation,
 	setKindMutation,
 	setNotesMutation,
 	setProgressMutation,
@@ -91,6 +92,7 @@ import {
 	setDependencyTool,
 	setEstimateTool,
 	setGroupParentTool,
+	setIssueLinksTool,
 	setKindTool,
 	setNotesTool,
 	setProgressTool,
@@ -761,6 +763,15 @@ function BoundChatPanel({
 					let result: ReturnType<typeof setNotesMutation> = { ok: true };
 					active.changeDoc((d) => {
 						result = setNotesMutation(d, args);
+					});
+					return result;
+				}),
+				setIssueLinksTool.client((args) => {
+					const active = getEditableDoc(projectId);
+					if ("error" in active) return active;
+					let result: ReturnType<typeof setIssueLinksMutation> = { ok: true };
+					active.changeDoc((d) => {
+						result = setIssueLinksMutation(d, args);
 					});
 					return result;
 				}),
