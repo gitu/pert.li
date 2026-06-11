@@ -13,6 +13,7 @@ import {
 	setDependencyMutation,
 	setEstimateMutation,
 	setGroupParentMutation,
+	setIssueLinksMutation,
 	setKindMutation,
 	setNotesMutation,
 	setProgressMutation,
@@ -349,6 +350,40 @@ describe("setNotesMutation", () => {
 		d.tasksById.task_a.notes = "x";
 		setNotesMutation(d, { taskId: "task_a", notes: null });
 		expect(d.tasksById.task_a.notes).toBeUndefined();
+	});
+});
+
+describe("setIssueLinksMutation", () => {
+	it("sets a trimmed, deduped list", () => {
+		const d = seed();
+		setIssueLinksMutation(d, {
+			taskId: "task_a",
+			issueKeys: ["  PROJ-1 ", "PROJ-2", "PROJ-1", ""],
+		});
+		expect(d.tasksById.task_a.issueKeys).toEqual(["PROJ-1", "PROJ-2"]);
+	});
+
+	it("clears on null", () => {
+		const d = seed();
+		d.tasksById.task_a.issueKeys = ["PROJ-1"];
+		setIssueLinksMutation(d, { taskId: "task_a", issueKeys: null });
+		expect(d.tasksById.task_a.issueKeys).toBeUndefined();
+	});
+
+	it("clears when every key is blank", () => {
+		const d = seed();
+		d.tasksById.task_a.issueKeys = ["PROJ-1"];
+		setIssueLinksMutation(d, { taskId: "task_a", issueKeys: ["  ", ""] });
+		expect(d.tasksById.task_a.issueKeys).toBeUndefined();
+	});
+
+	it("errors on a missing task", () => {
+		const d = seed();
+		const r = setIssueLinksMutation(d, {
+			taskId: "nope",
+			issueKeys: ["PROJ-1"],
+		});
+		expect(r).toEqual({ ok: false, error: "task nope not found" });
 	});
 });
 

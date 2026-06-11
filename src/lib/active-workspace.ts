@@ -52,7 +52,7 @@ if (typeof window !== "undefined") {
 		if (event.key !== ACTIVE_WORKSPACE_KEY) return;
 		const next =
 			event.newValue && isUuid(event.newValue) ? event.newValue : null;
-		store.setState({ workspaceId: next });
+		store.setState(() => ({ workspaceId: next }));
 	});
 }
 
@@ -62,7 +62,7 @@ export const activeWorkspace = {
 		// silently coercing a bad value to null beats letting it pollute the
 		// store and trigger downstream input-validation errors.
 		const next = id && isUuid(id) ? id : null;
-		store.setState({ workspaceId: next });
+		store.setState(() => ({ workspaceId: next }));
 		persist(next);
 	},
 	get(): string | null {

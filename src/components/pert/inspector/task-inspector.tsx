@@ -10,6 +10,7 @@ import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ConflictPill } from "#/components/pert/inspector/conflict-pill";
 import { GroupCombobox } from "#/components/pert/inspector/group-combobox";
+import { IssueLinkList, IssueLinksEditor } from "#/components/pert/issue-links";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
@@ -332,6 +333,18 @@ function TaskForm({
 			}),
 		[onMutate],
 	);
+	const setIssueKeys = useCallback(
+		(keys: string[]) =>
+			onMutate((d) => {
+				const cleaned = [
+					...new Set(keys.map((k) => k.trim()).filter((k) => k.length > 0)),
+				];
+				// Automerge rejects undefined — delete to clear.
+				if (cleaned.length === 0) delete d.issueKeys;
+				else d.issueKeys = cleaned;
+			}),
+		[onMutate],
+	);
 	const setKind = useCallback(
 		(kind: TaskKind) =>
 			onMutate((d) => {
@@ -584,6 +597,29 @@ function TaskForm({
 							rows={4}
 						/>
 					</div>
+
+					<div className="space-y-1.5">
+						<Label htmlFor="issue-link-input">
+							Issue links
+							{doc.issueTracker?.name && (
+								<span className="ml-1 font-normal text-muted-foreground">
+									({doc.issueTracker.name})
+								</span>
+							)}
+						</Label>
+						<IssueLinksEditor
+							inputId="issue-link-input"
+							issueKeys={task.issueKeys ?? []}
+							template={doc.issueTracker?.urlTemplate}
+							onChange={setIssueKeys}
+						/>
+						{!doc.issueTracker?.urlTemplate && (
+							<p className="text-xs text-muted-foreground">
+								Set an issue tracker URL on the Overview tab to turn keys into
+								click-through links.
+							</p>
+						)}
+					</div>
 				</div>
 
 				<div className="space-y-4">
@@ -785,6 +821,13 @@ function TaskOverview({
 					<p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
 						{task.notes}
 					</p>
+				)}
+				{task.issueKeys && task.issueKeys.length > 0 && (
+					<IssueLinkList
+						className="mt-2"
+						issueKeys={task.issueKeys}
+						template={doc.issueTracker?.urlTemplate}
+					/>
 				)}
 			</OverviewSection>
 

@@ -20,6 +20,8 @@ describe("editOpSchema", () => {
 			{ op: "set_task_number", taskId: "A", number: "1.2" },
 			{ op: "set_task_number", taskId: "A", number: null },
 			{ op: "set_notes", taskId: "A", notes: "hello" },
+			{ op: "set_issue_links", taskId: "A", issueKeys: ["PROJ-1", "PROJ-2"] },
+			{ op: "set_issue_links", taskId: "A", issueKeys: null },
 			{
 				op: "set_estimate",
 				taskId: "A",

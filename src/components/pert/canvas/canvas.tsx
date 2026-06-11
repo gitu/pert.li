@@ -1288,6 +1288,7 @@ function pushLeafNode(
 		slackDays: sched?.slack ?? null,
 		critical: sched?.critical ?? false,
 		hasEstimate: Boolean(task.estimate),
+		issueKeys: task.issueKeys,
 		cycle: cycleTaskIds.has(task.id),
 		status: sched?.status ?? task.status ?? "not_started",
 		progress: sched?.progress ?? task.progress ?? 0,
@@ -1303,6 +1304,7 @@ function pushLeafNode(
 		showDuration: display.fields.duration,
 		showSlack: display.fields.slack,
 		showProgress: display.fields.progress,
+		showIssueKeys: display.fields.issueKeys,
 		layout: display.layout,
 	};
 	nodes.push({

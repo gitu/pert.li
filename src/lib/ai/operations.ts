@@ -69,6 +69,11 @@ export const editOpSchema = z.discriminatedUnion("op", [
 		notes: z.string().nullable(),
 	}),
 	z.object({
+		op: z.literal("set_issue_links"),
+		taskId: z.string(),
+		issueKeys: z.array(z.string()).nullable(),
+	}),
+	z.object({
 		op: z.literal("set_estimate"),
 		taskId: z.string(),
 		optimistic: z.number().nonnegative(),

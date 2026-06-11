@@ -10,6 +10,7 @@ import {
 	ChevronRightIcon,
 	GitBranchIcon,
 	GridIcon,
+	LinkIcon,
 	ListIcon,
 	NetworkIcon,
 	PencilIcon,
@@ -27,6 +28,7 @@ import {
 } from "#/components/pert/copy-display-to-projects-dialog";
 import { DisplaySettingsForm } from "#/components/pert/display-settings-form";
 import { ExportProjectButton } from "#/components/pert/exchange/export-button";
+import { IssueTrackerForm } from "#/components/pert/issue-tracker-form";
 import { ProjectCalendarForm } from "#/components/pert/project-calendar-form";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
@@ -45,6 +47,10 @@ import {
 	type DisplayFormResult,
 	writeDisplay,
 } from "#/lib/pert/apply-display";
+import {
+	applyIssueTracker,
+	type IssueTrackerFormResult,
+} from "#/lib/pert/apply-issue-tracker";
 import { DEFAULT_WORKING_DAYS, todayIsoDate } from "#/lib/pert/calendar";
 import { changeWith } from "#/lib/pert/change-meta";
 import {
@@ -200,6 +206,10 @@ export function OverviewView({
 	const calendarInitial: ProjectCalendar = doc.calendar ?? {
 		startDate: todayIsoDate(),
 		workingDays: DEFAULT_WORKING_DAYS,
+	};
+	const issueTrackerInitial: IssueTrackerFormResult = {
+		urlTemplate: doc.issueTracker?.urlTemplate ?? "",
+		name: doc.issueTracker?.name,
 	};
 
 	// DISPLAY-SETTINGS: resolved current config seeds the form; the other live
@@ -400,6 +410,11 @@ export function OverviewView({
 			}}
 			copyProjects={copyProjects}
 			onCopyDisplay={copyDisplayToProjects}
+			issueTrackerInitial={issueTrackerInitial}
+			onSaveIssueTracker={(next) => {
+				applyIssueTracker(changeDoc, next);
+				toast.success("Issue tracker saved");
+			}}
 			summaryState={summaryState}
 			onSummarize={() => summarize.mutate()}
 			onNavigate={(view) =>
@@ -456,6 +471,8 @@ export type OverviewContentProps = {
 		result: DisplayFormResult,
 		targetUrls: string[],
 	) => Promise<void>;
+	issueTrackerInitial: IssueTrackerFormResult;
+	onSaveIssueTracker: (next: IssueTrackerFormResult) => void;
 	summaryState: SummaryState;
 	onSummarize: () => void;
 	onNavigate: (view: Exclude<ProjectView, "overview">) => void;
@@ -479,6 +496,8 @@ export function OverviewContent({
 	onSaveDisplay,
 	copyProjects,
 	onCopyDisplay,
+	issueTrackerInitial,
+	onSaveIssueTracker,
 	summaryState,
 	onSummarize,
 	onNavigate,
@@ -493,6 +512,11 @@ export function OverviewContent({
 	// Mount the form lazily on first expand, then keep it mounted (just hidden)
 	// so collapsing mid-edit doesn't unmount it and silently drop unsaved edits.
 	const [basisMounted, setBasisMounted] = useState(false);
+	// Issue-tracker settings panel — same collapse/lazy-mount/re-seed pattern as
+	// the calendar basis above.
+	const [trackerKey, setTrackerKey] = useState(0);
+	const [trackerOpen, setTrackerOpen] = useState(false);
+	const [trackerMounted, setTrackerMounted] = useState(false);
 
 	// DISPLAY-SETTINGS: same collapse / lazy-mount / re-seed triple as the
 	// calendar basis above. The copy dialog opens from inside the form, carrying
@@ -693,6 +717,54 @@ export function OverviewContent({
 						}}
 					/>
 				)}
+
+				{/* Issue tracker: project-level URL template that turns each task's
+				    issue keys into click-through links. Collapsed by default. */}
+				<section className="rounded-md border bg-card/40">
+					<button
+						type="button"
+						onClick={() => {
+							if (!trackerOpen) setTrackerMounted(true);
+							setTrackerOpen((open) => !open);
+						}}
+						aria-expanded={trackerOpen}
+						title={trackerOpen ? "Hide issue tracker" : "Show issue tracker"}
+						data-testid="issue-tracker-toggle"
+						className="flex w-full items-center gap-1.5 px-4 py-3 text-left text-sm font-medium transition-colors hover:bg-muted/50"
+					>
+						{trackerOpen ? (
+							<ChevronDownIcon className="size-3 shrink-0" />
+						) : (
+							<ChevronRightIcon className="size-3 shrink-0" />
+						)}
+						<LinkIcon className="size-4" />
+						Issue tracker
+						<span className="ml-1 text-xs font-normal text-muted-foreground">
+							{doc.issueTracker?.urlTemplate
+								? (doc.issueTracker.name ?? "Configured")
+								: "Link tasks to Jira & similar"}
+						</span>
+					</button>
+					{trackerMounted && (
+						<div hidden={!trackerOpen} className="border-t">
+							{readOnly ? (
+								<p className="px-4 py-4 text-xs text-muted-foreground">
+									Switch to edit mode to configure the issue tracker.
+								</p>
+							) : (
+								<IssueTrackerForm
+									key={trackerKey}
+									initial={issueTrackerInitial}
+									onCancel={() => setTrackerKey((k) => k + 1)}
+									onSave={(next) => {
+										onSaveIssueTracker(next);
+										setTrackerKey((k) => k + 1);
+									}}
+								/>
+							)}
+						</div>
+					)}
+				</section>
 
 				{/* All groups at a glance — rollups + drill-in. */}
 				<OverviewGroups

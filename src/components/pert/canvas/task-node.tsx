@@ -3,6 +3,7 @@ import {
 	AlertOctagonIcon,
 	CheckCircle2Icon,
 	CircleDotIcon,
+	ExternalLinkIcon,
 	FlagIcon,
 	PlusIcon,
 	ZapIcon,
@@ -31,6 +32,10 @@ export type TaskNodeData = {
 	slackDays: number | null;
 	critical: boolean;
 	hasEstimate: boolean;
+	// External issue references (Jira keys / URLs). Surfaced as a small badge on
+	// the node; the click-through links live in the inspector + table (a node
+	// link would fight canvas selection/drag).
+	issueKeys?: string[];
 	cycle?: boolean;
 	status: "not_started" | "in_progress" | "completed";
 	progress: number;
@@ -69,6 +74,10 @@ export type TaskNodeData = {
 	showDuration?: boolean;
 	showSlack?: boolean;
 	showProgress?: boolean;
+	// POST-ISSUE-LINKS: toggles the issue-keys badge (issue-links feature). Read
+	// default-truthy like the other field flags so nodes built without it (older
+	// stories / tests) keep showing the badge.
+	showIssueKeys?: boolean;
 	layout?: CanvasLayoutMode;
 };
 
@@ -86,6 +95,7 @@ function TaskNodeImpl(props: NodeProps) {
 	const showDuration = data.showDuration !== false;
 	const showSlack = data.showSlack !== false;
 	const showProgress = data.showProgress !== false;
+	const showIssueKeys = data.showIssueKeys !== false;
 	// Build the secondary meta line as discrete segments so toggling a field off
 	// never leaves a dangling "·" separator. A cycle is an error state — always
 	// shown, regardless of the slack toggle.
@@ -240,6 +250,24 @@ function TaskNodeImpl(props: NodeProps) {
 						style={{ width: `${Math.max(0, Math.min(100, data.progress))}%` }}
 					/>
 				</div>
+			)}
+			{showIssueKeys && data.issueKeys && data.issueKeys.length > 0 && (
+				<Tooltip>
+					<TooltipTrigger asChild>
+						<span
+							data-testid={`task-issues-${props.id}`}
+							className="mt-1.5 inline-flex items-center gap-1 text-[10px] text-muted-foreground"
+						>
+							<ExternalLinkIcon className="size-3 shrink-0" />
+							{data.issueKeys.length === 1
+								? data.issueKeys[0]
+								: `${data.issueKeys.length} issues`}
+						</span>
+					</TooltipTrigger>
+					<TooltipContent side="bottom">
+						{data.issueKeys.join(", ")}
+					</TooltipContent>
+				</Tooltip>
 			)}
 			<PresenceBadge taskId={props.id} className="absolute -top-2 -right-2" />
 			<Handle

@@ -20,12 +20,11 @@ import type {
 export type OverviewFieldId = "count" | "duration" | "progress" | "critical";
 
 // Canvas node fields map onto what task-node.tsx renders:
-//   duration → expected-days label
-//   slack    → "Nd slack" / "critical" meta
-//   progress → the in-flight/done progress bar
-// POST-ISSUE-LINKS: add `"issueKeys"` here (see seam below) once the issue-links
-// feature merges, so the issue-link badge becomes a toggleable field.
-export type CanvasFieldId = "duration" | "slack" | "progress";
+//   duration  → expected-days label
+//   slack     → "Nd slack" / "critical" meta
+//   progress  → the in-flight/done progress bar
+//   issueKeys → the external issue-tracker badge (issue-links feature)
+export type CanvasFieldId = "duration" | "slack" | "progress" | "issueKeys";
 
 export type FieldDef<Id extends string> = {
 	id: Id;
@@ -44,7 +43,7 @@ export const CANVAS_FIELDS: readonly FieldDef<CanvasFieldId>[] = [
 	{ id: "duration", label: "Duration", defaultOn: true },
 	{ id: "slack", label: "Slack / critical", defaultOn: true },
 	{ id: "progress", label: "Progress bar", defaultOn: true },
-	// POST-ISSUE-LINKS: { id: "issueKeys", label: "Issue links", defaultOn: true },
+	{ id: "issueKeys", label: "Issue links", defaultOn: true },
 ];
 
 export const DEFAULT_OVERVIEW_LAYOUT: OverviewLayoutMode = "detailed";

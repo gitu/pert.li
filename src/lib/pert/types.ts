@@ -86,6 +86,10 @@ export type Task = {
 	numberOverride?: string;
 	estimate?: Estimate;
 	notes?: string;
+	// External issue references (e.g. Jira keys like "PROJ-123", or full URLs).
+	// Rendered as clickable links via `doc.issueTracker.urlTemplate` (see
+	// `buildIssueUrl`). Old docs predate this field — always optional.
+	issueKeys?: string[];
 	layout?: Layout;
 	status?: TaskStatus;
 	progress?: number;
@@ -195,6 +199,15 @@ export type DisplaySettings = {
 	canvas?: DisplaySurfaceSettings<CanvasLayoutMode>;
 };
 
+// Project-level external issue tracker config. `urlTemplate` carries a `{key}`
+// placeholder substituted with a task's issue key to build a clickable link
+// (e.g. "https://acme.atlassian.net/browse/{key}"). `name` is an optional label
+// for the tracker (e.g. "Jira"). Old docs predate this — always optional.
+export type ProjectIssueTracker = {
+	urlTemplate: string;
+	name?: string;
+};
+
 // ── Work plan ────────────────────────────────────────────────────────────────
 // A structured, AI-driven todo list for large multi-step changes (bulk
 // imports, restructurings). The assistant drafts it, the USER approves it
@@ -296,6 +309,9 @@ export type PertDoc = {
 	// density) for the Overview groups list and the canvas task nodes. Old docs
 	// predate it — read through resolveDisplaySettings(), which fills defaults.
 	display?: DisplaySettings;
+	// External issue tracker config (URL template). Old docs predate this field
+	// — always read defensively.
+	issueTracker?: ProjectIssueTracker;
 	meta?: DocMeta;
 	// The active AI work plan, if any. One per project — creating a new plan
 	// replaces the old one (prior plans remain in Automerge history).

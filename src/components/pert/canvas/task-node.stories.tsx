@@ -186,6 +186,30 @@ export const NoEstimate: Story = {
 	},
 };
 
+// A task with linked external issues shows a compact badge under the card —
+// "PROJ-1" for a single key, "N issues" for several (full list in a tooltip).
+export const WithIssueLinks: Story = {
+	args: {
+		data: {
+			title: "Wire up auth",
+			kind: "task",
+			durationDays: 2,
+			slackDays: 1,
+			critical: false,
+			hasEstimate: true,
+			status: "not_started",
+			progress: 0,
+			issueKeys: ["PROJ-12", "PROJ-13"],
+		},
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(
+			await canvas.findByTestId("task-issues-demo"),
+		).toHaveTextContent("2 issues");
+	},
+};
+
 // Long titles truncate to one line normally and expand to the full text on
 // hover (the title element carries group-hover utilities; the card grows past
 // its min-height and overlays neighbours via the styles.css hover z rule).
@@ -344,6 +368,31 @@ export const ProgressHidden: Story = {
 		expect(
 			canvasElement.querySelector('[data-testid^="task-progress-"]'),
 		).toBeNull();
+	},
+};
+
+// Hiding the issue-links field suppresses the external-issue badge even when the
+// task has issue keys (the display toggle wins over the data being present).
+export const IssueLinksHidden: Story = {
+	args: {
+		data: {
+			title: "Wire up auth",
+			kind: "task",
+			durationDays: 2,
+			slackDays: 1,
+			critical: false,
+			hasEstimate: true,
+			status: "not_started",
+			progress: 0,
+			issueKeys: ["PROJ-12", "PROJ-13"],
+			showIssueKeys: false,
+		},
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText("Wire up auth");
+		// The task has issue keys, but the badge is gated off by the display toggle.
+		expect(canvas.queryByTestId("task-issues-demo")).toBeNull();
 	},
 };
 

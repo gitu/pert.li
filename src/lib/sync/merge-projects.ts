@@ -29,7 +29,7 @@ export function pendingToSummary(p: PendingProject): ProjectSummary {
 export function mergeProjectLists(
 	server: ProjectSummary[],
 	pending: PendingProject[],
-	activeWorkspaceId?: string,
+	activeWorkspaceId?: string | null,
 ): ProjectSummary[] {
 	const serverUrls = new Set(server.map((p) => p.automergeDocUrl));
 	const extras = pending
@@ -55,7 +55,7 @@ export function mergeProjectLists(
 // active workspace.
 export function useMergedProjects(
 	server: ProjectSummary[],
-	activeWorkspaceId?: string,
+	activeWorkspaceId?: string | null,
 ): ProjectSummary[] {
 	const pending = usePendingProjects();
 	return mergeProjectLists(server, pending, activeWorkspaceId);
