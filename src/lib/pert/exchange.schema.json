@@ -187,7 +187,11 @@
 							"minimum": 0,
 							"maximum": 100
 						},
-						"useHistoric": { "type": "boolean" }
+						"useHistoric": { "type": "boolean" },
+						"estimateBasis": {
+							"type": "string",
+							"enum": ["effort", "duration"]
+						}
 					}
 				},
 				"allocationMode": {

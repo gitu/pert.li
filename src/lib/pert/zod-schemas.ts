@@ -127,10 +127,13 @@ export const viewState: z.ZodType<ViewState> = z.object({
 	label: z.string().optional(),
 });
 
+export const estimateBasis = z.enum(["effort", "duration"]);
+
 export const teamCapacity = z.object({
 	peopleCount: z.number().int().min(0),
 	availabilityPct: z.number().min(0).max(100),
 	useHistoric: z.boolean().optional(),
+	estimateBasis: estimateBasis.optional(),
 });
 
 export const allocationMode = z.enum(["calendar", "team"]);

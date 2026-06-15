@@ -35,6 +35,9 @@ export function MarketingFooter({
 					<Link to="/about" className={LINK}>
 						About
 					</Link>
+					<Link to="/methodology" className={LINK}>
+						How it works
+					</Link>
 					{privacy.mode !== "disabled" && (
 						<Link to="/privacy" className={LINK}>
 							Privacy

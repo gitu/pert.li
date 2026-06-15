@@ -142,6 +142,71 @@ describe("team-constrained schedule", () => {
 		expect(res.schedule.tasks.a.duration).toBeCloseTo(4, 9);
 	});
 
+	it("explicit effort basis still scales a lone task by 1/capacity", () => {
+		const doc = build([task("a", TWO_DAYS)]);
+		doc.calendar = {
+			startDate: "2026-01-05",
+			workingDays: [1, 2, 3, 4, 5],
+			allocationMode: "team",
+			team: { peopleCount: 1, availabilityPct: 50, estimateBasis: "effort" },
+		};
+		const res = computeSchedule(doc);
+		if (!res.ok) throw new Error("expected schedule");
+		// Effort: 2 person-days / 0.5 capacity = 4 calendar days.
+		expect(res.schedule.tasks.a.duration).toBeCloseTo(4, 9);
+	});
+
+	it("duration basis keeps a lone task's estimate even under one person", () => {
+		const doc = build([task("a", TWO_DAYS)]);
+		doc.calendar = {
+			startDate: "2026-01-05",
+			workingDays: [1, 2, 3, 4, 5],
+			allocationMode: "team",
+			team: { peopleCount: 1, availabilityPct: 50, estimateBasis: "duration" },
+		};
+		const res = computeSchedule(doc);
+		if (!res.ok) throw new Error("expected schedule");
+		// Duration: estimate already presumes one assignee → no stretch for a
+		// task alone in its window. Stays 2 (vs. 4 under effort). `expected`
+		// still mirrors the raw PERT value.
+		expect(res.schedule.tasks.a.duration).toBeCloseTo(2, 9);
+		expect(res.schedule.tasks.a.expected).toBe(2);
+	});
+
+	it("duration basis still stretches genuine over-subscription", () => {
+		const doc = build([
+			task("a", TWO_DAYS),
+			task("b", TWO_DAYS),
+			task("c", TWO_DAYS),
+		]);
+		doc.calendar = {
+			startDate: "2026-01-05",
+			workingDays: [1, 2, 3, 4, 5],
+			allocationMode: "team",
+			team: { peopleCount: 2, availabilityPct: 100, estimateBasis: "duration" },
+		};
+		const res = computeSchedule(doc);
+		if (!res.ok) throw new Error("expected schedule");
+		// 3 concurrent tasks, capacity 2 → factor max(1, 3/2) = 1.5 → 2 → 3.
+		// Contention is preserved; only the lone-task inflation is removed.
+		expect(res.schedule.tasks.a.duration).toBeCloseTo(3, 9);
+	});
+
+	it("duration basis never runs a task faster than its estimate", () => {
+		const doc = build([task("a", TWO_DAYS)]);
+		doc.calendar = {
+			startDate: "2026-01-05",
+			workingDays: [1, 2, 3, 4, 5],
+			allocationMode: "team",
+			team: { peopleCount: 5, availabilityPct: 100, estimateBasis: "duration" },
+		};
+		const res = computeSchedule(doc);
+		if (!res.ok) throw new Error("expected schedule");
+		// Plenty of capacity, but a single task can't finish sooner than its
+		// own estimate → factor floored at 1 → stays 2.
+		expect(res.schedule.tasks.a.duration).toBeCloseTo(2, 9);
+	});
+
 	it("falls back to baseline when capacity is zero", () => {
 		const doc = build([task("a", TWO_DAYS), task("b", TWO_DAYS)]);
 		doc.calendar = {

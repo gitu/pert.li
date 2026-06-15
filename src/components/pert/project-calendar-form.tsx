@@ -207,6 +207,35 @@ export function ProjectCalendarForm({
 								/>
 							</div>
 						</div>
+						<div className="space-y-1.5">
+							<Label className="text-xs">Estimates represent</Label>
+							<div
+								className="flex items-center gap-1 rounded-md border p-0.5"
+								data-testid="calendar-estimate-basis"
+							>
+								<ModeButton
+									active={(team.estimateBasis ?? "effort") === "effort"}
+									onClick={() =>
+										setTeam((prev) => ({ ...prev, estimateBasis: "effort" }))
+									}
+									label="Effort (person-days)"
+									testid="basis-effort"
+								/>
+								<ModeButton
+									active={team.estimateBasis === "duration"}
+									onClick={() =>
+										setTeam((prev) => ({ ...prev, estimateBasis: "duration" }))
+									}
+									label="Duration (calendar days)"
+									testid="basis-duration"
+								/>
+							</div>
+							<p className="text-xs text-muted-foreground">
+								{team.estimateBasis === "duration"
+									? "Each estimate is the calendar time one assignee needs. A task alone in its window keeps that duration; only tasks competing for more people than the team has get stretched."
+									: "Each estimate is person-days of work. The team's daily capacity is split across every open task, so a task with too few people takes proportionally longer — even on its own."}
+							</p>
+						</div>
 						<dl
 							className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs"
 							data-testid="calendar-team-readout"
@@ -393,6 +422,12 @@ function formDiffers(
 	if (seedTeam.peopleCount !== current.team.peopleCount) return true;
 	if (seedTeam.availabilityPct !== current.team.availabilityPct) return true;
 	if (Boolean(seedTeam.useHistoric) !== Boolean(current.team.useHistoric)) {
+		return true;
+	}
+	if (
+		(seedTeam.estimateBasis ?? "effort") !==
+		(current.team.estimateBasis ?? "effort")
+	) {
 		return true;
 	}
 	return false;

@@ -28,6 +28,26 @@ describe("applyCalendar", () => {
 		});
 	});
 
+	it("carries estimateBasis through and omits it when absent", () => {
+		const doc = createEmptyPertDoc("t");
+		applyCalendar(fakeChange(doc), {
+			startDate: "2026-01-05",
+			workingDays: [1, 2, 3, 4, 5],
+			allocationMode: "team",
+			team: { peopleCount: 3, availabilityPct: 80, estimateBasis: "duration" },
+		});
+		expect(doc.calendar?.team?.estimateBasis).toBe("duration");
+
+		const other = createEmptyPertDoc("t2");
+		applyCalendar(fakeChange(other), {
+			startDate: "2026-01-05",
+			workingDays: [1, 2, 3, 4, 5],
+			allocationMode: "team",
+			team: { peopleCount: 3, availabilityPct: 80 },
+		});
+		expect("estimateBasis" in (other.calendar?.team ?? {})).toBe(false);
+	});
+
 	it("falls back to default working days when none are selected", () => {
 		const doc = createEmptyPertDoc("t");
 		applyCalendar(fakeChange(doc), {

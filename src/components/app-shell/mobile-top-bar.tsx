@@ -1,5 +1,6 @@
 import { Link, useParams } from "@tanstack/react-router";
 import {
+	BookOpenIcon,
 	BotIcon,
 	EyeIcon,
 	HistoryIcon,
@@ -129,6 +130,12 @@ export function MobileTopBar({
 					)}
 					<SyncNowItem />
 					<DropdownMenuSeparator />
+					<DropdownMenuItem asChild>
+						<Link to="/methodology" data-testid="mobile-nav-methodology">
+							<BookOpenIcon className="size-4" />
+							How it works
+						</Link>
+					</DropdownMenuItem>
 					<DropdownMenuItem asChild>
 						<Link to="/about" data-testid="mobile-nav-about">
 							<InfoIcon className="size-4" />
