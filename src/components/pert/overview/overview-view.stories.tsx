@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
+import { resolveDisplaySettings } from "#/lib/pert/display";
 import { computeProjectOverview } from "#/lib/pert/overview";
 import { computeSchedule } from "#/lib/pert/schedule";
 import type { PertDoc, ProjectCalendar } from "#/lib/pert/types";
@@ -97,6 +98,10 @@ const meta: Meta<typeof OverviewContent> = {
 		onSaveMeta: fn(),
 		calendarInitial: CALENDAR,
 		onSaveCalendar: fn(),
+		displayInitial: resolveDisplaySettings(DOC),
+		onSaveDisplay: fn(),
+		copyProjects: [],
+		onCopyDisplay: fn(async () => {}),
 		issueTrackerInitial: { urlTemplate: "" },
 		onSaveIssueTracker: fn(),
 		summaryState: { status: "idle" },
@@ -229,6 +234,52 @@ export const CalendarBasisCollapsed: Story = {
 		// Re-expanding shows the same (still-mounted) form.
 		await userEvent.click(toggle);
 		await expect(canvas.getByTestId("calendar-start-input")).toBeVisible();
+	},
+};
+
+// The Display settings section is collapsed by default; expanding it mounts the
+// per-project field/density editor. Saving emits the full per-surface payload.
+export const DisplaySettingsSection: Story = {
+	play: async ({ canvasElement, args }) => {
+		const canvas = within(canvasElement);
+		const toggle = await canvas.findByTestId("display-settings-toggle");
+		// Form is not mounted until first expand.
+		expect(canvas.queryByTestId("display-settings-form")).toBeNull();
+		await userEvent.click(toggle);
+		await expect(
+			await canvas.findByTestId("display-settings-form"),
+		).toBeVisible();
+		// Hide the overview duration column, then Save.
+		await userEvent.click(
+			canvas.getByTestId("display-overview-field-duration"),
+		);
+		await userEvent.click(canvas.getByTestId("display-save"));
+		expect(args.onSaveDisplay).toHaveBeenCalledWith(
+			expect.objectContaining({
+				overview: expect.objectContaining({
+					fields: expect.objectContaining({ duration: false }),
+				}),
+			}),
+		);
+	},
+};
+
+// With other projects available, the form surfaces the "Copy to other
+// projects…" action that opens the picker dialog.
+export const DisplayCopyToProjects: Story = {
+	args: {
+		copyProjects: [{ id: "p2", title: "Website rebuild", url: "automerge:p2" }],
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByTestId("display-settings-toggle"));
+		await userEvent.click(await canvas.findByTestId("display-copy-open"));
+		// The dialog portals to the body.
+		const screen = within(document.body);
+		await expect(
+			await screen.findByTestId("copy-display-dialog"),
+		).toBeVisible();
+		await expect(screen.getByTestId("copy-display-target-p2")).toBeVisible();
 	},
 };
 

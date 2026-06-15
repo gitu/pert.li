@@ -8,13 +8,14 @@ import {
 	PlusIcon,
 	ZapIcon,
 } from "lucide-react";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, type ReactNode, useEffect, useRef, useState } from "react";
 import { PresenceBadge } from "#/components/pert/presence/presence-badge";
 import {
 	Tooltip,
 	TooltipContent,
 	TooltipTrigger,
 } from "#/components/ui/tooltip";
+import type { CanvasLayoutMode } from "#/lib/pert/types";
 import { cn } from "#/lib/utils";
 import { NodeDeleteButton } from "./node-delete-button";
 
@@ -64,6 +65,20 @@ export type TaskNodeData = {
 	// ⌘← / ⌘→ at the canvas level.
 	onAddPredecessor?: (kind: "task" | "milestone") => void;
 	onAddSuccessor?: (kind: "task" | "milestone") => void;
+	// DISPLAY-SETTINGS: per-project node display config, threaded from the doc
+	// via pushLeafNode (resolveDisplaySettings().canvas). Field flags are read
+	// default-truthy (`!== false`) so nodes built without them (older stories /
+	// tests) keep showing everything. `layout` only changes internal density —
+	// the node's reported height stays TASK_HEIGHT (canvas layout math depends
+	// on it).
+	showDuration?: boolean;
+	showSlack?: boolean;
+	showProgress?: boolean;
+	// POST-ISSUE-LINKS: toggles the issue-keys badge (issue-links feature). Read
+	// default-truthy like the other field flags so nodes built without it (older
+	// stories / tests) keep showing the badge.
+	showIssueKeys?: boolean;
+	layout?: CanvasLayoutMode;
 };
 
 // Custom React Flow node rendering a single task. Slack and critical state
@@ -75,6 +90,45 @@ function TaskNodeImpl(props: NodeProps) {
 	const inFlight = data.status === "in_progress";
 	const highCriticality =
 		typeof data.criticality === "number" && data.criticality >= 0.5;
+	// DISPLAY-SETTINGS: density + per-field visibility (default-truthy).
+	const compact = data.layout === "compact";
+	const showDuration = data.showDuration !== false;
+	const showSlack = data.showSlack !== false;
+	const showProgress = data.showProgress !== false;
+	const showIssueKeys = data.showIssueKeys !== false;
+	// Build the secondary meta line as discrete segments so toggling a field off
+	// never leaves a dangling "·" separator. A cycle is an error state — always
+	// shown, regardless of the slack toggle.
+	const metaSegments: ReactNode[] = [];
+	if (!isMilestone) {
+		if (showDuration) {
+			metaSegments.push(
+				<span key="dur">
+					{data.hasEstimate ? fmt(data.durationDays) : "?"} d
+				</span>,
+			);
+		}
+		if (showSlack && !data.cycle && data.slackDays !== null && !data.critical) {
+			metaSegments.push(<span key="slack">{fmt(data.slackDays)}d slack</span>);
+		}
+		if (showSlack && !data.cycle && data.critical) {
+			metaSegments.push(
+				<span key="crit" className="font-semibold text-destructive">
+					critical
+				</span>,
+			);
+		}
+		if (data.cycle) {
+			metaSegments.push(
+				<span key="cycle" className="font-semibold text-destructive">
+					on cycle
+				</span>,
+			);
+		}
+	}
+	// The meta line only renders when there's something in it (milestone label,
+	// or at least one visible task segment) — a toggled-off line leaves no gap.
+	const showMeta = isMilestone || metaSegments.length > 0;
 
 	return (
 		<div
@@ -83,8 +137,10 @@ function TaskNodeImpl(props: NodeProps) {
 			data-status={data.status}
 			data-cycle={data.cycle ? "true" : undefined}
 			data-just-created={data.justCreated || undefined}
+			data-layout={compact ? "compact" : "detailed"}
 			className={cn(
-				"group relative min-h-[80px] w-[200px] rounded-lg border bg-card px-3 py-2 text-card-foreground shadow-sm transition-colors",
+				"group relative w-[200px] rounded-lg border bg-card text-card-foreground shadow-sm transition-colors",
+				compact ? "min-h-[56px] px-3 py-1.5" : "min-h-[80px] px-3 py-2",
 				data.cycle
 					? "border-destructive ring-2 ring-destructive/60 bg-destructive/5"
 					: isDone
@@ -164,46 +220,26 @@ function TaskNodeImpl(props: NodeProps) {
 							>
 								{data.title || "Untitled"}
 							</div>
-							<div className="mt-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-								{isMilestone ? (
-									<span>milestone</span>
-								) : (
-									<>
-										<span>
-											{data.hasEstimate ? fmt(data.durationDays) : "?"} d
-										</span>
-										{!data.cycle &&
-											data.slackDays !== null &&
-											!data.critical && (
-												<>
-													<span aria-hidden>·</span>
-													<span>{fmt(data.slackDays)}d slack</span>
-												</>
-											)}
-										{!data.cycle && data.critical && (
-											<>
-												<span aria-hidden>·</span>
-												<span className="font-semibold text-destructive">
-													critical
-												</span>
-											</>
-										)}
-										{data.cycle && (
-											<>
-												<span aria-hidden>·</span>
-												<span className="font-semibold text-destructive">
-													on cycle
-												</span>
-											</>
-										)}
-									</>
-								)}
-							</div>
+							{showMeta && (
+								<div className="mt-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+									{isMilestone ? (
+										<span>milestone</span>
+									) : (
+										metaSegments.map((seg, i) => (
+											// biome-ignore lint/suspicious/noArrayIndexKey: segments are a fixed, ordered list; the separator's position is its identity
+											<span key={`seg-${i}`} className="contents">
+												{i > 0 && <span aria-hidden>·</span>}
+												{seg}
+											</span>
+										))
+									)}
+								</div>
+							)}
 						</>
 					)}
 				</div>
 			</div>
-			{(inFlight || isDone) && (
+			{showProgress && (inFlight || isDone) && (
 				<div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-muted">
 					<div
 						data-testid={`task-progress-${props.id}`}
@@ -215,7 +251,7 @@ function TaskNodeImpl(props: NodeProps) {
 					/>
 				</div>
 			)}
-			{data.issueKeys && data.issueKeys.length > 0 && (
+			{showIssueKeys && data.issueKeys && data.issueKeys.length > 0 && (
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<span

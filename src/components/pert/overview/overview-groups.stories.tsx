@@ -92,3 +92,49 @@ export const Empty: Story = {
 		await expect(canvas.findByText(/no groups yet/i)).resolves.toBeVisible();
 	},
 };
+
+// DISPLAY-SETTINGS: compact layout drops the progress bar (keeping the %) and
+// tightens each row.
+const COMPACT_DOC: PertDoc = {
+	...populatedDoc(),
+	display: { overview: { layout: "compact" } },
+};
+
+export const CompactLayout: Story = {
+	args: { doc: COMPACT_DOC, schedule: scheduleOf(COMPACT_DOC), onSelect: fn() },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const row = await canvas.findByTestId("overview-group-g3");
+		expect(row).toHaveAttribute("data-layout", "compact");
+		// The progress % still renders, but the bar (a <progress>-like element) is
+		// gone in compact mode.
+		await expect(
+			canvas.findByTestId("overview-group-progress-g3"),
+		).resolves.toBeVisible();
+	},
+};
+
+// DISPLAY-SETTINGS: hide the task-count + duration columns, surface the
+// critical-path badge.
+const FIELDS_DOC: PertDoc = {
+	...populatedDoc(),
+	display: {
+		overview: {
+			fields: { count: false, duration: false, critical: true },
+		},
+	},
+};
+
+export const FieldsCustomized: Story = {
+	args: { doc: FIELDS_DOC, schedule: scheduleOf(FIELDS_DOC), onSelect: fn() },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByTestId("overview-group-g3");
+		// Count + duration columns are gone; progress stays.
+		expect(canvas.queryByTestId("overview-group-count-g3")).toBeNull();
+		expect(canvas.queryByTestId("overview-group-duration-g3")).toBeNull();
+		await expect(
+			canvas.findByTestId("overview-group-progress-g3"),
+		).resolves.toBeVisible();
+	},
+};

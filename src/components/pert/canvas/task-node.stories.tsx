@@ -321,3 +321,104 @@ export const ReadOnly: Story = {
 		expect(canvas.queryByTestId("task-add-successor-task-demo")).toBeNull();
 	},
 };
+
+// DISPLAY-SETTINGS: per-project field toggles. Hiding slack drops the "Nd
+// slack" segment from the meta line; the duration segment stays.
+export const SlackHidden: Story = {
+	args: {
+		data: {
+			title: "Design API surface",
+			kind: "task",
+			durationDays: 3.5,
+			slackDays: 1.5,
+			critical: false,
+			hasEstimate: true,
+			status: "not_started",
+			progress: 0,
+			showSlack: false,
+		},
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText("Design API surface");
+		// Duration still shown, slack segment gone.
+		await expect(await canvas.findByText(/3\.5 d/)).toBeInTheDocument();
+		expect(canvas.queryByText(/slack/i)).toBeNull();
+	},
+};
+
+// Hiding the progress field suppresses the in-flight progress bar.
+export const ProgressHidden: Story = {
+	args: {
+		data: {
+			title: "Build auth flow",
+			kind: "task",
+			durationDays: 2.5,
+			slackDays: 1,
+			critical: false,
+			hasEstimate: true,
+			status: "in_progress",
+			progress: 60,
+			showProgress: false,
+		},
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText("Build auth flow");
+		expect(
+			canvasElement.querySelector('[data-testid^="task-progress-"]'),
+		).toBeNull();
+	},
+};
+
+// Hiding the issue-links field suppresses the external-issue badge even when the
+// task has issue keys (the display toggle wins over the data being present).
+export const IssueLinksHidden: Story = {
+	args: {
+		data: {
+			title: "Wire up auth",
+			kind: "task",
+			durationDays: 2,
+			slackDays: 1,
+			critical: false,
+			hasEstimate: true,
+			status: "not_started",
+			progress: 0,
+			issueKeys: ["PROJ-12", "PROJ-13"],
+			showIssueKeys: false,
+		},
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText("Wire up auth");
+		// The task has issue keys, but the badge is gated off by the display toggle.
+		expect(canvas.queryByTestId("task-issues-demo")).toBeNull();
+	},
+};
+
+// Compact density: the node carries data-layout="compact" and tightens its
+// internal spacing (reported height is unchanged for the canvas layout math).
+export const CompactLayout: Story = {
+	args: {
+		data: {
+			title: "Design API surface",
+			kind: "task",
+			durationDays: 3.5,
+			slackDays: 1.5,
+			critical: false,
+			hasEstimate: true,
+			status: "not_started",
+			progress: 0,
+			layout: "compact",
+		},
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText("Design API surface");
+		const node = canvasElement.querySelector(
+			'[data-testid="task-node-demo"]',
+		) as HTMLElement | null;
+		expect(node).not.toBeNull();
+		expect(node).toHaveAttribute("data-layout", "compact");
+	},
+};
