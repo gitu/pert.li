@@ -240,19 +240,26 @@ export function OverviewView({
 		}
 		const results = await Promise.all(
 			targetUrls.map(async (url) => {
-				const handle = await repo.find<PertDoc>(url as AutomergeUrl, {
-					allowableStates: ["ready", "unavailable"],
-				});
-				if (!handle.isReady()) {
-					await Promise.race([
-						handle.whenReady(["ready"]).catch(() => {}),
-						new Promise((resolve) => setTimeout(resolve, 5000)),
-					]);
+				try {
+					const handle = await repo.find<PertDoc>(url as AutomergeUrl, {
+						allowableStates: ["ready", "unavailable"],
+					});
+					if (!handle.isReady()) {
+						await Promise.race([
+							handle.whenReady(["ready"]).catch(() => {}),
+							new Promise((resolve) => setTimeout(resolve, 5000)),
+						]);
+					}
+					// A doc that never synced into this client can't be written — skip it.
+					if (!handle.doc()) return false;
+					changeWith(handle, "user", (d) => writeDisplay(d, result));
+					return true;
+				} catch {
+					// repo.find() rejects for a malformed/deleted/unreachable URL. Skip
+					// that target (like exportProject does) so one bad doc doesn't abort
+					// the whole copy — partial copies still succeed and get counted.
+					return false;
 				}
-				// A doc that never synced into this client can't be written — skip it.
-				if (!handle.doc()) return false;
-				changeWith(handle, "user", (d) => writeDisplay(d, result));
-				return true;
 			}),
 		);
 		const copied = results.filter(Boolean).length;
