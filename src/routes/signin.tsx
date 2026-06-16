@@ -68,6 +68,13 @@ function FooterLinks() {
 			<Link to="/about" className="text-muted-foreground hover:text-foreground">
 				About
 			</Link>
+			<span aria-hidden>·</span>
+			<Link
+				to="/methodology"
+				className="text-muted-foreground hover:text-foreground"
+			>
+				How it works
+			</Link>
 			{privacy.mode !== "disabled" && (
 				<>
 					<span aria-hidden>·</span>

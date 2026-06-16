@@ -65,6 +65,7 @@ function richDoc(): PertDoc {
 			peopleCount: 4,
 			availabilityPct: 75,
 			useHistoric: true,
+			estimateBasis: "duration",
 		},
 		allocationMode: "team",
 	};

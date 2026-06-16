@@ -8,6 +8,7 @@ import {
 	useSearch,
 } from "@tanstack/react-router";
 import {
+	BookOpenIcon,
 	BotIcon,
 	CheckIcon,
 	ChevronDownIcon,
@@ -635,6 +636,12 @@ function TopBar({
 					<SyncNowItem />
 					<ThemeMenu />
 					<DropdownMenuSeparator />
+					<DropdownMenuItem asChild>
+						<Link to="/methodology" data-testid="topbar-nav-methodology">
+							<BookOpenIcon className="size-4" />
+							How it works
+						</Link>
+					</DropdownMenuItem>
 					<DropdownMenuItem asChild>
 						<Link to="/about" data-testid="topbar-nav-about">
 							<InfoIcon className="size-4" />

@@ -152,6 +152,17 @@ export type ViewState = {
 // `peers / capacityPerDay` (peers = max concurrent overlap from a baseline
 // CPM pass), modelling the worst-case "equal allocation across all open tasks,
 // nobody prioritising the critical path" scenario.
+
+// How the engine reads a task's three-point estimate when team capacity is on.
+//   • "effort"   — the estimate is person-days of WORK. A task always divides by
+//                  capacity, so a lone task with half a person takes 2× as long
+//                  (E·peers / capacity). This is the original behaviour.
+//   • "duration" — the estimate is the calendar DURATION one assignee achieves.
+//                  Capacity caps how many tasks run in parallel, but a lone task
+//                  (no concurrent peers) keeps its estimate regardless of how
+//                  small the team is. Only genuine over-subscription stretches it.
+export type EstimateBasis = "effort" | "duration";
+
 export type TeamCapacity = {
 	peopleCount: number;
 	// Average % availability per person (0–100). 100 = every person works a
@@ -162,6 +173,9 @@ export type TeamCapacity = {
 	// the observed PD/day derived from history. Falls back to the configured
 	// value when no usable history is available.
 	useHistoric?: boolean;
+	// Whether estimates are person-days of effort or calendar durations. Absent
+	// = "effort" (the original semantics) so existing docs are unaffected.
+	estimateBasis?: EstimateBasis;
 };
 
 export type AllocationMode = "calendar" | "team";

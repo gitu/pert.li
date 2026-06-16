@@ -3,6 +3,7 @@ import type {
 	Dependency,
 	DependencyType,
 	Estimate,
+	EstimateBasis,
 	PertDoc,
 	Task,
 	TaskId,
@@ -254,6 +255,7 @@ export function computeSchedule(doc: PertDoc): ScheduleResult {
 			baseline.es,
 			baseline.ef,
 			teamCapacity,
+			doc.calendar?.team?.estimateBasis ?? "effort",
 		);
 	}
 
@@ -464,19 +466,29 @@ export function teamCapacityPerDay(doc: PertDoc): number {
 
 // "Worst-case equal allocation" duration scaling. For each task, count how
 // many other tasks share its baseline [ES, EF) window — that's its peer set.
-// Capacity per task is then `capacity / peers`, so a task that wants E
-// person-days takes `E * peers / capacity` calendar days.
 //
 // We use the MAX overlap during the window rather than averaging — that's
 // what "worst case" means: assume the team got crowded at the bottleneck and
 // stayed crowded for the whole task. Tasks with zero baseline duration
 // (completed, milestones, missing estimate) keep their zero.
+//
+// `basis` picks how the estimate is read:
+//   • "effort"   — estimate is person-days. Capacity per task is
+//                  `capacity / peers`, so E person-days take `E * peers /
+//                  capacity` calendar days. A lone task with half a person
+//                  takes 2× as long.
+//   • "duration" — estimate is the calendar duration one assignee achieves.
+//                  Capacity caps parallelism but a lone task is never stretched
+//                  by an under-one-person team: factor = `max(1, peers /
+//                  max(capacity, 1))`. Only genuine over-subscription (more
+//                  concurrent tasks than the team can staff) stretches it.
 function scaleForTeamCapacity(
 	taskIds: TaskId[],
 	baseline: Record<TaskId, number>,
 	es: Record<TaskId, number>,
 	ef: Record<TaskId, number>,
 	capacityPerDay: number,
+	basis: EstimateBasis,
 ): Record<TaskId, number> {
 	const scaled: Record<TaskId, number> = {};
 	for (const id of taskIds) {
@@ -493,7 +505,11 @@ function scaleForTeamCapacity(
 			// windows don't count as concurrent.
 			if (es[other] < ef[id] && ef[other] > es[id]) peers += 1;
 		}
-		scaled[id] = (dur * peers) / capacityPerDay;
+		const factor =
+			basis === "duration"
+				? Math.max(1, peers / Math.max(capacityPerDay, 1))
+				: peers / capacityPerDay;
+		scaled[id] = dur * factor;
 	}
 	return scaled;
 }

@@ -25,6 +25,13 @@ const CALENDAR: ProjectCalendar = {
 	workingDays: [1, 2, 3, 4, 5],
 };
 
+const TEAM_CALENDAR: ProjectCalendar = {
+	startDate: "2026-06-01",
+	workingDays: [1, 2, 3, 4, 5],
+	allocationMode: "team",
+	team: { peopleCount: 1, availabilityPct: 50 },
+};
+
 const meta: Meta<typeof ProjectCalendarForm> = {
 	title: "PERT/ProjectCalendarForm",
 	component: ProjectCalendarForm,
@@ -64,6 +71,45 @@ export const Dirty: Story = {
 		await userEvent.click(await canvas.findByTestId("calendar-day-6"));
 		await expect(await canvas.findByTestId("calendar-dirty")).toBeVisible();
 		expect(canvas.queryByTestId("calendar-clean")).toBeNull();
+	},
+};
+
+// Team-capacity mode exposes the People/Availability inputs plus the
+// effort-vs-duration estimate-basis toggle. Defaults to "effort".
+export const TeamCapacity: Story = {
+	args: { initial: TEAM_CALENDAR },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const basis = await canvas.findByTestId("calendar-estimate-basis");
+		await expect(basis).toBeVisible();
+		// Default basis is effort.
+		await expect(canvas.getByTestId("basis-effort")).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
+		// Switching to duration flips the pressed state and marks the form dirty.
+		await userEvent.click(canvas.getByTestId("basis-duration"));
+		await expect(canvas.getByTestId("basis-duration")).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
+		await expect(await canvas.findByTestId("calendar-dirty")).toBeVisible();
+	},
+};
+
+// The estimate-basis choice is included in the saved payload.
+export const SavesEstimateBasis: Story = {
+	args: { initial: TEAM_CALENDAR },
+	play: async ({ canvasElement, args }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByTestId("basis-duration"));
+		await userEvent.click(await canvas.findByTestId("calendar-save"));
+		expect(args.onSave).toHaveBeenCalledWith(
+			expect.objectContaining({
+				allocationMode: "team",
+				team: expect.objectContaining({ estimateBasis: "duration" }),
+			}),
+		);
 	},
 };
 

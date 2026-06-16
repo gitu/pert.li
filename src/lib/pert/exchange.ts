@@ -101,6 +101,7 @@ const calendarExchangeSchema = z.object({
 			peopleCount: z.number().nonnegative(),
 			availabilityPct: z.number().min(0).max(100),
 			useHistoric: z.boolean().optional(),
+			estimateBasis: z.enum(["effort", "duration"]).optional(),
 		})
 		.optional(),
 	allocationMode: z.enum(["calendar", "team"]).optional(),
@@ -229,6 +230,9 @@ function calendarToExchange(cal: ProjectCalendar): CalendarExchange {
 						...(cal.team.useHistoric !== undefined
 							? { useHistoric: cal.team.useHistoric }
 							: {}),
+						...(cal.team.estimateBasis !== undefined
+							? { estimateBasis: cal.team.estimateBasis }
+							: {}),
 					},
 				}
 			: {}),
@@ -311,6 +315,9 @@ export function fromExchange(
 							availabilityPct: exchange.calendar.team.availabilityPct,
 							...(exchange.calendar.team.useHistoric !== undefined
 								? { useHistoric: exchange.calendar.team.useHistoric }
+								: {}),
+							...(exchange.calendar.team.estimateBasis !== undefined
+								? { estimateBasis: exchange.calendar.team.estimateBasis }
 								: {}),
 						},
 					}

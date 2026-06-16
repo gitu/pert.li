@@ -44,6 +44,9 @@ export function applyCalendar(
 				peopleCount: next.team.peopleCount,
 				availabilityPct: next.team.availabilityPct,
 				...(next.team.useHistoric ? { useHistoric: true } : {}),
+				...(next.team.estimateBasis
+					? { estimateBasis: next.team.estimateBasis }
+					: {}),
 			},
 		};
 		if (previousHolidays) calendar.holidays = [...previousHolidays];
