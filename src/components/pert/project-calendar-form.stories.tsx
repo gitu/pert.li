@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
+import { resolveScheduling } from "#/lib/pert/resolve-scheduling";
 import type { PertDoc, ProjectCalendar } from "#/lib/pert/types";
 import { createEmptyPertDoc } from "#/lib/pert/types";
 import { ProjectCalendarForm } from "./project-calendar-form";
@@ -37,6 +38,7 @@ const meta: Meta<typeof ProjectCalendarForm> = {
 	component: ProjectCalendarForm,
 	args: {
 		initial: CALENDAR,
+		schedulingInitial: resolveScheduling(undefined),
 		doc: sampleDoc(),
 		onCancel: fn(),
 		onSave: fn(),
@@ -126,5 +128,52 @@ export const Saves: Story = {
 				allocationMode: "calendar",
 			}),
 		);
+	},
+};
+
+// Switching the schedule basis to most-likely marks the form dirty and is
+// carried in the saved payload.
+export const SavesMostLikelyBasis: Story = {
+	play: async ({ canvasElement, args }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(
+			await canvas.findByTestId("schedule-basis-most-likely"),
+		);
+		await expect(await canvas.findByTestId("calendar-dirty")).toBeVisible();
+		await userEvent.click(await canvas.findByTestId("calendar-save"));
+		expect(args.onSave).toHaveBeenCalledWith(
+			expect.objectContaining({ basis: "most-likely" }),
+		);
+	},
+};
+
+// Enabling parallel staffing reveals the level + max inputs and is saved.
+export const EnablesParallelStaffing: Story = {
+	play: async ({ canvasElement, args }) => {
+		const canvas = within(canvasElement);
+		await userEvent.click(await canvas.findByTestId("staffing-enabled"));
+		await expect(
+			await canvas.findByTestId("staffing-level-input"),
+		).toBeEnabled();
+		await expect(await canvas.findByTestId("staffing-max-input")).toBeEnabled();
+		await userEvent.click(await canvas.findByTestId("calendar-save"));
+		expect(args.onSave).toHaveBeenCalledWith(
+			expect.objectContaining({
+				parallelStaffing: expect.objectContaining({ enabled: true }),
+			}),
+		);
+	},
+};
+
+// In team-capacity mode the staffing block is disabled with an explanatory note
+// (team capacity already models shared staffing).
+export const StaffingDisabledUnderTeam: Story = {
+	args: { initial: TEAM_CALENDAR },
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await expect(await canvas.findByTestId("staffing-team-note")).toBeVisible();
+		expect(
+			(await canvas.findByTestId("staffing-enabled")) as HTMLInputElement,
+		).toBeDisabled();
 	},
 };

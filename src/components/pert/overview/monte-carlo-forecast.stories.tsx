@@ -104,6 +104,35 @@ export const Ready: Story = {
 	},
 };
 
+// With parallel staffing enabled, the result carries a paired staffed finish
+// distribution, rendered as its own "With parallel staffing" row.
+export const WithStaffing: Story = {
+	args: {
+		status: "ready",
+		result: {
+			...RESULT,
+			projectFinishStaffed: {
+				p10: 5,
+				p50: 7,
+				p90: 10,
+				mean: 7.2,
+				p50Date: "2026-06-11",
+				p90Date: "2026-06-16",
+			},
+		},
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const staffed = await canvas.findByTestId("mc-staffed");
+		await expect(staffed).toBeVisible();
+		await expect(
+			within(staffed).getByText("With parallel staffing"),
+		).toBeVisible();
+		// The deterministic most-likely line is always present too.
+		await expect(await canvas.findByTestId("mc-most-likely")).toBeVisible();
+	},
+};
+
 export const Empty: Story = {
 	args: { status: "empty", result: null },
 	play: async ({ canvasElement }) => {

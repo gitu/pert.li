@@ -24,7 +24,14 @@ export type OverviewFieldId = "count" | "duration" | "progress" | "critical";
 //   slack     → "Nd slack" / "critical" meta
 //   progress  → the in-flight/done progress bar
 //   issueKeys → the external issue-tracker badge (issue-links feature)
-export type CanvasFieldId = "duration" | "slack" | "progress" | "issueKeys";
+//   staffing  → the parallel-staffing crash hint ("⚡N → ~Xd"); only shows when
+//               parallel staffing is enabled on the project (off by default)
+export type CanvasFieldId =
+	| "duration"
+	| "slack"
+	| "progress"
+	| "issueKeys"
+	| "staffing";
 
 export type FieldDef<Id extends string> = {
 	id: Id;
@@ -44,6 +51,7 @@ export const CANVAS_FIELDS: readonly FieldDef<CanvasFieldId>[] = [
 	{ id: "slack", label: "Slack / critical", defaultOn: true },
 	{ id: "progress", label: "Progress bar", defaultOn: true },
 	{ id: "issueKeys", label: "Issue links", defaultOn: true },
+	{ id: "staffing", label: "Parallel-staffing hint", defaultOn: false },
 ];
 
 export const DEFAULT_OVERVIEW_LAYOUT: OverviewLayoutMode = "detailed";

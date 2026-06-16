@@ -1,10 +1,12 @@
 import { dayOffsetToDate } from "./calendar";
+import type { ResolvedStaffing } from "./resolve-scheduling";
 import {
 	expected as expectedDays,
 	progressFractionOf,
 	statusOf,
 	teamCapacityPerDay,
 } from "./schedule";
+import { crashDurations } from "./staffing";
 import type {
 	Dependency,
 	DependencyType,
@@ -36,6 +38,11 @@ export type MonteCarloOptions = {
 	// Beta-PERT "lambda" shape parameter. 4 is the standard textbook value;
 	// larger values concentrate samples around `mostLikely`.
 	lambda?: number;
+	// PARALLEL-STAFFING: when enabled (and the doc is NOT on team-capacity mode),
+	// each trial additionally crashes big tasks (E/k) from the SAME samples and
+	// records a paired staffed finish → `projectFinishStaffed`. Paired sampling
+	// keeps the baseline-vs-staffed delta low-variance.
+	staffing?: ResolvedStaffing;
 };
 
 export type MonteCarloTask = {
@@ -52,16 +59,21 @@ export type MonteCarloTask = {
 	p90Date: string;
 };
 
+export type ProjectFinishStats = {
+	p10: number;
+	p50: number;
+	p90: number;
+	mean: number;
+	p50Date: string;
+	p90Date: string;
+};
+
 export type MonteCarloResult = {
 	trials: number;
-	projectFinish: {
-		p10: number;
-		p50: number;
-		p90: number;
-		mean: number;
-		p50Date: string;
-		p90Date: string;
-	};
+	projectFinish: ProjectFinishStats;
+	// Present ONLY when parallel staffing is enabled and team mode is off — the
+	// finish distribution with big tasks crashed by up to `maxPerTask` people.
+	projectFinishStaffed?: ProjectFinishStats;
 	tasks: Record<TaskId, MonteCarloTask>;
 };
 
@@ -271,6 +283,15 @@ export function runMonteCarlo(
 	// find overlap, then divide by capacity per peer. Falls back to a single
 	// pass when capacity is 0 or team mode is off.
 	const teamCapacity = teamCapacityPerDay(doc);
+	// PARALLEL-STAFFING: only active in calendar mode (team mode wins). When on,
+	// each trial records a SECOND, paired finish from the same samples with big
+	// tasks crashed — `projectFinishStaffed` below.
+	const staffingActive =
+		teamCapacity === 0 && options.staffing?.enabled === true;
+	const staffing = options.staffing;
+	const projectFinishesStaffed = staffingActive
+		? new Array<number>(trials)
+		: null;
 
 	for (let trial = 0; trial < trials; trial += 1) {
 		const sampled: Record<TaskId, number> = {};
@@ -300,6 +321,16 @@ export function runMonteCarlo(
 			if (ef[id] > projectFinish) projectFinish = ef[id];
 		}
 		projectFinishes[trial] = projectFinish;
+
+		// Paired staffed pass: crash this trial's sampled durations and re-run a
+		// forward-only pass for the staffed finish. `dur === sampled` here (team
+		// mode is off when staffing is active), and MC sizes k off the sampled
+		// post-progress value — a deliberate, documented diff from the
+		// deterministic engine that only matters for in-progress tasks.
+		if (projectFinishesStaffed && staffing) {
+			const crashed = crashDurations(dur, dur, staffing);
+			projectFinishesStaffed[trial] = forwardProjectFinish(graph, crashed);
+		}
 
 		// Backward pass to mark which tasks were critical THIS trial.
 		const lf: Record<TaskId, number> = {};
@@ -354,24 +385,56 @@ export function runMonteCarlo(
 			p90Date: dayOffsetToDate(p90, cal),
 		};
 	}
-	const sortedProject = [...projectFinishes].sort((a, b) => a - b);
-	const projectMean =
-		sortedProject.reduce((s, v) => s + v, 0) / sortedProject.length;
-	const projectP50 = percentile(sortedProject, 0.5);
-	const projectP90 = percentile(sortedProject, 0.9);
-
 	return {
 		trials,
-		projectFinish: {
-			p10: percentile(sortedProject, 0.1),
-			p50: projectP50,
-			p90: projectP90,
-			mean: projectMean,
-			p50Date: dayOffsetToDate(projectP50, cal),
-			p90Date: dayOffsetToDate(projectP90, cal),
-		},
+		projectFinish: summariseFinishes(projectFinishes, cal),
+		...(projectFinishesStaffed
+			? { projectFinishStaffed: summariseFinishes(projectFinishesStaffed, cal) }
+			: {}),
 		tasks: tasksOut,
 	};
+}
+
+// Sort + percentile + date-project a finish-time sample into the project-level
+// stats shape. Shared by the baseline and staffed distributions.
+function summariseFinishes(
+	finishes: number[],
+	cal: PertDoc["calendar"],
+): ProjectFinishStats {
+	const sorted = [...finishes].sort((a, b) => a - b);
+	const mean = sorted.reduce((s, v) => s + v, 0) / Math.max(1, sorted.length);
+	const p50 = percentile(sorted, 0.5);
+	const p90 = percentile(sorted, 0.9);
+	return {
+		p10: percentile(sorted, 0.1),
+		p50,
+		p90,
+		mean,
+		p50Date: dayOffsetToDate(p50, cal),
+		p90Date: dayOffsetToDate(p90, cal),
+	};
+}
+
+// Forward-only longest-path pass for a given duration map. Used by the staffed
+// pass, which needs only the project finish (criticality stays on baseline).
+function forwardProjectFinish(
+	graph: SimGraph,
+	dur: Record<TaskId, number>,
+): number {
+	const es: Record<TaskId, number> = {};
+	const ef: Record<TaskId, number> = {};
+	for (const id of graph.order) {
+		let start = 0;
+		for (const edge of graph.predecessors[id]) {
+			const c = startFrom(edge, es, ef, dur[id]);
+			if (c > start) start = c;
+		}
+		es[id] = start;
+		ef[id] = start + dur[id];
+	}
+	let finish = 0;
+	for (const id of graph.order) if (ef[id] > finish) finish = ef[id];
+	return finish;
 }
 
 // Per-trial team-capacity scaling. Same idea as schedule.ts: a baseline

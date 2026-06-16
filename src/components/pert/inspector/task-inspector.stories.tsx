@@ -25,9 +25,11 @@ const noopChangeDoc = (..._args: unknown[]) => {
 function StoryHarness({
 	changeDoc,
 	withIssues,
+	withStaffing,
 }: {
 	changeDoc: ((mutate: (d: unknown) => void) => void) | null;
 	withIssues?: boolean;
+	withStaffing?: boolean;
 }) {
 	useEffect(() => {
 		const doc = createEmptyPertDoc("Inspector read-only story");
@@ -35,13 +37,16 @@ function StoryHarness({
 			id: "T1",
 			kind: "task",
 			title: "Ship the beta",
-			estimate: {
-				optimistic: 2,
-				mostLikely: 5,
-				pessimistic: 9,
-				unit: "day",
-			},
+			estimate: withStaffing
+				? // ~20-day task so parallel staffing draws multiple people.
+					{ optimistic: 18, mostLikely: 20, pessimistic: 24, unit: "day" }
+				: { optimistic: 2, mostLikely: 5, pessimistic: 9, unit: "day" },
 		};
+		if (withStaffing) {
+			doc.scheduling = {
+				parallelStaffing: { enabled: true, levelDays: 5, maxPerTask: 4 },
+			};
+		}
 		if (withIssues) {
 			doc.issueTracker = {
 				urlTemplate: "https://acme.atlassian.net/browse/{key}",
@@ -61,7 +66,7 @@ function StoryHarness({
 			selectTask(PROJECT_ID, null);
 			clearActiveProjectDoc(PROJECT_ID);
 		};
-	}, [changeDoc, withIssues]);
+	}, [changeDoc, withIssues, withStaffing]);
 
 	return (
 		<TooltipProvider delayDuration={150}>
@@ -126,6 +131,18 @@ export const WithIssueLinks: Story = {
 		await expect(
 			await within(editor).findByTestId("issue-link-add"),
 		).toBeVisible();
+	},
+};
+
+// PARALLEL-STAFFING: a big task on a project with staffing enabled shows the
+// read-only per-task hint (up to N people → ~X d), separate from the schedule.
+export const WithParallelStaffing: Story = {
+	render: () => <StoryHarness changeDoc={noopChangeDoc} withStaffing />,
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const hint = await canvas.findByTestId("task-staffing-hint");
+		await expect(hint).toBeVisible();
+		await expect(hint).toHaveTextContent(/people/i);
 	},
 };
 

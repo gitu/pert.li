@@ -180,3 +180,54 @@ describe("runMonteCarlo", () => {
 		expect(r1?.projectFinish.p50).toBe(r2?.projectFinish.p50);
 	});
 });
+
+describe("runMonteCarlo — parallel staffing", () => {
+	const STAFFING = { enabled: true, levelDays: 3, maxPerTask: 4 };
+
+	// A long serial chain so big tasks dominate and crashing them moves the
+	// project finish noticeably.
+	const BIG: Estimate = {
+		optimistic: 18,
+		mostLikely: 20,
+		pessimistic: 24,
+		unit: "day",
+	};
+
+	it("omits projectFinishStaffed when staffing is disabled", () => {
+		const doc = build([task("a", BIG), task("b", BIG)], [dep("d", "a", "b")]);
+		const r = runMonteCarlo(doc, { trials: 200, seed: 7 });
+		expect(r?.projectFinishStaffed).toBeUndefined();
+	});
+
+	it("adds an earlier (or equal) staffed finish when enabled", () => {
+		const doc = build([task("a", BIG), task("b", BIG)], [dep("d", "a", "b")]);
+		const r = runMonteCarlo(doc, { trials: 400, seed: 7, staffing: STAFFING });
+		expect(r?.projectFinishStaffed).toBeDefined();
+		// Crashing big tasks can only shorten the finish.
+		expect(r?.projectFinishStaffed?.p50).toBeLessThanOrEqual(
+			(r?.projectFinish.p50 ?? 0) + 1e-9,
+		);
+		expect(r?.projectFinishStaffed?.p50).toBeLessThan(
+			r?.projectFinish.p50 ?? 0,
+		);
+	});
+
+	it("ignores staffing when the doc is on team-capacity mode (team wins)", () => {
+		const doc = build([task("a", BIG), task("b", BIG)], [dep("d", "a", "b")]);
+		doc.calendar = {
+			startDate: "2026-01-05",
+			workingDays: [1, 2, 3, 4, 5],
+			allocationMode: "team",
+			team: { peopleCount: 2, availabilityPct: 100 },
+		};
+		const r = runMonteCarlo(doc, { trials: 200, seed: 7, staffing: STAFFING });
+		expect(r?.projectFinishStaffed).toBeUndefined();
+	});
+
+	it("is deterministic under a fixed seed", () => {
+		const doc = build([task("a", BIG), task("b", BIG)], [dep("d", "a", "b")]);
+		const r1 = runMonteCarlo(doc, { trials: 200, seed: 5, staffing: STAFFING });
+		const r2 = runMonteCarlo(doc, { trials: 200, seed: 5, staffing: STAFFING });
+		expect(r1?.projectFinishStaffed?.p50).toBe(r2?.projectFinishStaffed?.p50);
+	});
+});

@@ -1,10 +1,12 @@
 import { dayOffsetToDate, workingDaysInclusive } from "./calendar";
+import { resolveScheduling } from "./resolve-scheduling";
 import type {
 	Dependency,
 	DependencyType,
 	Estimate,
 	EstimateBasis,
 	PertDoc,
+	ScheduleBasis,
 	Task,
 	TaskId,
 	TaskStatus,
@@ -61,6 +63,20 @@ export type ScheduleResult =
 	| { ok: true; schedule: Schedule }
 	| { ok: false; reason: "cycle"; cycle: TaskId[] };
 
+// Per-call override. When omitted, `basis` falls back to the project's stored
+// scheduling settings (resolveScheduling(doc)). The Overview card passes an
+// explicit basis to render a specific scenario (e.g. most-likely) side-by-side
+// with the active one; everything else calls computeSchedule(doc) and honours
+// the project.
+//
+// NOTE: parallel staffing is deliberately NOT a schedule input. It must never
+// change the durations/dates the canvas, lists and timeline display — it is an
+// ADDITIONAL measurement surfaced only via the Monte Carlo forecast, the
+// inspector hint and the canvas badge, all computed from task sizes directly.
+export type ScheduleOptions = {
+	basis?: ScheduleBasis;
+};
+
 const EPSILON = 1e-9;
 
 const UNIT_TO_DAYS: Record<Estimate["unit"], number> = {
@@ -82,9 +98,31 @@ export function variance(estimate: Estimate | undefined): number {
 	return (spread * UNIT_TO_DAYS[estimate.unit]) ** 2;
 }
 
-export function durationOf(task: Task): number {
+// Raw modal estimate in days — the value used when basis is "most-likely".
+export function mostLikelyDays(estimate: Estimate | undefined): number {
+	if (!estimate) return 0;
+	return estimate.mostLikely * UNIT_TO_DAYS[estimate.unit];
+}
+
+// The point value the schedule lays out with, per the chosen basis. "expected"
+// is the PERT mean (default); "most-likely" is the raw modal estimate. NOTE:
+// the DISPLAYED per-task duration (TaskSchedule.expected) is always the PERT
+// mean regardless of basis — only ES/EF/slack/finish shift with the basis.
+export function valueForBasis(
+	estimate: Estimate | undefined,
+	basis: ScheduleBasis,
+): number {
+	return basis === "most-likely"
+		? mostLikelyDays(estimate)
+		: expected(estimate);
+}
+
+export function durationOf(
+	task: Task,
+	basis: ScheduleBasis = "expected",
+): number {
 	if (task.kind === "milestone") return 0;
-	return expected(task.estimate);
+	return valueForBasis(task.estimate, basis);
 }
 
 export function statusOf(task: Task): TaskStatus {
@@ -104,8 +142,11 @@ export function progressFractionOf(task: Task): number {
 // Effective remaining duration the CPM math should use. Completed work is
 // burned down to zero; in-progress work shrinks by the reported fraction. The
 // UI keeps `expected` separately so it can render plan vs. remaining.
-export function effectiveDurationOf(task: Task): number {
-	const planned = durationOf(task);
+export function effectiveDurationOf(
+	task: Task,
+	basis: ScheduleBasis = "expected",
+): number {
+	const planned = durationOf(task, basis);
 	if (planned <= 0) return 0;
 	const status = statusOf(task);
 	if (status === "completed") return 0;
@@ -219,7 +260,10 @@ function findCycle(
 	return { order };
 }
 
-export function computeSchedule(doc: PertDoc): ScheduleResult {
+export function computeSchedule(
+	doc: PertDoc,
+	options?: ScheduleOptions,
+): ScheduleResult {
 	const { taskIds, tasks, successors, predecessors } = collectSchedulable(doc);
 
 	const cycleCheck = findCycle(taskIds, successors);
@@ -228,11 +272,18 @@ export function computeSchedule(doc: PertDoc): ScheduleResult {
 	}
 	const order = cycleCheck.order;
 
-	const plannedDuration: Record<TaskId, number> = {};
+	const basis = options?.basis ?? resolveScheduling(doc).basis;
+	const teamCapacity = teamCapacityPerDay(doc);
+
+	// `expected` (displayed everywhere) is ALWAYS the PERT mean, independent of
+	// basis — the canvas/list duration columns must not move when the schedule
+	// basis changes. `baselineDuration` follows the basis and drives only the
+	// layout (ES/EF/slack/finish).
+	const displayExpected: Record<TaskId, number> = {};
 	const baselineDuration: Record<TaskId, number> = {};
 	for (const id of taskIds) {
-		baselineDuration[id] = effectiveDurationOf(tasks[id]);
-		plannedDuration[id] = durationOf(tasks[id]);
+		displayExpected[id] = durationOf(tasks[id]);
+		baselineDuration[id] = effectiveDurationOf(tasks[id], basis);
 	}
 
 	// Two-pass: first run the unconstrained CPM, then if the project is on a
@@ -240,7 +291,6 @@ export function computeSchedule(doc: PertDoc): ScheduleResult {
 	// "equal allocation across concurrent peers" rule and re-run. The peer
 	// count comes from the baseline ES/EF windows.
 	let duration = baselineDuration;
-	const teamCapacity = teamCapacityPerDay(doc);
 	if (teamCapacity > 0) {
 		const baseline = runForwardBackward(
 			taskIds,
@@ -276,7 +326,7 @@ export function computeSchedule(doc: PertDoc): ScheduleResult {
 		tasksOut[id] = {
 			taskId: id,
 			duration: duration[id],
-			expected: plannedDuration[id],
+			expected: displayExpected[id],
 			variance: variance(tasks[id].estimate),
 			earliestStart: es[id],
 			earliestFinish: ef[id],

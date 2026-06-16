@@ -422,3 +422,55 @@ export const CompactLayout: Story = {
 		expect(node).toHaveAttribute("data-layout", "compact");
 	},
 };
+
+// PARALLEL-STAFFING: the opt-in node badge — a ⚡N→Xd hint, distinct from the
+// duration. Shown only when the display field is on AND ≥2 people apply.
+export const StaffingBadge: Story = {
+	args: {
+		data: {
+			title: "Migrate database",
+			kind: "task",
+			durationDays: 20,
+			slackDays: 0,
+			critical: true,
+			hasEstimate: true,
+			status: "not_started",
+			progress: 0,
+			showStaffing: true,
+			staffingPeople: 4,
+			staffingDays: 5,
+		},
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText("Migrate database");
+		// The duration (20 d) is untouched; the badge is a separate ⚡ segment.
+		await expect(await canvas.findByText(/20 d/)).toBeInTheDocument();
+		await expect(await canvas.findByText(/⚡4→5d/)).toBeInTheDocument();
+	},
+};
+
+// The badge stays hidden when the display field is off, even if staffing data
+// is present — the toggle wins.
+export const StaffingBadgeHidden: Story = {
+	args: {
+		data: {
+			title: "Migrate database",
+			kind: "task",
+			durationDays: 20,
+			slackDays: 0,
+			critical: true,
+			hasEstimate: true,
+			status: "not_started",
+			progress: 0,
+			showStaffing: false,
+			staffingPeople: 4,
+			staffingDays: 5,
+		},
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText("Migrate database");
+		expect(canvas.queryByText(/⚡/)).toBeNull();
+	},
+};

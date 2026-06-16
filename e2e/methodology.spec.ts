@@ -22,12 +22,17 @@ test.describe("/methodology (unauthenticated)", () => {
 			"Expected duration (the PERT weighted mean)",
 			"Critical Path Method — the schedule",
 			"Team capacity: effort vs. duration",
+			"Schedule basis & parallel staffing",
 			"Monte Carlo forecast",
 		]) {
 			await expect(page.getByRole("heading", { name })).toBeVisible();
 		}
 		// The worked PERT example is present.
 		await expect(page.getByText(/9\.47 days/)).toBeVisible();
+		// The parallel-staffing formula is documented.
+		await expect(
+			page.getByText(/people = clamp\(floor\(size \/ level\), 1, maxPerTask\)/),
+		).toBeVisible();
 	});
 
 	test("server-renders its content (works before client JS)", async ({
@@ -39,6 +44,8 @@ test.describe("/methodology (unauthenticated)", () => {
 		expect(html).toContain("How the numbers are calculated");
 		expect(html).toContain("Monte Carlo forecast");
 		expect(html).toContain("Team capacity");
+		expect(html).toContain("Schedule basis");
+		expect(html).toContain("parallel staffing");
 	});
 
 	test("the in-page table of contents jumps to a section", async ({ page }) => {

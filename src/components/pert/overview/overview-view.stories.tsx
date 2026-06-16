@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { resolveDisplaySettings } from "#/lib/pert/display";
 import { computeProjectOverview } from "#/lib/pert/overview";
+import { resolveScheduling } from "#/lib/pert/resolve-scheduling";
 import { computeSchedule } from "#/lib/pert/schedule";
 import type { PertDoc, ProjectCalendar } from "#/lib/pert/types";
 import { createEmptyPertDoc } from "#/lib/pert/types";
@@ -97,6 +98,7 @@ const meta: Meta<typeof OverviewContent> = {
 		metaSaving: false,
 		onSaveMeta: fn(),
 		calendarInitial: CALENDAR,
+		schedulingInitial: resolveScheduling(DOC),
 		onSaveCalendar: fn(),
 		displayInitial: resolveDisplaySettings(DOC),
 		onSaveDisplay: fn(),

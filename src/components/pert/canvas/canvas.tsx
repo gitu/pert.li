@@ -53,7 +53,16 @@ import {
 	groupBoundsFromMembers,
 	shiftGroupMembersMutation,
 } from "#/lib/pert/reparent";
-import { computeSchedule, type Schedule } from "#/lib/pert/schedule";
+import {
+	type ResolvedStaffing,
+	resolveScheduling,
+} from "#/lib/pert/resolve-scheduling";
+import {
+	computeSchedule,
+	type Schedule,
+	teamCapacityPerDay,
+} from "#/lib/pert/schedule";
+import { peopleForDuration } from "#/lib/pert/staffing";
 import {
 	consumeLocallyCreated,
 	selectGroup,
@@ -1110,6 +1119,15 @@ function buildBaseNodes(
 ): Node[] {
 	const fallback = fallbackGridLayout(doc);
 	const schedule = scheduleResult.ok ? scheduleResult.schedule : null;
+	// PARALLEL-STAFFING: active staffing config for the per-node badge, or null
+	// when disabled or when team mode is on (which wins). Sized off each task's
+	// PERT expected so the badge is independent of basis/scaling.
+	const staffing: ResolvedStaffing | null =
+		teamCapacityPerDay(doc) > 0
+			? null
+			: resolveScheduling(doc).staffing.enabled
+				? resolveScheduling(doc).staffing
+				: null;
 	const nodes: Node[] = [];
 
 	for (const projected of projection.nodes) {
@@ -1201,6 +1219,7 @@ function buildBaseNodes(
 				onDeleteTask,
 				onAddLinkedTask,
 				display,
+				staffing,
 			);
 		}
 	}
@@ -1276,10 +1295,21 @@ function pushLeafNode(
 		kind: "task" | "milestone",
 	) => void,
 	display: ResolvedSurface<CanvasLayoutMode, CanvasFieldId>,
+	staffing: ResolvedStaffing | null,
 ) {
 	const task = projected.task;
 	const pos = task.layout?.position ?? fallback[task.id] ?? { x: 0, y: 0 };
 	const sched = schedule?.tasks[task.id];
+	// PARALLEL-STAFFING badge: how many equal people could crash this task and
+	// the resulting wall-clock, sized off the PERT expected (stable, basis- and
+	// scaling-independent). Only meaningful when ≥2 people apply; the node also
+	// gates on `showStaffing` (the display toggle).
+	const staffingPeople =
+		staffing && task.kind === "task"
+			? peopleForDuration(sched?.expected ?? 0, staffing)
+			: 1;
+	const staffingDays =
+		staffingPeople > 1 ? (sched?.expected ?? 0) / staffingPeople : undefined;
 	const data: TaskNodeData = {
 		title: task.title,
 		kind: task.kind === "milestone" ? "milestone" : "task",
@@ -1305,6 +1335,12 @@ function pushLeafNode(
 		showSlack: display.fields.slack,
 		showProgress: display.fields.progress,
 		showIssueKeys: display.fields.issueKeys,
+		// PARALLEL-STAFFING: the badge shows only when the display field is on AND
+		// the task actually crashes (≥2 people). staffingPeople/Days stay undefined
+		// otherwise so the node renders nothing.
+		showStaffing: display.fields.staffing,
+		staffingPeople: staffingDays !== undefined ? staffingPeople : undefined,
+		staffingDays,
 		layout: display.layout,
 	};
 	nodes.push({

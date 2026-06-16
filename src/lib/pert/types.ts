@@ -188,6 +188,42 @@ export type ProjectCalendar = {
 	allocationMode?: AllocationMode;
 };
 
+// ── Scheduling settings ──────────────────────────────────────────────────────
+// SCHEDULING-SETTINGS: how the engine turns three-point estimates into a
+// schedule. Two orthogonal knobs, both optional (absence = default, read
+// through resolveScheduling() in resolve-scheduling.ts — never branch on raw
+// `doc.scheduling`):
+//
+//   • basis — which point value drives ES/EF/slack/finish. "expected" is the
+//     PERT mean (o+4m+p)/6 (the original, default). "most-likely" uses each
+//     task's `mostLikely` instead, for a "best single guess" schedule. The
+//     DISPLAYED per-task duration on the canvas/lists stays the PERT expected
+//     regardless of basis — only the layout (start/finish/slack) shifts.
+//
+//   • parallelStaffing — an additional "throw more people at a big task" model.
+//     For a task of size E, up to `maxPerTask` EQUAL people can work it in
+//     parallel, finishing in E/k wall-clock (linear speedup). k is "chunked"
+//     off `levelDays`: k = clamp(floor(E / levelDays), 1, maxPerTask), so
+//     `levelDays` is both the eligibility threshold and the per-person chunk.
+//     Mutually exclusive with team-capacity mode (which models people as a
+//     SCARCE pool that stretches durations) — team mode wins; staffing applies
+//     in calendar-days mode.
+export type ScheduleBasis = "expected" | "most-likely";
+
+export type ParallelStaffing = {
+	enabled: boolean;
+	// Eligibility threshold AND per-person work chunk, in days. A task shorter
+	// than levelDays always runs at one person.
+	levelDays: number;
+	// Hard cap on how many equal people can crash a single task.
+	maxPerTask: number;
+};
+
+export type SchedulingSettings = {
+	basis?: ScheduleBasis;
+	parallelStaffing?: ParallelStaffing;
+};
+
 // ── Display settings ─────────────────────────────────────────────────────────
 // DISPLAY-SETTINGS: per-project, collaborator-shared view config for the two
 // surfaces that render rolled-up / per-task fields — the Overview "Groups"
@@ -319,6 +355,10 @@ export type PertDoc = {
 	dependenciesById: Record<DependencyId, Dependency>;
 	viewsById: Record<ViewId, ViewState>;
 	calendar?: ProjectCalendar;
+	// SCHEDULING-SETTINGS: schedule basis + parallel-staffing config. Old docs
+	// predate it — read through resolveScheduling(), which fills + clamps
+	// defaults. Never branch on raw `doc.scheduling`.
+	scheduling?: SchedulingSettings;
 	// DISPLAY-SETTINGS: shared per-project display config (which fields + which
 	// density) for the Overview groups list and the canvas task nodes. Old docs
 	// predate it — read through resolveDisplaySettings(), which fills defaults.
