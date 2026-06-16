@@ -4,6 +4,7 @@
 // against both a broken route and a hydration drift.
 
 import { expect, test } from "./console";
+import { COOKIE_HINT_KEY } from "./fixtures";
 
 test.describe("/methodology (unauthenticated)", () => {
 	test("renders the calculations reference with its key sections", async ({
@@ -47,6 +48,13 @@ test.describe("/methodology (unauthenticated)", () => {
 	});
 
 	test("is reachable from the marketing footer", async ({ page }) => {
+		// The cookie-hint banner is `fixed bottom-0` and overlays the page-bottom
+		// footer, so its links aren't clickable until it's gone. Pre-dismiss it
+		// (as a returning visitor would have) so the link is actionable.
+		await page.addInitScript(
+			(key) => window.localStorage.setItem(key, "1"),
+			COOKIE_HINT_KEY,
+		);
 		await page.goto("/about");
 		await page
 			.getByRole("contentinfo")
