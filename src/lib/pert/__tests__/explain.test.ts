@@ -44,6 +44,10 @@ describe("fmtDays", () => {
 	it("trims trailing zeros and snaps ~0 and ∞", () => {
 		expect(fmtDays(5)).toBe("5");
 		expect(fmtDays(5.25)).toBe("5.3");
+		// Rounds to 1dp FIRST, so values that round to an integer don't leak a
+		// trailing ".0" (floating-point noise).
+		expect(fmtDays(5.04)).toBe("5");
+		expect(fmtDays(4.999)).toBe("5");
 		expect(fmtDays(1e-9)).toBe("0");
 		expect(fmtDays(Number.POSITIVE_INFINITY)).toBe("∞");
 	});
@@ -76,13 +80,16 @@ describe("explainExpectedDuration", () => {
 		expect(text).toContain("3 d");
 	});
 
-	it("notes team-capacity scaling when effective > expected", () => {
+	it("uses neutral wording when a not-started task's effective duration differs", () => {
+		// Could be the most-likely basis OR team scaling — the explainer isn't
+		// told which, so it must not assert a specific cause.
 		const text = explainExpectedDuration(
 			EST,
 			sched({ status: "not_started", expected: 5, duration: 10 }),
 		);
-		expect(text).toContain("Team-capacity");
 		expect(text).toContain("10 d");
+		expect(text).toMatch(/scheduling basis|team-capacity/i);
+		expect(text).not.toContain("Team-capacity scaling stretches");
 	});
 
 	it("handles a missing estimate", () => {

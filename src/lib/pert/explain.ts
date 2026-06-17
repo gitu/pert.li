@@ -23,17 +23,20 @@ const UNIT_NOUN: Record<EstimateUnit, string> = {
 	week: "weeks",
 };
 
-// One-decimal, trailing-zero-trimmed; snaps ~0 to 0 and ∞ to a glyph.
+// One-decimal, trailing-zero-trimmed; snaps ~0 to 0 and ∞ to a glyph. Rounds to
+// 1dp FIRST so values like 5.04 render "5" (not "5.0") and don't leak
+// floating-point noise into tooltips.
 export function fmtDays(n: number): string {
 	if (!Number.isFinite(n)) return "∞";
 	const snapped = Math.abs(n) < 1e-6 ? 0 : n;
-	if (Number.isInteger(snapped)) return snapped.toString();
-	return snapped.toFixed(1);
+	const rounded = Math.round(snapped * 10) / 10;
+	if (Number.isInteger(rounded)) return rounded.toString();
+	return rounded.toFixed(1);
 }
 
 // "(2 + 4·5 + 8) / 6 = 5" — the PERT weighted-mean arithmetic in the estimate's
-// own unit (no unit suffix; callers add it). Returns null when there's no
-// estimate to explain.
+// own unit (no unit suffix; callers add it). Always returns a string; the
+// no-estimate case is handled by the caller (explainExpectedDuration).
 function expectedFormula(estimate: Estimate): string {
 	const { optimistic: o, mostLikely: m, pessimistic: p } = estimate;
 	const mean = (o + 4 * m + p) / 6;
@@ -78,9 +81,12 @@ export function explainExpectedDuration(
 				effective,
 			)} d of remaining work feeds the schedule.`;
 		} else {
-			base += ` Team-capacity scaling stretches it to ${fmtDays(
+			// A not-started task whose effective duration differs can be the
+			// most-likely schedule basis OR team-capacity scaling — the explainer
+			// isn't told which, so stay neutral rather than mis-attribute it.
+			base += ` The schedule lays it out as ${fmtDays(
 				effective,
-			)} d in the schedule.`;
+			)} d (per the project's scheduling basis and team-capacity settings).`;
 		}
 	}
 	return base;
@@ -113,7 +119,11 @@ export function explainEarliestStart(
 export function explainEarliestFinish(
 	sched: Pick<TaskSchedule, "earliestStart" | "earliestFinish" | "duration">,
 ): string {
-	return `Earliest finish (CPM EF) = earliest start + duration = ${fmtDays(
+	// NOTE: the operand is the SCHEDULED (effective) duration — remaining work
+	// for in-progress tasks, scaled under team capacity — which can differ from
+	// the displayed PERT "expected duration". Name it explicitly to avoid
+	// conflating the two in the new UX.
+	return `Earliest finish (CPM EF) = earliest start + scheduled duration = ${fmtDays(
 		sched.earliestStart,
 	)} + ${fmtDays(sched.duration)} = day ${fmtDays(sched.earliestFinish)}.`;
 }
@@ -121,7 +131,7 @@ export function explainEarliestFinish(
 export function explainLatestStart(
 	sched: Pick<TaskSchedule, "latestStart" | "latestFinish" | "duration">,
 ): string {
-	return `Latest start (CPM LS) = latest finish − duration = ${fmtDays(
+	return `Latest start (CPM LS) = latest finish − scheduled duration = ${fmtDays(
 		sched.latestFinish,
 	)} − ${fmtDays(sched.duration)} = day ${fmtDays(
 		sched.latestStart,
