@@ -1122,12 +1122,11 @@ function buildBaseNodes(
 	// PARALLEL-STAFFING: active staffing config for the per-node badge, or null
 	// when disabled or when team mode is on (which wins). Sized off each task's
 	// PERT expected so the badge is independent of basis/scaling.
+	const resolvedStaffing = resolveScheduling(doc).staffing;
 	const staffing: ResolvedStaffing | null =
-		teamCapacityPerDay(doc) > 0
-			? null
-			: resolveScheduling(doc).staffing.enabled
-				? resolveScheduling(doc).staffing
-				: null;
+		teamCapacityPerDay(doc) === 0 && resolvedStaffing.enabled
+			? resolvedStaffing
+			: null;
 	const nodes: Node[] = [];
 
 	for (const projected of projection.nodes) {

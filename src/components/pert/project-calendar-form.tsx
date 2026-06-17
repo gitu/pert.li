@@ -324,7 +324,11 @@ export function ProjectCalendarForm({
 								id="staffing-enabled"
 								type="checkbox"
 								data-testid="staffing-enabled"
-								checked={staffing.enabled && mode !== "team"}
+								// Reflect the actual stored state even in Team mode (where the
+								// control is disabled and the note explains staffing is
+								// inactive). Forcing it unchecked would hide config that still
+								// persists and reactivates on switching back to Calendar-days.
+								checked={staffing.enabled}
 								disabled={mode === "team"}
 								onChange={(e) =>
 									setStaffing((p) => ({ ...p, enabled: e.target.checked }))

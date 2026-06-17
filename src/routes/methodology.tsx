@@ -284,7 +284,7 @@ function MethodologyPage() {
 					</p>
 					<pre className="not-prose rounded-md border bg-muted/30 p-4 text-sm">
 						<code>{`people = clamp(floor(size / level), 1, maxPerTask)
-crashed wall-clock = size / people`}</code>
+wallClock = size / people`}</code>
 					</pre>
 					<p>
 						So with a 5-day level and a max of 4, a 20-day task draws 4 people

@@ -104,10 +104,15 @@ function TaskNodeImpl(props: NodeProps) {
 	const showProgress = data.showProgress !== false;
 	const showIssueKeys = data.showIssueKeys !== false;
 	// PARALLEL-STAFFING badge defaults OFF (opt-in field), so read strict-true.
+	// Require both a >1 people count AND a finite crashed duration, so a caller
+	// that supplies only one of the pair never renders a "⚡N→0d" badge.
 	const showStaffing =
 		data.showStaffing === true &&
 		typeof data.staffingPeople === "number" &&
-		data.staffingPeople > 1;
+		data.staffingPeople > 1 &&
+		typeof data.staffingDays === "number" &&
+		Number.isFinite(data.staffingDays) &&
+		data.staffingDays > 0;
 	// Build the secondary meta line as discrete segments so toggling a field off
 	// never leaves a dangling "·" separator. A cycle is an error state — always
 	// shown, regardless of the slack toggle.
