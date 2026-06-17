@@ -215,7 +215,7 @@ export const AllCalculations: Story = {
 		await expect(
 			await canvas.findByText(/\(2 \+ 4·5 \+ 8\) \/ 6 = 5/),
 		).toBeInTheDocument();
-		// The skewed task (1/2/9 → expected 4, most-likely 2) is reconciled.
+		// The skewed task (1/2/9 → expected 3, most-likely 2) is reconciled.
 		await expect(
 			await canvas.findByText(/\(1 \+ 4·2 \+ 9\) \/ 6 = 3/),
 		).toBeInTheDocument();

@@ -23,6 +23,12 @@ const UNIT_NOUN: Record<EstimateUnit, string> = {
 	week: "weeks",
 };
 
+const UNIT_NOUN_SINGULAR: Record<EstimateUnit, string> = {
+	hour: "hour",
+	day: "day",
+	week: "week",
+};
+
 // One-decimal, trailing-zero-trimmed; snaps ~0 to 0 and ∞ to a glyph. Rounds to
 // 1dp FIRST so values like 5.04 render "5" (not "5.0") and don't leak
 // floating-point noise into tooltips.
@@ -32,15 +38,6 @@ export function fmtDays(n: number): string {
 	const rounded = Math.round(snapped * 10) / 10;
 	if (Number.isInteger(rounded)) return rounded.toString();
 	return rounded.toFixed(1);
-}
-
-// "(2 + 4·5 + 8) / 6 = 5" — the PERT weighted-mean arithmetic in the estimate's
-// own unit (no unit suffix; callers add it). Always returns a string; the
-// no-estimate case is handled by the caller (explainExpectedDuration).
-function expectedFormula(estimate: Estimate): string {
-	const { optimistic: o, mostLikely: m, pessimistic: p } = estimate;
-	const mean = (o + 4 * m + p) / 6;
-	return `(${fmtDays(o)} + 4·${fmtDays(m)} + ${fmtDays(p)}) / 6 = ${fmtDays(mean)}`;
 }
 
 // The headline duration explainer: always the Beta-PERT expected value, with
@@ -54,17 +51,17 @@ export function explainExpectedDuration(
 	if (!estimate) {
 		return "No estimate yet — add optimistic / most-likely / pessimistic values to compute a duration.";
 	}
-	const unit = estimate.unit;
-	const noun = UNIT_NOUN[unit];
-	let base = `Expected duration — the Beta-PERT weighted mean of your three-point estimate: ${expectedFormula(
-		estimate,
-	)} ${noun}`;
+	const { optimistic: o, mostLikely: m, pessimistic: p, unit } = estimate;
+	// Compute the mean ONCE: it drives the displayed value, the noun's
+	// singular/plural, and the day-conversion (no duplicated arithmetic).
+	const mean = (o + 4 * m + p) / 6;
+	const noun =
+		fmtDays(mean) === "1" ? UNIT_NOUN_SINGULAR[unit] : UNIT_NOUN[unit];
+	let base = `Expected duration — the Beta-PERT weighted mean of your three-point estimate: (${fmtDays(
+		o,
+	)} + 4·${fmtDays(m)} + ${fmtDays(p)}) / 6 = ${fmtDays(mean)} ${noun}`;
 	if (unit !== "day") {
-		const days =
-			((estimate.optimistic + 4 * estimate.mostLikely + estimate.pessimistic) /
-				6) *
-			UNIT_TO_DAYS[unit];
-		base += ` = ${fmtDays(days)} d`;
+		base += ` = ${fmtDays(mean * UNIT_TO_DAYS[unit])} d`;
 	}
 	base += ". The most-likely value is weighted 4× the extremes.";
 

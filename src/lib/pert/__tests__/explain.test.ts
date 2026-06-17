@@ -60,6 +60,19 @@ describe("explainExpectedDuration", () => {
 		expect(text).toContain("days");
 	});
 
+	it("uses a singular unit noun when the expected value is ~1", () => {
+		expect(
+			explainExpectedDuration({
+				optimistic: 1,
+				mostLikely: 1,
+				pessimistic: 1,
+				unit: "day",
+			}),
+		).toContain("= 1 day.");
+		// Plural for anything else.
+		expect(explainExpectedDuration(EST)).toContain("= 5 days");
+	});
+
 	it("converts non-day units and shows the day result", () => {
 		const text = explainExpectedDuration({
 			optimistic: 1,
