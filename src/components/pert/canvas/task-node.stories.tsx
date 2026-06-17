@@ -82,6 +82,33 @@ export const Default: Story = {
 	},
 };
 
+// The duration label carries a hover explainer (how the PERT expected was
+// computed), surfaced as a native title tooltip.
+export const DurationExplainer: Story = {
+	args: {
+		data: {
+			title: "Design API surface",
+			kind: "task",
+			durationDays: 5,
+			durationExplain:
+				"Expected duration — the Beta-PERT weighted mean of your three-point estimate: (2 + 4·5 + 8) / 6 = 5 days. The most-likely value is weighted 4× the extremes.",
+			slackDays: 1.5,
+			critical: false,
+			hasEstimate: true,
+			status: "not_started",
+			progress: 0,
+		},
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const dur = await canvas.findByText(/5 d/);
+		await expect(dur).toHaveAttribute(
+			"title",
+			expect.stringContaining("(2 + 4·5 + 8) / 6 = 5"),
+		);
+	},
+};
+
 export const Critical: Story = {
 	args: {
 		data: {

@@ -45,6 +45,15 @@ import {
 } from "#/lib/ai/tool-mutators";
 import { todayIsoDate } from "#/lib/pert/calendar";
 import {
+	explainCriticality,
+	explainEarliestFinish,
+	explainEarliestStart,
+	explainExpectedDuration,
+	explainLatestFinish,
+	explainLatestStart,
+	explainSlack,
+} from "#/lib/pert/explain";
+import {
 	getChildGroups,
 	getGroupDescendants,
 	getTasksInGroup,
@@ -657,36 +666,36 @@ function TaskForm({
 							<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
 								<ScheduleStat
 									label="Duration"
-									tooltip="How long this task takes once it starts. Computed from your PERT estimate as (optimistic + 4·most likely + pessimistic) / 6."
-									value={`${fmt(sched.duration)} d`}
+									tooltip={explainExpectedDuration(task.estimate, sched)}
+									value={`${fmt(sched.expected)} d`}
 								/>
 								<ScheduleStat
 									label="Slack"
-									tooltip="Spare time before this task starts delaying the whole project. 0 days means it's on the critical path — any slip moves the finish date."
+									tooltip={explainSlack(sched)}
 									value={`${fmt(sched.slack)} d`}
 									highlight={sched.critical ? "critical" : undefined}
 								/>
 								<ScheduleStat
 									label="Earliest start"
-									tooltip="The earliest day this task can begin, given everything that has to finish first. (CPM: ES)"
+									tooltip={explainEarliestStart(sched)}
 									value={fmt(sched.earliestStart)}
 									subValue={sched.earliestStartDate}
 								/>
 								<ScheduleStat
 									label="Earliest finish"
-									tooltip="Earliest start + duration. The earliest possible day this task could be done. (CPM: EF)"
+									tooltip={explainEarliestFinish(sched)}
 									value={fmt(sched.earliestFinish)}
 									subValue={sched.earliestFinishDate}
 								/>
 								<ScheduleStat
 									label="Latest start"
-									tooltip="The latest day this task can begin without delaying the project finish. (CPM: LS)"
+									tooltip={explainLatestStart(sched)}
 									value={fmt(sched.latestStart)}
 									subValue={sched.latestStartDate}
 								/>
 								<ScheduleStat
 									label="Latest finish"
-									tooltip="The latest day this task can end without delaying the project finish. (CPM: LF)"
+									tooltip={explainLatestFinish(sched)}
 									value={fmt(sched.latestFinish)}
 									subValue={sched.latestFinishDate}
 								/>
@@ -915,36 +924,36 @@ function TaskOverview({
 					<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5">
 						<ScheduleStat
 							label="Duration"
-							tooltip="Beta-PERT expected duration (o + 4m + p)/6."
-							value={`${fmt(sched.duration)} d`}
+							tooltip={explainExpectedDuration(task.estimate, sched)}
+							value={`${fmt(sched.expected)} d`}
 						/>
 						<ScheduleStat
 							label="Slack"
-							tooltip="Days this task can slip before the project finish moves."
+							tooltip={explainSlack(sched)}
 							value={`${fmt(sched.slack)} d`}
 							highlight={sched.critical ? "critical" : undefined}
 						/>
 						<ScheduleStat
 							label="Earliest start"
-							tooltip="The earliest day this task can begin (CPM: ES)."
+							tooltip={explainEarliestStart(sched)}
 							value={fmt(sched.earliestStart)}
 							subValue={sched.earliestStartDate}
 						/>
 						<ScheduleStat
 							label="Earliest finish"
-							tooltip="ES + duration (CPM: EF)."
+							tooltip={explainEarliestFinish(sched)}
 							value={fmt(sched.earliestFinish)}
 							subValue={sched.earliestFinishDate}
 						/>
 						<ScheduleStat
 							label="Latest start"
-							tooltip="Latest start without delaying the project (CPM: LS)."
+							tooltip={explainLatestStart(sched)}
 							value={fmt(sched.latestStart)}
 							subValue={sched.latestStartDate}
 						/>
 						<ScheduleStat
 							label="Latest finish"
-							tooltip="Latest finish without delaying the project (CPM: LF)."
+							tooltip={explainLatestFinish(sched)}
 							value={fmt(sched.latestFinish)}
 							subValue={sched.latestFinishDate}
 						/>
@@ -1356,7 +1365,7 @@ function MonteCarloCard({ mc }: { mc: MonteCarloResult["tasks"][string] }) {
 				/>
 				<ScheduleStat
 					label="Criticality"
-					tooltip="Percentage of simulated runs where this task ended up on the critical path. High values (≥80%) mean it drives the project finish in almost every plausible scenario — protect its estimate."
+					tooltip={explainCriticality(mc.criticality)}
 					value={`${crit}%`}
 					highlight={crit >= 80 ? "critical" : undefined}
 				/>

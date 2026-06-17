@@ -22,9 +22,15 @@ import { NodeDeleteButton } from "./node-delete-button";
 export type TaskNodeData = {
 	title: string;
 	kind: "task" | "milestone";
-	// Beta-PERT expected duration shown on the card label. Derived from the
-	// schedule engine; not editable inline.
+	// Beta-PERT EXPECTED duration shown on the card label: (o + 4m + p)/6. This
+	// is the stable estimate-derived value, NOT the effective scheduling duration
+	// (which can differ for in-progress / team-scaled tasks — that lives in the
+	// explainer tooltip + the inspector).
 	durationDays: number;
+	// Hover explainer for the duration label ("how was this computed?").
+	durationExplain?: string;
+	// Hover explainer for the slack / critical meta segment.
+	slackExplain?: string;
 	// Most-likely value from the user's estimate, used to seed the inline
 	// edit form so the user sees and modifies the input they originally
 	// typed rather than the calculated expected duration.
@@ -120,17 +126,37 @@ function TaskNodeImpl(props: NodeProps) {
 	if (!isMilestone) {
 		if (showDuration) {
 			metaSegments.push(
-				<span key="dur">
+				<span
+					key="dur"
+					className={data.durationExplain ? "cursor-help" : undefined}
+					title={data.durationExplain}
+				>
 					{data.hasEstimate ? fmt(data.durationDays) : "?"} d
 				</span>,
 			);
 		}
 		if (showSlack && !data.cycle && data.slackDays !== null && !data.critical) {
-			metaSegments.push(<span key="slack">{fmt(data.slackDays)}d slack</span>);
+			metaSegments.push(
+				<span
+					key="slack"
+					className={data.slackExplain ? "cursor-help" : undefined}
+					title={data.slackExplain}
+				>
+					{fmt(data.slackDays)}d slack
+				</span>,
+			);
 		}
 		if (showSlack && !data.cycle && data.critical) {
 			metaSegments.push(
-				<span key="crit" className="font-semibold text-destructive">
+				<span
+					key="crit"
+					className={
+						data.slackExplain
+							? "cursor-help font-semibold text-destructive"
+							: "font-semibold text-destructive"
+					}
+					title={data.slackExplain}
+				>
 					critical
 				</span>,
 			);

@@ -8,6 +8,7 @@ import {
 	RouteIcon,
 } from "lucide-react";
 import { Progress } from "#/components/ui/progress";
+import { explainProjectDuration } from "#/lib/pert/explain";
 import type { ProjectOverview } from "#/lib/pert/overview";
 
 // The "key figures" grid. Pure presentation over a computed ProjectOverview —
@@ -41,11 +42,13 @@ export function OverviewMetrics({ overview }: { overview: ProjectOverview }) {
 							label="Duration"
 							value={`${formatDays(sched.durationDays)}d`}
 							hint={`${sched.startDate} → ${sched.finishDate}`}
+							tooltip={explainProjectDuration}
 						/>
 						<Metric
 							Icon={RouteIcon}
 							label="On critical path"
 							value={sched.criticalCount}
+							tooltip="Tasks with zero slack — the chain whose total length sets the project duration. Slipping any of them moves the finish date."
 						/>
 					</>
 				) : (
@@ -62,7 +65,10 @@ export function OverviewMetrics({ overview }: { overview: ProjectOverview }) {
 			<div className="rounded-md border bg-card/40 p-3 lg:col-span-1">
 				<div className="mb-1.5 flex items-center justify-between text-xs">
 					<span className="font-medium">Progress</span>
-					<span className="tabular-nums text-muted-foreground">
+					<span
+						className="cursor-help tabular-nums text-muted-foreground"
+						title="Duration-weighted completion: Σ(expected duration × done%) ÷ Σ(expected duration), so a big task counts more than a small one."
+					>
 						{Math.round(overview.progressPct)}%
 					</span>
 				</div>
@@ -97,15 +103,24 @@ function Metric({
 	label,
 	value,
 	hint,
+	tooltip,
 }: {
 	Icon: typeof ListChecksIcon;
 	label: string;
 	value: string | number;
 	hint?: string;
+	tooltip?: string;
 }) {
 	return (
 		<div className="rounded-md border bg-card/40 p-3">
-			<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+			<div
+				className={
+					tooltip
+						? "flex cursor-help items-center gap-1.5 text-xs text-muted-foreground"
+						: "flex items-center gap-1.5 text-xs text-muted-foreground"
+				}
+				title={tooltip}
+			>
 				<Icon className="size-3.5" />
 				{label}
 			</div>

@@ -1,5 +1,6 @@
 import { Loader2Icon, TrendingUpIcon, UsersIcon } from "lucide-react";
 import { useMemo } from "react";
+import { explainProjectP50, explainProjectP90 } from "#/lib/pert/explain";
 import type { MonteCarloResult } from "#/lib/pert/montecarlo";
 import { computeSchedule } from "#/lib/pert/schedule";
 import type { PertDoc } from "#/lib/pert/types";
@@ -115,13 +116,13 @@ function ReadyForecast({
 			<dl className="grid grid-cols-2 gap-3">
 				<Stat
 					label="P50 finish"
-					tooltip="Coin-flip date — half of simulated runs finished by here."
+					tooltip={explainProjectP50}
 					days={finish.p50}
 					date={finish.p50Date}
 				/>
 				<Stat
 					label="P90 finish"
-					tooltip="Safe commit date — 9 in 10 runs finished by here."
+					tooltip={explainProjectP90}
 					days={finish.p90}
 					date={finish.p90Date}
 				/>
