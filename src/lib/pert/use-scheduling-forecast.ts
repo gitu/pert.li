@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { MonteCarloResult } from "./montecarlo";
 import { DEFAULT_TRIALS } from "./montecarlo";
+import { resolveScheduling } from "./resolve-scheduling";
 import type { PertDoc } from "./types";
 import { useMonteCarlo } from "./use-monte-carlo";
 
@@ -49,6 +50,16 @@ export function useSchedulingForecast(
 	const trials = options.trials ?? FORECAST_TRIALS;
 	const seed = options.seed;
 
+	// PARALLEL-STAFFING: drive the simulation's staffed pass from the project's
+	// stored config so the forecast card's "with parallel staffing" row reflects
+	// what the user set. resolveScheduling clamps + applies the team-mode
+	// exclusivity defaults; the simulator additionally ignores staffing when the
+	// doc is on team capacity.
+	const staffing = useMemo(
+		() => (doc ? resolveScheduling(doc).staffing : undefined),
+		[doc],
+	);
+
 	// Seeded so successive runs of an unchanged doc reveal the same numbers — the
 	// fake delay shouldn't make the forecast jitter. `running` lets us wait for
 	// the *current* run to finish: useMonteCarlo keeps the previous result in
@@ -57,6 +68,7 @@ export function useSchedulingForecast(
 	const { result: mcResult, running } = useMonteCarlo(hasWork ? doc : null, {
 		trials,
 		seed,
+		staffing,
 	});
 
 	const [delayElapsed, setDelayElapsed] = useState(false);

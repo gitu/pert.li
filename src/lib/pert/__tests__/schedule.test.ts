@@ -384,3 +384,51 @@ describe("computeSchedule — property tests", () => {
 		);
 	});
 });
+
+describe("schedule basis (expected vs most-likely)", () => {
+	// estimate where mostLikely (2) ≠ expected ((1+8+9)/6 = 3).
+	const SKEWED: Estimate = {
+		optimistic: 1,
+		mostLikely: 2,
+		pessimistic: 9,
+		unit: "day",
+	};
+
+	it("most-likely basis lays out from m, not the PERT mean", () => {
+		const doc = buildDoc(
+			[task("a", SKEWED), task("b", SKEWED)],
+			[ftsDep("d", "a", "b")],
+		);
+		const exp = computeSchedule(doc, { basis: "expected" });
+		const ml = computeSchedule(doc, { basis: "most-likely" });
+		if (!exp.ok || !ml.ok) throw new Error("expected ok");
+		// expected: 3 + 3 = 6; most-likely: 2 + 2 = 4.
+		expect(exp.schedule.projectDuration).toBeCloseTo(6, 9);
+		expect(ml.schedule.projectDuration).toBeCloseTo(4, 9);
+		// ES/EF shift with basis.
+		expect(ml.schedule.tasks.b.earliestStart).toBeCloseTo(2, 9);
+		expect(exp.schedule.tasks.b.earliestStart).toBeCloseTo(3, 9);
+	});
+
+	it("the displayed `expected` stays the PERT mean under either basis", () => {
+		const doc = buildDoc([task("a", SKEWED)], []);
+		const exp = computeSchedule(doc, { basis: "expected" });
+		const ml = computeSchedule(doc, { basis: "most-likely" });
+		if (!exp.ok || !ml.ok) throw new Error("expected ok");
+		expect(exp.schedule.tasks.a.expected).toBeCloseTo(3, 9);
+		expect(ml.schedule.tasks.a.expected).toBeCloseTo(3, 9);
+		// Only the effective `duration` follows the basis.
+		expect(ml.schedule.tasks.a.duration).toBeCloseTo(2, 9);
+	});
+
+	it("defaults to the project's stored basis when no option is passed", () => {
+		const doc = buildDoc(
+			[task("a", SKEWED), task("b", SKEWED)],
+			[ftsDep("d", "a", "b")],
+		);
+		doc.scheduling = { basis: "most-likely" };
+		const r = computeSchedule(doc);
+		if (!r.ok) throw new Error("expected ok");
+		expect(r.schedule.projectDuration).toBeCloseTo(4, 9);
+	});
+});

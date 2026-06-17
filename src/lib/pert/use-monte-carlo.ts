@@ -81,6 +81,7 @@ export function useMonteCarlo(
 		};
 	}, []);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: staffing is depended on via its primitive fields (enabled/levelDays/maxPerTask), not the object reference, so a fresh identity each render doesn't retrigger the worker.
 	useEffect(() => {
 		if (!doc) return;
 		lastDocRef.current = doc;
@@ -94,6 +95,7 @@ export function useMonteCarlo(
 				trials: options.trials,
 				seed: options.seed,
 				lambda: options.lambda,
+				staffing: options.staffing,
 			};
 			if (handle) {
 				handle.pending.set(reqId, (result) => {
@@ -119,7 +121,16 @@ export function useMonteCarlo(
 		return () => clearTimeout(timer);
 		// We intentionally re-run on every doc change. The debounce above is
 		// what keeps this from saturating the worker during rapid edits.
-	}, [doc, options.trials, options.seed, options.lambda, options.debounceMs]);
+	}, [
+		doc,
+		options.trials,
+		options.seed,
+		options.lambda,
+		options.debounceMs,
+		options.staffing?.enabled,
+		options.staffing?.levelDays,
+		options.staffing?.maxPerTask,
+	]);
 
 	return state;
 }

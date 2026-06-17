@@ -5,6 +5,7 @@ import {
 	CircleIcon,
 	RotateCcwIcon,
 	Trash2Icon,
+	UsersIcon,
 } from "lucide-react";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -53,7 +54,14 @@ import type { MonteCarloResult } from "#/lib/pert/montecarlo";
 import { computeNumbering } from "#/lib/pert/numbering";
 import { type GroupRollup, rollupGroup } from "#/lib/pert/projection";
 import { readTaskConflicts } from "#/lib/pert/read-conflicts";
-import { computeSchedule, type TaskSchedule } from "#/lib/pert/schedule";
+import { resolveScheduling } from "#/lib/pert/resolve-scheduling";
+import {
+	computeSchedule,
+	durationOf,
+	type TaskSchedule,
+	teamCapacityPerDay,
+} from "#/lib/pert/schedule";
+import { peopleForDuration } from "#/lib/pert/staffing";
 import {
 	projectDocStore,
 	selectGroup,
@@ -318,6 +326,21 @@ function TaskForm({
 		? scheduleResult.schedule.tasks[task.id]
 		: null;
 	const mcTask = mcResult?.tasks[task.id] ?? null;
+
+	// PARALLEL-STAFFING per-task hint. Only shown when staffing is enabled, the
+	// doc isn't on team mode (which wins), and this task is big enough to take a
+	// second person. Sized off the displayed PERT duration so the numbers line up
+	// with what the user sees on the canvas.
+	const staffingHint = useMemo(() => {
+		if (task.kind !== "task") return null;
+		const { staffing } = resolveScheduling(doc);
+		if (!staffing.enabled) return null;
+		if (teamCapacityPerDay(doc) > 0) return null;
+		const sizing = durationOf(task);
+		const people = peopleForDuration(sizing, staffing);
+		if (people <= 1 || sizing <= 0) return null;
+		return { people, crashed: sizing / people, sizing };
+	}, [task, doc]);
 
 	const setTitle = useCallback(
 		(value: string) =>
@@ -674,6 +697,23 @@ function TaskForm({
 							</p>
 						)}
 					</div>
+					{staffingHint && (
+						<div
+							className="rounded-md border bg-background/50 p-2.5 text-xs"
+							data-testid="task-staffing-hint"
+						>
+							<div className="flex items-center gap-1.5 font-medium text-muted-foreground">
+								<UsersIcon className="size-3.5" />
+								Parallel staffing
+							</div>
+							<p className="mt-1 text-muted-foreground">
+								Up to {staffingHint.people} people → ~
+								{fmt(staffingHint.crashed)} d wall-clock (vs{" "}
+								{fmt(staffingHint.sizing)} d solo). This is an extra forecast —
+								it doesn't change the duration shown elsewhere.
+							</p>
+						</div>
+					)}
 					{mcTask && task.kind === "task" && <MonteCarloCard mc={mcTask} />}
 				</div>
 			</div>

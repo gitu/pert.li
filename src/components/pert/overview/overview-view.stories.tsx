@@ -1,7 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { resolveDisplaySettings } from "#/lib/pert/display";
 import { computeProjectOverview } from "#/lib/pert/overview";
+import { resolveScheduling } from "#/lib/pert/resolve-scheduling";
 import { computeSchedule } from "#/lib/pert/schedule";
 import type { PertDoc, ProjectCalendar } from "#/lib/pert/types";
 import { createEmptyPertDoc } from "#/lib/pert/types";
@@ -97,6 +98,7 @@ const meta: Meta<typeof OverviewContent> = {
 		metaSaving: false,
 		onSaveMeta: fn(),
 		calendarInitial: CALENDAR,
+		schedulingInitial: resolveScheduling(DOC),
 		onSaveCalendar: fn(),
 		displayInitial: resolveDisplaySettings(DOC),
 		onSaveDisplay: fn(),
@@ -274,12 +276,16 @@ export const DisplayCopyToProjects: Story = {
 		const canvas = within(canvasElement);
 		await userEvent.click(await canvas.findByTestId("display-settings-toggle"));
 		await userEvent.click(await canvas.findByTestId("display-copy-open"));
-		// The dialog portals to the body.
+		// The dialog portals to the body. It mounts with `data-state="open"`
+		// immediately but radix runs a fade/zoom-in animation, so its opacity is
+		// briefly 0 — `findByTestId` resolves on mount but `toBeVisible()` can race
+		// the animation. Retry the visibility assertion until it settles.
 		const screen = within(document.body);
-		await expect(
-			await screen.findByTestId("copy-display-dialog"),
-		).toBeVisible();
-		await expect(screen.getByTestId("copy-display-target-p2")).toBeVisible();
+		const dialog = await screen.findByTestId("copy-display-dialog");
+		await waitFor(() => expect(dialog).toBeVisible());
+		await waitFor(() =>
+			expect(screen.getByTestId("copy-display-target-p2")).toBeVisible(),
+		);
 	},
 };
 

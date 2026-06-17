@@ -586,3 +586,38 @@ export const Cycle: Story = {
 		await expect(onCycleLabels.length).toBe(3);
 	},
 };
+
+// PARALLEL-STAFFING (end-to-end through the real builder): a doc with staffing
+// enabled, the canvas display field on, and a big task renders the ⚡N→Xd badge
+// while leaving the duration label untouched. Exercises buildBaseNodes →
+// pushLeafNode → TaskNode.
+function staffingDoc(): PertDoc {
+	const d = createEmptyPertDoc("Staffing demo");
+	d.tasksById.BIG = {
+		id: "BIG",
+		kind: "task",
+		title: "Migrate database",
+		estimate: est(18, 20, 24), // expected ≈ 20.3 d
+		layout: { position: { x: 120, y: 120 } },
+	};
+	d.scheduling = {
+		parallelStaffing: { enabled: true, levelDays: 5, maxPerTask: 4 },
+	};
+	d.display = { canvas: { fields: { staffing: true } } };
+	return d;
+}
+
+export const ParallelStaffingBadge: Story = {
+	args: {
+		seed: staffingDoc(),
+		projectId: "story-canvas-staffing",
+	},
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		await canvas.findByText("Migrate database");
+		// The PERT duration (~20 d) is shown untouched…
+		await expect(await canvas.findByText(/20(\.\d+)? d/)).toBeInTheDocument();
+		// …and the staffing badge renders as a separate ⚡ segment (4 people).
+		await expect(await canvas.findByText(/⚡4/)).toBeInTheDocument();
+	},
+};

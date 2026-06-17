@@ -1,5 +1,7 @@
-import { Loader2Icon, TrendingUpIcon } from "lucide-react";
+import { Loader2Icon, TrendingUpIcon, UsersIcon } from "lucide-react";
+import { useMemo } from "react";
 import type { MonteCarloResult } from "#/lib/pert/montecarlo";
+import { computeSchedule } from "#/lib/pert/schedule";
 import type { PertDoc } from "#/lib/pert/types";
 import {
 	FORECAST_TRIALS,
@@ -93,10 +95,20 @@ function ReadyForecast({
 	doc: PertDoc;
 }) {
 	const finish = result.projectFinish;
+	const staffed = result.projectFinishStaffed;
 	const topTasks = Object.values(result.tasks)
 		.filter((t) => t.criticality > 0)
 		.sort((a, b) => b.criticality - a.criticality)
 		.slice(0, TOP_TASK_LIMIT);
+
+	// Deterministic "most-likely" finish — a single CPM pass on each task's
+	// most-likely value, independent of the project's active basis. Gives the
+	// "produce an output from the most likely case" reference point next to the
+	// probabilistic forecast.
+	const mostLikely = useMemo(() => {
+		const r = computeSchedule(doc, { basis: "most-likely" });
+		return r.ok ? r.schedule : null;
+	}, [doc]);
 
 	return (
 		<div className="space-y-3" data-testid="mc-result">
@@ -117,6 +129,53 @@ function ReadyForecast({
 			<p className="text-xs text-muted-foreground">
 				Across {result.trials.toLocaleString()} simulated runs.
 			</p>
+
+			{mostLikely && (
+				<div
+					className="flex items-baseline justify-between rounded-md border bg-background/50 p-2.5"
+					title="A single deterministic schedule using each task's most-likely estimate — everything goes as planned, no variance."
+					data-testid="mc-most-likely"
+				>
+					<span className="text-xs text-muted-foreground">
+						Most-likely finish
+					</span>
+					<span className="flex items-baseline gap-1.5">
+						<span className="text-sm font-semibold tabular-nums">
+							{mostLikely.projectFinishDate}
+						</span>
+						<span className="text-xs text-muted-foreground tabular-nums">
+							{formatDays(mostLikely.projectDuration)} d
+						</span>
+					</span>
+				</div>
+			)}
+
+			{staffed && (
+				<div className="space-y-1.5" data-testid="mc-staffed">
+					<div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+						<UsersIcon className="size-3.5" />
+						With parallel staffing
+					</div>
+					<dl className="grid grid-cols-2 gap-3">
+						<Stat
+							label="P50 finish"
+							tooltip="Coin-flip date with big tasks crashed across multiple equal people."
+							days={staffed.p50}
+							date={staffed.p50Date}
+						/>
+						<Stat
+							label="P90 finish"
+							tooltip="Safe commit date with big tasks crashed across multiple equal people."
+							days={staffed.p90}
+							date={staffed.p90Date}
+						/>
+					</dl>
+					<p className="text-xs text-muted-foreground">
+						Assumes up to the configured people per task with linear speedup —
+						optimistic, since it ignores coordination cost.
+					</p>
+				</div>
+			)}
 
 			{topTasks.length > 0 && (
 				<div className="space-y-1.5">

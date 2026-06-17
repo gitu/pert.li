@@ -29,7 +29,10 @@ import {
 import { DisplaySettingsForm } from "#/components/pert/display-settings-form";
 import { ExportProjectButton } from "#/components/pert/exchange/export-button";
 import { IssueTrackerForm } from "#/components/pert/issue-tracker-form";
-import { ProjectCalendarForm } from "#/components/pert/project-calendar-form";
+import {
+	type CalendarSchedulingFormResult,
+	ProjectCalendarForm,
+} from "#/components/pert/project-calendar-form";
 import { Button } from "#/components/ui/button";
 import { Input } from "#/components/ui/input";
 import { Textarea } from "#/components/ui/textarea";
@@ -38,10 +41,7 @@ import { DeleteProjectDialog } from "#/components/workspace/delete-project-dialo
 import { PromoteBranchDialog } from "#/components/workspace/promote-branch-dialog";
 import { ShareProjectDialog } from "#/components/workspace/share-project-dialog";
 import { useOptionalRepo } from "#/lib/automerge/provider";
-import {
-	applyCalendar,
-	type CalendarFormResult,
-} from "#/lib/pert/apply-calendar";
+import { applyCalendar } from "#/lib/pert/apply-calendar";
 import {
 	applyDisplaySettings,
 	type DisplayFormResult,
@@ -51,6 +51,7 @@ import {
 	applyIssueTracker,
 	type IssueTrackerFormResult,
 } from "#/lib/pert/apply-issue-tracker";
+import { applyScheduling } from "#/lib/pert/apply-scheduling";
 import { DEFAULT_WORKING_DAYS, todayIsoDate } from "#/lib/pert/calendar";
 import { changeWith } from "#/lib/pert/change-meta";
 import {
@@ -62,6 +63,10 @@ import {
 	type ProjectOverview,
 } from "#/lib/pert/overview";
 import { buildProjectDigest } from "#/lib/pert/overview-digest";
+import {
+	type ResolvedScheduling,
+	resolveScheduling,
+} from "#/lib/pert/resolve-scheduling";
 import { computeSchedule, type Schedule } from "#/lib/pert/schedule";
 import { selectGroup } from "#/lib/pert/store";
 import type { PertDoc, ProjectCalendar } from "#/lib/pert/types";
@@ -207,6 +212,7 @@ export function OverviewView({
 		startDate: todayIsoDate(),
 		workingDays: DEFAULT_WORKING_DAYS,
 	};
+	const schedulingInitial = useMemo(() => resolveScheduling(doc), [doc]);
 	const issueTrackerInitial: IssueTrackerFormResult = {
 		urlTemplate: doc.issueTracker?.urlTemplate ?? "",
 		name: doc.issueTracker?.name,
@@ -406,8 +412,13 @@ export function OverviewView({
 			// (showing the error) when the save fails.
 			onSaveMeta={(next) => metaMutation.mutateAsync(next)}
 			calendarInitial={calendarInitial}
+			schedulingInitial={schedulingInitial}
 			onSaveCalendar={(next) => {
 				applyCalendar(changeDoc, next);
+				applyScheduling(changeDoc, {
+					basis: next.basis,
+					parallelStaffing: next.parallelStaffing,
+				});
 				toast.success("Calendar & scheduling saved");
 			}}
 			displayInitial={displayInitial}
@@ -468,7 +479,8 @@ export type OverviewContentProps = {
 		description: string | null;
 	}) => void | Promise<unknown>;
 	calendarInitial: ProjectCalendar;
-	onSaveCalendar: (next: CalendarFormResult) => void;
+	schedulingInitial: ResolvedScheduling;
+	onSaveCalendar: (next: CalendarSchedulingFormResult) => void;
 	// DISPLAY-SETTINGS
 	displayInitial: ResolvedDisplaySettings;
 	onSaveDisplay: (next: DisplayFormResult) => void;
@@ -498,6 +510,7 @@ export function OverviewContent({
 	metaSaving,
 	onSaveMeta,
 	calendarInitial,
+	schedulingInitial,
 	onSaveCalendar,
 	displayInitial,
 	onSaveDisplay,
@@ -644,6 +657,7 @@ export function OverviewContent({
 										<ProjectCalendarForm
 											key={calendarKey}
 											initial={calendarInitial}
+											schedulingInitial={schedulingInitial}
 											doc={doc}
 											onCancel={() => setCalendarKey((k) => k + 1)}
 											onSave={(next) => {

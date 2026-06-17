@@ -52,6 +52,11 @@ function MethodologyPage() {
 								<a href="#team">Team capacity: effort vs. duration</a>
 							</li>
 							<li>
+								<a href="#basis-staffing">
+									Schedule basis &amp; parallel staffing
+								</a>
+							</li>
+							<li>
 								<a href="#montecarlo">Monte Carlo forecast</a>
 							</li>
 							<li>
@@ -233,6 +238,66 @@ function MethodologyPage() {
 						<strong>historic velocity</strong> (delivered person-days ÷ elapsed
 						working days) once you have completed tasks with real start/finish
 						dates.
+					</p>
+
+					{/* ── Schedule basis & parallel staffing ────────────────── */}
+					<h2 id="basis-staffing" className="mt-10 scroll-mt-20">
+						Schedule basis &amp; parallel staffing
+					</h2>
+					<p>
+						Two project-level controls (Overview → Calendar &amp; scheduling)
+						change <em>how a schedule is produced</em> without ever changing the
+						per-task duration shown on the network diagram and lists — that
+						label is always the PERT expected value.
+					</p>
+					<h3 className="mt-6">Schedule basis</h3>
+					<p>
+						The basis picks which single number each task contributes to the
+						forward/backward pass:
+					</p>
+					<ul>
+						<li>
+							<strong>Expected</strong> (default) — the PERT mean{" "}
+							<code>(o + 4m + p) / 6</code>.
+						</li>
+						<li>
+							<strong>Most likely</strong> — the raw <code>m</code> value, for
+							an &ldquo;everything goes to plan&rdquo; schedule. Start/finish
+							dates, slack and the critical path all shift to this basis; the
+							displayed duration stays the PERT expected.
+						</li>
+					</ul>
+					<p>
+						The probabilistic alternative — &ldquo;schedule from the full
+						duration distributions&rdquo; — is the Monte Carlo forecast below,
+						which keeps its own per-task percentiles rather than collapsing to
+						one number.
+					</p>
+					<h3 className="mt-6">Parallel staffing</h3>
+					<p>
+						An <strong>optional, additional</strong> forecast for the common
+						case where a big task can simply take more people. It assumes up to
+						a configurable maximum of <strong>equal</strong> people work a task
+						in parallel with linear speedup. The headcount is
+						&ldquo;chunked&rdquo; off a <strong>level</strong> (in days), which
+						is both the eligibility threshold and the per-person chunk:
+					</p>
+					<pre className="not-prose rounded-md border bg-muted/30 p-4 text-sm">
+						<code>{`people = clamp(floor(size / level), 1, maxPerTask)
+wallClock = size / people`}</code>
+					</pre>
+					<p>
+						So with a 5-day level and a max of 4, a 20-day task draws 4 people
+						and finishes in ~5 days, while a 7-day task stays at one person.
+						Because it models people as <em>abundant</em> (crash a task) rather
+						than <em>scarce</em> (stretch it), parallel staffing is mutually
+						exclusive with Team capacity mode — Team capacity wins, and the
+						staffing controls are disabled there. Linear <code>size / k</code>{" "}
+						is deliberately optimistic: it ignores coordination overhead
+						(Brooks&rsquo;s law), so read it as a best case. The result surfaces
+						only as the forecast card&rsquo;s &ldquo;with parallel
+						staffing&rdquo; row, a per-task inspector hint, and an opt-in canvas
+						badge — never as a change to the committed schedule.
 					</p>
 
 					{/* ── Monte Carlo ───────────────────────────────────────── */}
