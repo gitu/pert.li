@@ -1,0 +1,180 @@
+// EXPLAINERS: pure helpers that turn a task's schedule + estimate into short
+// "how was this number calculated?" strings, with the actual operands filled
+// in. Centralised so every surface (canvas node, task list, inspector, overview)
+// shows the SAME wording for the SAME quantity. Dependency-light (type-only
+// imports) so it can be unit-tested in isolation.
+//
+// All schedule numbers are in project days (0 = project start). Estimates carry
+// their own unit; the expected-duration explainer shows the formula in the
+// estimate's unit and, when that isn't days, the day-converted result too.
+
+import type { TaskSchedule } from "./schedule";
+import type { Estimate, EstimateUnit } from "./types";
+
+const UNIT_TO_DAYS: Record<EstimateUnit, number> = {
+	hour: 1 / 24,
+	day: 1,
+	week: 7,
+};
+
+const UNIT_NOUN: Record<EstimateUnit, string> = {
+	hour: "hours",
+	day: "days",
+	week: "weeks",
+};
+
+const UNIT_NOUN_SINGULAR: Record<EstimateUnit, string> = {
+	hour: "hour",
+	day: "day",
+	week: "week",
+};
+
+// Format a day count to at most one decimal. Rounds to 1dp FIRST, then drops a
+// trailing ".0" (so 5.04 → "5", 5.25 → "5.3"); snaps ~0 to 0 and ∞ to a glyph.
+// No floating-point noise leaks into tooltips.
+export function fmtDays(n: number): string {
+	if (!Number.isFinite(n)) return "∞";
+	const snapped = Math.abs(n) < 1e-6 ? 0 : n;
+	const rounded = Math.round(snapped * 10) / 10;
+	if (Number.isInteger(rounded)) return rounded.toString();
+	return rounded.toFixed(1);
+}
+
+// The headline duration explainer: always the Beta-PERT expected value, with
+// the worked formula, plus a note when the SCHEDULE uses a different effective
+// duration (in-progress burn-down or team-capacity scaling) so the canvas/list
+// number and the schedule stay reconcilable.
+export function explainExpectedDuration(
+	estimate: Estimate | undefined,
+	sched?: Pick<TaskSchedule, "expected" | "duration" | "status" | "progress">,
+): string {
+	if (!estimate) {
+		return "No estimate yet — add optimistic / most-likely / pessimistic values to compute a duration.";
+	}
+	const { optimistic: o, mostLikely: m, pessimistic: p, unit } = estimate;
+	// Compute the mean ONCE: it drives the displayed value, the noun's
+	// singular/plural, and the day-conversion (no duplicated arithmetic).
+	const mean = (o + 4 * m + p) / 6;
+	const noun =
+		fmtDays(mean) === "1" ? UNIT_NOUN_SINGULAR[unit] : UNIT_NOUN[unit];
+	let base = `Expected duration — the Beta-PERT weighted mean of your three-point estimate: (${fmtDays(
+		o,
+	)} + 4·${fmtDays(m)} + ${fmtDays(p)}) / 6 = ${fmtDays(mean)} ${noun}`;
+	if (unit !== "day") {
+		base += ` = ${fmtDays(mean * UNIT_TO_DAYS[unit])} d`;
+	}
+	base += ". The most-likely value is weighted 4× the extremes.";
+
+	if (!sched) return base;
+	// When the effective scheduling duration diverges from the expected value,
+	// say why — this is exactly the "weirdly calculated" gap users hit.
+	const expected = sched.expected;
+	const effective = sched.duration;
+	if (Math.abs(effective - expected) > 1e-6) {
+		if (sched.status === "completed") {
+			base += ` This task is complete, so it adds 0 d to the schedule.`;
+		} else if (sched.status === "in_progress") {
+			base += ` It's ${sched.progress}% done, so the schedule uses the remaining ${fmtDays(
+				effective,
+			)} d (after burn-down and any scheduling-basis / team-capacity scaling).`;
+		} else {
+			// A not-started task whose effective duration differs can be the
+			// most-likely schedule basis OR team-capacity scaling — the explainer
+			// isn't told which, so stay neutral rather than mis-attribute it.
+			base += ` The schedule lays it out as ${fmtDays(
+				effective,
+			)} d (per the project's scheduling basis and team-capacity settings).`;
+		}
+	}
+	return base;
+}
+
+export function explainSlack(
+	sched: Pick<
+		TaskSchedule,
+		"slack" | "critical" | "latestStart" | "earliestStart"
+	>,
+): string {
+	if (sched.critical) {
+		return "On the critical path: zero slack (latest start = earliest start), so any slip here moves the whole project finish.";
+	}
+	// Slack below 0.05 d rounds to "0 d" in the UI even though `critical` is
+	// false (the critical flag uses a far tighter epsilon). Without this guard
+	// the explainer would pair non-critical wording with a "0 d" value.
+	if (Math.abs(sched.slack) < 0.05) {
+		return `Effectively no slack — latest start − earliest start = ${fmtDays(
+			sched.latestStart,
+		)} − ${fmtDays(
+			sched.earliestStart,
+		)} ≈ 0 d, so it's all but on the critical path; almost any slip moves the finish.`;
+	}
+	return `Slack = latest start − earliest start = ${fmtDays(
+		sched.latestStart,
+	)} − ${fmtDays(sched.earliestStart)} = ${fmtDays(
+		sched.slack,
+	)} d. The task can slip this much before it delays the project finish.`;
+}
+
+export function explainEarliestStart(
+	sched: Pick<TaskSchedule, "earliestStart">,
+): string {
+	return `Earliest start (CPM ES) = day ${fmtDays(
+		sched.earliestStart,
+	)} — the soonest this task can begin once every predecessor (and its lag) is satisfied.`;
+}
+
+export function explainEarliestFinish(
+	sched: Pick<TaskSchedule, "earliestStart" | "earliestFinish" | "duration">,
+): string {
+	// NOTE: the operand is the SCHEDULED (effective) duration — remaining work
+	// for in-progress tasks, scaled under team capacity — which can differ from
+	// the displayed PERT "expected duration". Name it explicitly to avoid
+	// conflating the two in the new UX.
+	return `Earliest finish (CPM EF) = earliest start + scheduled duration = ${fmtDays(
+		sched.earliestStart,
+	)} + ${fmtDays(sched.duration)} = day ${fmtDays(sched.earliestFinish)}.`;
+}
+
+export function explainLatestStart(
+	sched: Pick<TaskSchedule, "latestStart" | "latestFinish" | "duration">,
+): string {
+	return `Latest start (CPM LS) = latest finish − scheduled duration = ${fmtDays(
+		sched.latestFinish,
+	)} − ${fmtDays(sched.duration)} = day ${fmtDays(
+		sched.latestStart,
+	)} — the last day it can start without delaying the project.`;
+}
+
+export function explainLatestFinish(
+	sched: Pick<TaskSchedule, "latestFinish">,
+): string {
+	return `Latest finish (CPM LF) = day ${fmtDays(
+		sched.latestFinish,
+	)} — the last day it can end without pushing the project finish.`;
+}
+
+// Criticality from Monte Carlo: share of simulated runs the task landed on the
+// critical path.
+export function explainCriticality(criticality: number, trials = 1500): string {
+	const pct = Math.round(criticality * 100);
+	return `On the critical path in ${pct}% of ${trials.toLocaleString()} simulated runs. High values (≥80%) mean it drives the finish date in almost every plausible scenario — protect its estimate.`;
+}
+
+// ±95% confidence band around a summed expected duration, from variances added
+// in quadrature (independent-task assumption).
+export function explainConfidenceBand(band: number, taskCount: number): string {
+	return `±${fmtDays(
+		band,
+	)} d is the 95% confidence band: ±1.96·√(Σσ²) over ${taskCount} task${
+		taskCount === 1 ? "" : "s"
+	}, each task's σ = (pessimistic − optimistic) / 6, summed in quadrature.`;
+}
+
+export const explainProjectDuration =
+	"Project duration = the longest dependency chain (critical path) through the graph — the earliest everything can finish.";
+
+export const explainProjectP50 =
+	"P50 finish — the coin-flip date: across the simulated runs, half finished by here and half later.";
+
+export const explainProjectP90 =
+	"P90 finish — the safe-commit date: 9 in 10 simulated runs finished by here.";

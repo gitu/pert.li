@@ -45,6 +45,15 @@ import {
 } from "#/lib/ai/tool-mutators";
 import { todayIsoDate } from "#/lib/pert/calendar";
 import {
+	explainCriticality,
+	explainEarliestFinish,
+	explainEarliestStart,
+	explainExpectedDuration,
+	explainLatestFinish,
+	explainLatestStart,
+	explainSlack,
+} from "#/lib/pert/explain";
+import {
 	getChildGroups,
 	getGroupDescendants,
 	getTasksInGroup,
@@ -654,43 +663,46 @@ function TaskForm({
 							</span>
 						</h3>
 						{sched ? (
-							<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
-								<ScheduleStat
-									label="Duration"
-									tooltip="How long this task takes once it starts. Computed from your PERT estimate as (optimistic + 4·most likely + pessimistic) / 6."
-									value={`${fmt(sched.duration)} d`}
-								/>
-								<ScheduleStat
-									label="Slack"
-									tooltip="Spare time before this task starts delaying the whole project. 0 days means it's on the critical path — any slip moves the finish date."
-									value={`${fmt(sched.slack)} d`}
-									highlight={sched.critical ? "critical" : undefined}
-								/>
-								<ScheduleStat
-									label="Earliest start"
-									tooltip="The earliest day this task can begin, given everything that has to finish first. (CPM: ES)"
-									value={fmt(sched.earliestStart)}
-									subValue={sched.earliestStartDate}
-								/>
-								<ScheduleStat
-									label="Earliest finish"
-									tooltip="Earliest start + duration. The earliest possible day this task could be done. (CPM: EF)"
-									value={fmt(sched.earliestFinish)}
-									subValue={sched.earliestFinishDate}
-								/>
-								<ScheduleStat
-									label="Latest start"
-									tooltip="The latest day this task can begin without delaying the project finish. (CPM: LS)"
-									value={fmt(sched.latestStart)}
-									subValue={sched.latestStartDate}
-								/>
-								<ScheduleStat
-									label="Latest finish"
-									tooltip="The latest day this task can end without delaying the project finish. (CPM: LF)"
-									value={fmt(sched.latestFinish)}
-									subValue={sched.latestFinishDate}
-								/>
-							</dl>
+							<>
+								<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+									<ScheduleStat
+										label="Duration"
+										tooltip={explainExpectedDuration(task.estimate, sched)}
+										value={`${fmt(sched.expected)} d`}
+									/>
+									<ScheduleStat
+										label="Slack"
+										tooltip={explainSlack(sched)}
+										value={`${fmt(sched.slack)} d`}
+										highlight={sched.critical ? "critical" : undefined}
+									/>
+									<ScheduleStat
+										label="Earliest start"
+										tooltip={explainEarliestStart(sched)}
+										value={fmt(sched.earliestStart)}
+										subValue={sched.earliestStartDate}
+									/>
+									<ScheduleStat
+										label="Earliest finish"
+										tooltip={explainEarliestFinish(sched)}
+										value={fmt(sched.earliestFinish)}
+										subValue={sched.earliestFinishDate}
+									/>
+									<ScheduleStat
+										label="Latest start"
+										tooltip={explainLatestStart(sched)}
+										value={fmt(sched.latestStart)}
+										subValue={sched.latestStartDate}
+									/>
+									<ScheduleStat
+										label="Latest finish"
+										tooltip={explainLatestFinish(sched)}
+										value={fmt(sched.latestFinish)}
+										subValue={sched.latestFinishDate}
+									/>
+								</dl>
+								<ScheduleExplainers task={task} sched={sched} />
+							</>
 						) : (
 							<p className="text-xs text-destructive">
 								Cycle in the graph blocks scheduling.
@@ -915,40 +927,41 @@ function TaskOverview({
 					<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5">
 						<ScheduleStat
 							label="Duration"
-							tooltip="Beta-PERT expected duration (o + 4m + p)/6."
-							value={`${fmt(sched.duration)} d`}
+							tooltip={explainExpectedDuration(task.estimate, sched)}
+							value={`${fmt(sched.expected)} d`}
 						/>
 						<ScheduleStat
 							label="Slack"
-							tooltip="Days this task can slip before the project finish moves."
+							tooltip={explainSlack(sched)}
 							value={`${fmt(sched.slack)} d`}
 							highlight={sched.critical ? "critical" : undefined}
 						/>
 						<ScheduleStat
 							label="Earliest start"
-							tooltip="The earliest day this task can begin (CPM: ES)."
+							tooltip={explainEarliestStart(sched)}
 							value={fmt(sched.earliestStart)}
 							subValue={sched.earliestStartDate}
 						/>
 						<ScheduleStat
 							label="Earliest finish"
-							tooltip="ES + duration (CPM: EF)."
+							tooltip={explainEarliestFinish(sched)}
 							value={fmt(sched.earliestFinish)}
 							subValue={sched.earliestFinishDate}
 						/>
 						<ScheduleStat
 							label="Latest start"
-							tooltip="Latest start without delaying the project (CPM: LS)."
+							tooltip={explainLatestStart(sched)}
 							value={fmt(sched.latestStart)}
 							subValue={sched.latestStartDate}
 						/>
 						<ScheduleStat
 							label="Latest finish"
-							tooltip="Latest finish without delaying the project (CPM: LF)."
+							tooltip={explainLatestFinish(sched)}
 							value={fmt(sched.latestFinish)}
 							subValue={sched.latestFinishDate}
 						/>
 					</dl>
+					<ScheduleExplainers task={task} sched={sched} />
 				</OverviewSection>
 			) : (
 				<p className="text-xs text-destructive">
@@ -1356,7 +1369,7 @@ function MonteCarloCard({ mc }: { mc: MonteCarloResult["tasks"][string] }) {
 				/>
 				<ScheduleStat
 					label="Criticality"
-					tooltip="Percentage of simulated runs where this task ended up on the critical path. High values (≥80%) mean it drives the project finish in almost every plausible scenario — protect its estimate."
+					tooltip={explainCriticality(mc.criticality)}
 					value={`${crit}%`}
 					highlight={crit >= 80 ? "critical" : undefined}
 				/>
@@ -1856,6 +1869,42 @@ function EstimateField({
 				}}
 			/>
 		</div>
+	);
+}
+
+// Inline, always-visible breakdown of how each Computed-schedule number was
+// derived — the same explainers the stat labels surface on hover, rendered as
+// readable text in the task detail page (a collapsible so it doesn't crowd the
+// inspector). Shown under the Computed-schedule grid.
+function ScheduleExplainers({
+	task,
+	sched,
+}: {
+	task: Task;
+	sched: TaskSchedule;
+}) {
+	const rows: ReadonlyArray<readonly [string, string]> = [
+		["Duration", explainExpectedDuration(task.estimate, sched)],
+		["Slack", explainSlack(sched)],
+		["Earliest start", explainEarliestStart(sched)],
+		["Earliest finish", explainEarliestFinish(sched)],
+		["Latest start", explainLatestStart(sched)],
+		["Latest finish", explainLatestFinish(sched)],
+	];
+	return (
+		<details className="mt-2 text-xs" data-testid="schedule-calc-details">
+			<summary className="cursor-pointer select-none text-muted-foreground hover:text-foreground">
+				How these are calculated
+			</summary>
+			<dl className="mt-1.5 space-y-1.5">
+				{rows.map(([label, text]) => (
+					<div key={label}>
+						<dt className="font-medium">{label}</dt>
+						<dd className="leading-snug text-muted-foreground">{text}</dd>
+					</div>
+				))}
+			</dl>
+		</details>
 	);
 }
 

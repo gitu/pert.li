@@ -134,6 +134,23 @@ export const WithIssueLinks: Story = {
 	},
 };
 
+// The Computed-schedule section carries an inline "How these are calculated"
+// disclosure: the explainers rendered as readable text in the detail page, not
+// just on hover. Expanding it reveals the worked PERT formula for this task.
+export const ScheduleCalculations: Story = {
+	render: () => <StoryHarness changeDoc={noopChangeDoc} />,
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		const details = await canvas.findByTestId("schedule-calc-details");
+		await expect(details).toBeInTheDocument();
+		// T1's estimate is 2/5/9 → expected (2 + 4·5 + 9)/6 = 5.2.
+		await userEvent.click(
+			within(details).getByText("How these are calculated"),
+		);
+		await expect(details).toHaveTextContent(/\(2 \+ 4·5 \+ 9\) \/ 6 = 5.2/);
+	},
+};
+
 // PARALLEL-STAFFING: a big task on a project with staffing enabled shows the
 // read-only per-task hint (up to N people → ~X d), separate from the schedule.
 export const WithParallelStaffing: Story = {

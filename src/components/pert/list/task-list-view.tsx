@@ -57,6 +57,11 @@ import {
 	assignTaskToGroupMutation,
 } from "#/lib/ai/tool-mutators";
 import { todayIsoDate } from "#/lib/pert/calendar";
+import {
+	explainConfidenceBand,
+	explainExpectedDuration,
+	explainProjectDuration,
+} from "#/lib/pert/explain";
 import { renameGroupMutation } from "#/lib/pert/group-mutations";
 import {
 	buildGroupTree,
@@ -97,7 +102,11 @@ export type TaskListRow = {
 	number: string;
 	numberOverride: string | undefined;
 	estimate: Estimate | undefined;
+	// Beta-PERT EXPECTED duration (o + 4m + p)/6 — the stable estimate-derived
+	// value shown in the Dur column, NOT the effective scheduling duration.
 	duration: number;
+	// Hover explainer for the duration cell ("how was this computed?").
+	durationExplain: string | undefined;
 	es: number | null;
 	ef: number | null;
 	slack: number | null;
@@ -137,7 +146,11 @@ export function buildTaskListRows(
 				number: numbers.tasks[t.id] ?? "",
 				numberOverride: t.numberOverride,
 				estimate: t.estimate,
-				duration: s?.duration ?? 0,
+				duration: s?.expected ?? 0,
+				durationExplain:
+					t.kind === "task"
+						? explainExpectedDuration(t.estimate, s)
+						: undefined,
 				es: s?.earliestStart ?? null,
 				ef: s?.earliestFinish ?? null,
 				slack: s?.slack ?? null,
@@ -759,17 +772,37 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 			},
 			{
 				accessorKey: "duration",
-				header: () => <div className="text-right">Dur</div>,
-				cell: ({ getValue }) => (
-					<div className="text-right tabular-nums">
-						{fmt(getValue() as number)}
+				header: () => (
+					<div
+						className="cursor-help text-right"
+						title="Beta-PERT expected duration: (optimistic + 4·most-likely + pessimistic) / 6, in days."
+					>
+						Dur
+					</div>
+				),
+				cell: ({ row }) => (
+					<div
+						className={cn(
+							"text-right tabular-nums",
+							row.original.durationExplain && "cursor-help",
+						)}
+						title={row.original.durationExplain}
+					>
+						{fmt(row.original.duration)}
 					</div>
 				),
 				size: 70,
 			},
 			{
 				accessorKey: "es",
-				header: () => <div className="text-right">ES</div>,
+				header: () => (
+					<div
+						className="cursor-help text-right"
+						title="Earliest start (CPM) — the soonest the task can begin once every predecessor (and its lag) is satisfied, in days from project start."
+					>
+						ES
+					</div>
+				),
 				cell: ({ getValue }) => (
 					<div className="text-right tabular-nums">
 						{fmtNullable(getValue() as number | null)}
@@ -780,7 +813,14 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 			},
 			{
 				accessorKey: "ef",
-				header: () => <div className="text-right">EF</div>,
+				header: () => (
+					<div
+						className="cursor-help text-right"
+						title="Earliest finish (CPM) = earliest start + duration, in days from project start."
+					>
+						EF
+					</div>
+				),
 				cell: ({ getValue }) => (
 					<div className="text-right tabular-nums">
 						{fmtNullable(getValue() as number | null)}
@@ -791,7 +831,14 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 			},
 			{
 				accessorKey: "slack",
-				header: () => <div className="text-right">Slack</div>,
+				header: () => (
+					<div
+						className="cursor-help text-right"
+						title="Slack = latest start − earliest start: spare days before the task delays the project finish. 0 = on the critical path."
+					>
+						Slack
+					</div>
+				),
 				cell: ({ getValue }) => (
 					<div className="text-right tabular-nums">
 						{fmtNullable(getValue() as number | null)}
@@ -1213,7 +1260,10 @@ export function TaskListView({ projectId, doc }: TaskListViewProps) {
 						tooltip="Table keyboard shortcuts"
 					/>
 					{scheduleResult.ok ? (
-						<span className="text-xs text-muted-foreground">
+						<span
+							className="cursor-help text-xs text-muted-foreground"
+							title={explainProjectDuration}
+						>
 							Project {fmt(scheduleResult.schedule.projectDuration)} d
 						</span>
 					) : (
@@ -1684,15 +1734,21 @@ function renderGroupedRows({
 							<>
 								<span className="text-muted-foreground">·</span>
 								<span className="text-muted-foreground">
-									<span className="tabular-nums text-foreground">
+									<span
+										className="cursor-help tabular-nums text-foreground"
+										title="Sum of the members' Beta-PERT expected durations (o + 4m + p)/6."
+									>
 										{fmt(summary.totalDuration)}d
 									</span>
 									{summary.ci95 !== null && summary.ci95 >= 0.05 && (
 										<>
 											{" "}
 											<span
-												className="text-muted-foreground/70"
-												title="95% confidence interval — ±1.96σ from each row's PERT spread, summed in quadrature."
+												className="cursor-help text-muted-foreground/70"
+												title={explainConfidenceBand(
+													summary.ci95,
+													summary.totalCount,
+												)}
 											>
 												±{fmt(summary.ci95)}d
 											</span>

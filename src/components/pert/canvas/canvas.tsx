@@ -38,6 +38,7 @@ import {
 	type ResolvedSurface,
 	resolveDisplaySettings,
 } from "#/lib/pert/display";
+import { explainExpectedDuration, explainSlack } from "#/lib/pert/explain";
 import {
 	assignTaskToGroupMutation,
 	deleteGroupMutation,
@@ -1312,7 +1313,15 @@ function pushLeafNode(
 	const data: TaskNodeData = {
 		title: task.title,
 		kind: task.kind === "milestone" ? "milestone" : "task",
-		durationDays: sched?.duration ?? 0,
+		// Show the PERT EXPECTED duration (stable, estimate-derived), not the
+		// effective scheduling duration — the explainer reconciles the two.
+		durationDays: sched?.expected ?? 0,
+		durationExplain:
+			task.kind === "task"
+				? explainExpectedDuration(task.estimate, sched)
+				: undefined,
+		slackExplain:
+			sched && task.kind === "task" ? explainSlack(sched) : undefined,
 		mostLikelyDays: task.estimate?.mostLikely,
 		slackDays: sched?.slack ?? null,
 		critical: sched?.critical ?? false,

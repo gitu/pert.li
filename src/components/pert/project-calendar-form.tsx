@@ -363,7 +363,6 @@ export function ProjectCalendarForm({
 										min={MIN_STAFFING_LEVEL_DAYS}
 										step={0.5}
 										value={staffing.levelDays}
-										disabled={!staffing.enabled}
 										onChange={(e) =>
 											setStaffing((p) => ({
 												...p,
@@ -385,7 +384,6 @@ export function ProjectCalendarForm({
 										min={1}
 										step={1}
 										value={staffing.maxPerTask}
-										disabled={!staffing.enabled}
 										onChange={(e) =>
 											setStaffing((p) => ({
 												...p,
