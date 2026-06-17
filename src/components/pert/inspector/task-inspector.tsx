@@ -663,43 +663,46 @@ function TaskForm({
 							</span>
 						</h3>
 						{sched ? (
-							<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
-								<ScheduleStat
-									label="Duration"
-									tooltip={explainExpectedDuration(task.estimate, sched)}
-									value={`${fmt(sched.expected)} d`}
-								/>
-								<ScheduleStat
-									label="Slack"
-									tooltip={explainSlack(sched)}
-									value={`${fmt(sched.slack)} d`}
-									highlight={sched.critical ? "critical" : undefined}
-								/>
-								<ScheduleStat
-									label="Earliest start"
-									tooltip={explainEarliestStart(sched)}
-									value={fmt(sched.earliestStart)}
-									subValue={sched.earliestStartDate}
-								/>
-								<ScheduleStat
-									label="Earliest finish"
-									tooltip={explainEarliestFinish(sched)}
-									value={fmt(sched.earliestFinish)}
-									subValue={sched.earliestFinishDate}
-								/>
-								<ScheduleStat
-									label="Latest start"
-									tooltip={explainLatestStart(sched)}
-									value={fmt(sched.latestStart)}
-									subValue={sched.latestStartDate}
-								/>
-								<ScheduleStat
-									label="Latest finish"
-									tooltip={explainLatestFinish(sched)}
-									value={fmt(sched.latestFinish)}
-									subValue={sched.latestFinishDate}
-								/>
-							</dl>
+							<>
+								<dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+									<ScheduleStat
+										label="Duration"
+										tooltip={explainExpectedDuration(task.estimate, sched)}
+										value={`${fmt(sched.expected)} d`}
+									/>
+									<ScheduleStat
+										label="Slack"
+										tooltip={explainSlack(sched)}
+										value={`${fmt(sched.slack)} d`}
+										highlight={sched.critical ? "critical" : undefined}
+									/>
+									<ScheduleStat
+										label="Earliest start"
+										tooltip={explainEarliestStart(sched)}
+										value={fmt(sched.earliestStart)}
+										subValue={sched.earliestStartDate}
+									/>
+									<ScheduleStat
+										label="Earliest finish"
+										tooltip={explainEarliestFinish(sched)}
+										value={fmt(sched.earliestFinish)}
+										subValue={sched.earliestFinishDate}
+									/>
+									<ScheduleStat
+										label="Latest start"
+										tooltip={explainLatestStart(sched)}
+										value={fmt(sched.latestStart)}
+										subValue={sched.latestStartDate}
+									/>
+									<ScheduleStat
+										label="Latest finish"
+										tooltip={explainLatestFinish(sched)}
+										value={fmt(sched.latestFinish)}
+										subValue={sched.latestFinishDate}
+									/>
+								</dl>
+								<ScheduleExplainers task={task} sched={sched} />
+							</>
 						) : (
 							<p className="text-xs text-destructive">
 								Cycle in the graph blocks scheduling.
@@ -958,6 +961,7 @@ function TaskOverview({
 							subValue={sched.latestFinishDate}
 						/>
 					</dl>
+					<ScheduleExplainers task={task} sched={sched} />
 				</OverviewSection>
 			) : (
 				<p className="text-xs text-destructive">
@@ -1865,6 +1869,42 @@ function EstimateField({
 				}}
 			/>
 		</div>
+	);
+}
+
+// Inline, always-visible breakdown of how each Computed-schedule number was
+// derived — the same explainers the stat labels surface on hover, rendered as
+// readable text in the task detail page (a collapsible so it doesn't crowd the
+// inspector). Shown under the Computed-schedule grid.
+function ScheduleExplainers({
+	task,
+	sched,
+}: {
+	task: Task;
+	sched: TaskSchedule;
+}) {
+	const rows: ReadonlyArray<readonly [string, string]> = [
+		["Duration", explainExpectedDuration(task.estimate, sched)],
+		["Slack", explainSlack(sched)],
+		["Earliest start", explainEarliestStart(sched)],
+		["Earliest finish", explainEarliestFinish(sched)],
+		["Latest start", explainLatestStart(sched)],
+		["Latest finish", explainLatestFinish(sched)],
+	];
+	return (
+		<details className="mt-2 text-xs" data-testid="schedule-calc-details">
+			<summary className="cursor-pointer select-none text-muted-foreground hover:text-foreground">
+				How these are calculated
+			</summary>
+			<dl className="mt-1.5 space-y-1.5">
+				{rows.map(([label, text]) => (
+					<div key={label}>
+						<dt className="font-medium">{label}</dt>
+						<dd className="leading-snug text-muted-foreground">{text}</dd>
+					</div>
+				))}
+			</dl>
+		</details>
 	);
 }
 

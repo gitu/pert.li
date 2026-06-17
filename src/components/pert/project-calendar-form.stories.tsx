@@ -165,6 +165,23 @@ export const EnablesParallelStaffing: Story = {
 	},
 };
 
+// The staffing Level / Max inputs are editable straight away in Calendar-days
+// mode (not greyed out behind the Enabled checkbox) — the checkbox only gates
+// whether the forecast runs.
+export const StaffingInputsEditableByDefault: Story = {
+	play: async ({ canvasElement }) => {
+		const canvas = within(canvasElement);
+		// Default scheduling = staffing disabled, yet the inputs are still enabled.
+		await expect(
+			await canvas.findByTestId("staffing-level-input"),
+		).toBeEnabled();
+		await expect(await canvas.findByTestId("staffing-max-input")).toBeEnabled();
+		expect(
+			(await canvas.findByTestId("staffing-enabled")) as HTMLInputElement,
+		).not.toBeChecked();
+	},
+};
+
 // In team-capacity mode the staffing block is disabled with an explanatory note
 // (team capacity already models shared staffing).
 export const StaffingDisabledUnderTeam: Story = {
