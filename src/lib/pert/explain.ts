@@ -29,9 +29,9 @@ const UNIT_NOUN_SINGULAR: Record<EstimateUnit, string> = {
 	week: "week",
 };
 
-// One-decimal, trailing-zero-trimmed; snaps ~0 to 0 and ∞ to a glyph. Rounds to
-// 1dp FIRST so values like 5.04 render "5" (not "5.0") and don't leak
-// floating-point noise into tooltips.
+// Format a day count to at most one decimal. Rounds to 1dp FIRST, then drops a
+// trailing ".0" (so 5.04 → "5", 5.25 → "5.3"); snaps ~0 to 0 and ∞ to a glyph.
+// No floating-point noise leaks into tooltips.
 export function fmtDays(n: number): string {
 	if (!Number.isFinite(n)) return "∞";
 	const snapped = Math.abs(n) < 1e-6 ? 0 : n;
@@ -74,9 +74,9 @@ export function explainExpectedDuration(
 		if (sched.status === "completed") {
 			base += ` This task is complete, so it adds 0 d to the schedule.`;
 		} else if (sched.status === "in_progress") {
-			base += ` It's ${sched.progress}% done, so only ${fmtDays(
+			base += ` It's ${sched.progress}% done, so the schedule uses the remaining ${fmtDays(
 				effective,
-			)} d of remaining work feeds the schedule.`;
+			)} d (after burn-down and any scheduling-basis / team-capacity scaling).`;
 		} else {
 			// A not-started task whose effective duration differs can be the
 			// most-likely schedule basis OR team-capacity scaling — the explainer
@@ -97,6 +97,16 @@ export function explainSlack(
 ): string {
 	if (sched.critical) {
 		return "On the critical path: zero slack (latest start = earliest start), so any slip here moves the whole project finish.";
+	}
+	// Slack below 0.05 d rounds to "0 d" in the UI even though `critical` is
+	// false (the critical flag uses a far tighter epsilon). Without this guard
+	// the explainer would pair non-critical wording with a "0 d" value.
+	if (Math.abs(sched.slack) < 0.05) {
+		return `Effectively no slack — latest start − earliest start = ${fmtDays(
+			sched.latestStart,
+		)} − ${fmtDays(
+			sched.earliestStart,
+		)} ≈ 0 d, so it's all but on the critical path; almost any slip moves the finish.`;
 	}
 	return `Slack = latest start − earliest start = ${fmtDays(
 		sched.latestStart,

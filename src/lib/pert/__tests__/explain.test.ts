@@ -121,6 +121,21 @@ describe("explainSlack", () => {
 		);
 		expect(text).toContain("4 − 1 = 3");
 	});
+
+	it("treats near-zero (rounds to 0 d) but non-critical slack as effectively none", () => {
+		// slack 0.03 renders "0 d" while critical is false — guard against the
+		// contradictory "can slip 0 d" wording.
+		const text = explainSlack(
+			sched({
+				critical: false,
+				slack: 0.03,
+				latestStart: 5.03,
+				earliestStart: 5,
+			}),
+		);
+		expect(text).toMatch(/Effectively no slack/i);
+		expect(text).not.toContain("can slip");
+	});
 });
 
 describe("explainEarliestFinish", () => {
