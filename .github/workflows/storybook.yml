@@ -21,7 +21,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         # `git describe` (run from .storybook/vite.config.ts via
         # compute-version.mjs) needs full history to count commits-since-tag.
         with:
@@ -91,7 +91,7 @@ jobs:
       ANTHROPIC_API_KEY: ci-placeholder
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         # compute-version.mjs (run from .storybook/vite.config.ts) needs full
         # history for `git describe`, matching the build job above.
         with:
