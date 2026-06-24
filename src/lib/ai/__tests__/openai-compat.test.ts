@@ -276,6 +276,10 @@ describe("toOpenAiCompatibleTools — against the real @tanstack/ai-openai adapt
 			label: "Responses API (createOpenaiChat)",
 			make: () =>
 				createOpenaiChat("gpt-5-mini", "sk-test") as unknown as RequestMapper,
+			// The Responses adapter marks every tool `strict: true` and runs its
+			// input schema through makeStructuredOutputCompatible, which hard-throws
+			// on `oneOf`.
+			rawToolsThrow: true,
 		},
 		{
 			label: "Chat Completions API (createOpenaiChatCompletions)",
@@ -284,15 +288,28 @@ describe("toOpenAiCompatibleTools — against the real @tanstack/ai-openai adapt
 					"gpt-5-mini",
 					"sk-test",
 				) as unknown as RequestMapper,
+			// Since @tanstack/ai-openai 0.15 the Chat Completions adapter no longer
+			// rejects `oneOf` — it passes the schema through verbatim, so the raw
+			// discriminated-union `oneOf` leaks straight into the outgoing request.
+			// That is exactly what the compat layer strips before it reaches OpenAI.
+			rawToolsThrow: false,
 		},
 	];
 
-	for (const { label, make } of adapters) {
-		it(`${label} rejects the raw chat tools (documents the bug)`, () => {
+	for (const { label, make, rawToolsThrow } of adapters) {
+		it(`${label} ${rawToolsThrow ? "rejects" : "leaks oneOf from"} the raw chat tools (documents why the compat layer exists)`, () => {
 			const rawTools = clientSerializedChatTools();
-			expect(() => make().mapOptionsToRequest(buildOptions(rawTools))).toThrow(
-				/oneOf is not supported/,
-			);
+			if (rawToolsThrow) {
+				expect(() =>
+					make().mapOptionsToRequest(buildOptions(rawTools)),
+				).toThrow(/oneOf is not supported/);
+				return;
+			}
+			// No throw, but the discriminated-union `oneOf` survives untouched —
+			// OpenAI's strict structured outputs would reject it, so the compat
+			// layer is still required.
+			const request = make().mapOptionsToRequest(buildOptions(rawTools));
+			expect(JSON.stringify(request.tools)).toContain('"oneOf"');
 		});
 
 		it(`${label} builds a request from the compat-rewritten chat tools`, () => {

@@ -4,8 +4,16 @@
 # kysely 0.29 moved to "kysely/migration", which breaks the rolldown build.
 # Upstream fix (better-auth#9811) is merged but unreleased; remove this once
 # better-auth >= 1.6.15 is published. See better-auth#9909 / #9901.
+# Pin playwright-core to one version: @storybook/test-runner bundles its own
+# playwright-core (range ">=1.2.0") which, after the @playwright/test 1.61.0
+# bump, deduped to 1.60.0 — a different Chromium build than the 1.61.0 browser
+# CI installs via `playwright install`. The test-runner then can't find its
+# expected build and the storybook job fails with "Executable doesn't exist".
+# Forcing both to @playwright/test's version keeps a single browser build.
+# Remove once @storybook/test-runner ships with playwright-core >= 1.61.
 overrides:
   kysely: 0.28.17
+  playwright-core: 1.61.0
 
 allowBuilds:
   '@google/genai': true
