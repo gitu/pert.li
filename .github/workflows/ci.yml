@@ -31,7 +31,7 @@ jobs:
       ANTHROPIC_API_KEY: ci-placeholder
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         # `scripts/compute-version.mjs` runs `git describe --tags` to derive
         # the build version baked into the bundle. The default shallow
         # checkout has only HEAD, so without full history the version would
@@ -126,7 +126,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # `git show <base>:src/db/schema.ts` needs the merge base in the
           # local repo; the default shallow fetch only carries HEAD.
@@ -148,7 +148,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         # `git describe --tags` (resolved below) needs full history; default
         # shallow clone has only HEAD.
         with:
@@ -247,7 +247,7 @@ jobs:
       E2E_USE_BUILD: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -344,7 +344,7 @@ jobs:
       ANTHROPIC_API_KEY: ci-placeholder
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         # The storybook vite config calls scripts/compute-version.mjs, which
         # runs `git describe --tags`. Default shallow clone has only HEAD,
         # so the VersionFooter story would render the fallback.
@@ -431,7 +431,7 @@ jobs:
       ANTHROPIC_API_KEY: ci-placeholder
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # We need the merge base on disk to diff against — the default
           # shallow checkout only carries HEAD. fetch-depth 0 is overkill

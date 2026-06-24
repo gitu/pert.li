@@ -46,7 +46,7 @@ jobs:
       E2E_USE_BUILD: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           # compute-version.mjs falls back to `git describe`; tags need history.
           fetch-depth: 0

@@ -33,7 +33,7 @@ jobs:
       attestations: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         # `git describe --tags` needs the tag we're triggered on plus enough
         # history to count commits-since-tag. The default shallow clone has
         # only HEAD so the resolver would always fall back.
