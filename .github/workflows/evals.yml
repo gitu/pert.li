@@ -98,7 +98,7 @@ jobs:
 
       - name: Post / update sticky PR comment
         if: always() && github.event_name == 'pull_request'
-        uses: marocchino/sticky-pull-request-comment@v3
+        uses: marocchino/sticky-pull-request-comment@v3.0.4
         with:
           header: ai-evals
           path: eval-comment.md
