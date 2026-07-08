@@ -252,9 +252,7 @@ describe("toOpenAiCompatibleSchema — real propose_changes schema", () => {
 });
 
 describe("toOpenAiCompatibleTools — against the real @tanstack/ai-openai adapters", () => {
-	// These tests exercise the exact code path that 500'd in production:
-	// the OpenAI adapters mark every tool `strict: true` and run its input
-	// schema through makeStructuredOutputCompatible, which throws on `oneOf`.
+	// These tests exercise the exact provider mapping path used in production.
 	// `mapOptionsToRequest` is a protected method — reach in via bracket
 	// access. If an adapter upgrade renames it, these tests fail loudly and
 	// the compat layer needs re-verification anyway.
@@ -288,11 +286,10 @@ describe("toOpenAiCompatibleTools — against the real @tanstack/ai-openai adapt
 	];
 
 	for (const { label, make } of adapters) {
-		it(`${label} rejects the raw chat tools (documents the bug)`, () => {
+		it(`${label} can map the raw chat tools`, () => {
 			const rawTools = clientSerializedChatTools();
-			expect(() => make().mapOptionsToRequest(buildOptions(rawTools))).toThrow(
-				/oneOf is not supported/,
-			);
+			const request = make().mapOptionsToRequest(buildOptions(rawTools));
+			expect(request.tools).toHaveLength(CHAT_TOOL_DEFINITIONS.length);
 		});
 
 		it(`${label} builds a request from the compat-rewritten chat tools`, () => {
