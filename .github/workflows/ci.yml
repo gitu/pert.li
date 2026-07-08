@@ -370,13 +370,24 @@ jobs:
         run: pnpm approve-builds --all
         continue-on-error: true
 
-      # Same Playwright browser caching strategy as the e2e job — the
-      # test-runner uses Playwright under the hood, so we only need
-      # Chromium and key the cache on the installed @playwright/test
-      # version.
-      - name: Resolve Playwright version
+      # @storybook/test-runner bundles its own playwright-core which may differ
+      # from @playwright/test. Key the browser cache on the test-runner's
+      # playwright-core version so the right Chromium binary is installed.
+      - name: Resolve Playwright version (storybook test-runner)
         id: pw
-        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "version=$(node -e "
+            const fs = require('fs');
+            const lock = fs.readFileSync('pnpm-lock.yaml', 'utf8');
+            // Snapshot entries for packages with peer deps include them in parens,
+            // e.g. '@storybook/test-runner@0.24.4(@types/node@...)(storybook@...)':
+            // This distinguishes the snapshot section from the spec section.
+            const re = /'@storybook\/test-runner@[^\n(]+[(][^']+':[\s\S]+?(?=\n  '[^']+':)/;
+            const m = re.exec(lock);
+            const block = m ? m[0] : '';
+            const vMatch = block.match(/playwright-core: ([\d.]+)/);
+            process.stdout.write(vMatch ? vMatch[1] : require('@playwright/test/package.json').version);
+          ")" >> "$GITHUB_OUTPUT"
 
       - name: Cache Playwright browsers
         id: pw-cache
@@ -387,11 +398,24 @@ jobs:
 
       - name: Install Chromium (+ system deps)
         if: steps.pw-cache.outputs.cache-hit != 'true'
-        run: pnpm exec playwright install --with-deps chromium
+        run: |
+          # Use the playwright binary that matches @storybook/test-runner's playwright-core version
+          PW_BIN="node_modules/.pnpm/playwright@${{ steps.pw.outputs.version }}/node_modules/playwright/bin/playwright.js"
+          if [ -f "$PW_BIN" ]; then
+            node "$PW_BIN" install --with-deps chromium
+          else
+            pnpm exec playwright install --with-deps chromium
+          fi
 
       - name: Install Chromium system deps only
         if: steps.pw-cache.outputs.cache-hit == 'true'
-        run: pnpm exec playwright install-deps chromium
+        run: |
+          PW_BIN="node_modules/.pnpm/playwright@${{ steps.pw.outputs.version }}/node_modules/playwright/bin/playwright.js"
+          if [ -f "$PW_BIN" ]; then
+            node "$PW_BIN" install-deps chromium
+          else
+            pnpm exec playwright install-deps chromium
+          fi
 
       # `storybook:ci` boots `storybook dev` on :6006 and runs the test
       # runner against it; concurrently kills the dev server when the
